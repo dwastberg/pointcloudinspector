@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
+  <rect width="16" height="16" fill="#11161d"/>
+  <defs>
+    <clipPath id="lens16">
+      <circle cx="6.8" cy="6.7" r="3.65"/>
+    </clipPath>
+  </defs>
+  <path d="M10.2 10.1 14 13.9" fill="none" stroke="#f0bd4f"
+        stroke-linecap="round" stroke-width="2.7"/>
+  <g clip-path="url(#lens16)">
+    <rect x="3" y="3" width="8" height="8" fill="#151b24"/>
+    <path d="M2.8 9.8 6.8 4.2 6.8 11.2 2.8 11.2Z" fill="#1264e8"/>
+    <path d="M6.8 4.2 11.1 9.5 11.1 11.2 6.8 11.2Z" fill="#3f91ff"/>
+    <circle cx="3.7" cy="8.6" r="0.72" fill="#54e8f4"/>
+    <circle cx="6.8" cy="4.25" r="0.78" fill="#54e8f4"/>
+    <circle cx="10.15" cy="8.35" r="0.72" fill="#54e8f4"/>
+  </g>
+  <circle cx="6.8" cy="6.7" r="4.85" fill="none" stroke="#3588ff"
+          stroke-width="2.25"/>
+</svg>

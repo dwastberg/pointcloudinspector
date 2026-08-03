@@ -1,0 +1,197 @@
+{
+  "version": 5,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 24,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "development",
+      "displayName": "Development",
+      "description": "Debug build with tests, tools, warnings, and compile commands",
+      "binaryDir": "${sourceDir}/build/development",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "BUILD_TESTING": "ON",
+        "PCINSPECTOR_BUILD_TOOLS": "ON",
+        "PCINSPECTOR_ENABLE_DIAGNOSTIC_UI": "OFF",
+        "PCINSPECTOR_ENABLE_GPU_TESTS": "OFF",
+        "PCINSPECTOR_WARNINGS_AS_ERRORS": "OFF",
+        "PCINSPECTOR_DEPLOY_RUNTIME_DEPENDENCIES": "OFF"
+      }
+    },
+    {
+      "name": "ci",
+      "displayName": "Continuous integration",
+      "inherits": "development",
+      "binaryDir": "${sourceDir}/build/ci",
+      "cacheVariables": {
+        "PCINSPECTOR_WARNINGS_AS_ERRORS": "ON"
+      }
+    },
+    {
+      "name": "asan-ubsan",
+      "displayName": "Address and undefined-behavior sanitizers",
+      "description": "Debug non-GPU suite instrumented with ASan and UBSan",
+      "inherits": "development",
+      "binaryDir": "${sourceDir}/build/asan-ubsan",
+      "cacheVariables": {
+        "PCINSPECTOR_SANITIZER": "address-undefined"
+      }
+    },
+    {
+      "name": "tsan",
+      "displayName": "Thread sanitizer",
+      "description": "Complete debug non-GPU suite instrumented with TSan",
+      "inherits": "development",
+      "binaryDir": "${sourceDir}/build/tsan",
+      "cacheVariables": {
+        "PCINSPECTOR_SANITIZER": "thread"
+      }
+    },
+    {
+      "name": "clang-tidy",
+      "displayName": "Gating clang-tidy",
+      "description": "Debug non-GPU build with fail-on-diagnostic static analysis",
+      "inherits": "development",
+      "binaryDir": "${sourceDir}/build/clang-tidy",
+      "cacheVariables": {
+        "PCINSPECTOR_ENABLE_CLANG_TIDY": "ON"
+      }
+    },
+    {
+      "name": "native-gpu",
+      "displayName": "Native GPU verification",
+      "description": "Debug build with the platform-primary GPU lane and validation enabled",
+      "inherits": "development",
+      "binaryDir": "${sourceDir}/build/gpu",
+      "cacheVariables": {
+        "PCINSPECTOR_ENABLE_GPU_TESTS": "ON",
+        "PCINSPECTOR_ENABLE_DIAGNOSTIC_UI": "ON",
+        "PCINSPECTOR_GPU_TEST_VALIDATION": "ON"
+      }
+    },
+    {
+      "name": "release",
+      "displayName": "Release",
+      "description": "Optimized application build",
+      "binaryDir": "${sourceDir}/build/release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "BUILD_TESTING": "OFF",
+        "PCINSPECTOR_BUILD_TOOLS": "OFF",
+        "PCINSPECTOR_ENABLE_DIAGNOSTIC_UI": "OFF",
+        "PCINSPECTOR_DEPLOY_RUNTIME_DEPENDENCIES": "OFF"
+      }
+    },
+    {
+      "name": "profiling",
+      "displayName": "Profiling tools",
+      "description": "Optimized build with profiling tools and no test suite",
+      "inherits": "release",
+      "binaryDir": "${sourceDir}/build/profiling",
+      "cacheVariables": {
+        "PCINSPECTOR_BUILD_TOOLS": "ON",
+        "PCINSPECTOR_ENABLE_DIAGNOSTIC_UI": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "development",
+      "configurePreset": "development",
+      "configuration": "Debug"
+    },
+    {
+      "name": "ci",
+      "configurePreset": "ci",
+      "configuration": "Debug"
+    },
+    {
+      "name": "asan-ubsan",
+      "configurePreset": "asan-ubsan",
+      "configuration": "Debug"
+    },
+    {
+      "name": "tsan",
+      "configurePreset": "tsan",
+      "configuration": "Debug"
+    },
+    {
+      "name": "clang-tidy",
+      "configurePreset": "clang-tidy",
+      "configuration": "Debug"
+    },
+    {
+      "name": "native-gpu",
+      "configurePreset": "native-gpu",
+      "configuration": "Debug"
+    },
+    {
+      "name": "release",
+      "configurePreset": "release",
+      "configuration": "Release"
+    },
+    {
+      "name": "profiling",
+      "configurePreset": "profiling",
+      "configuration": "Release"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "development",
+      "configurePreset": "development",
+      "configuration": "Debug",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "ci",
+      "configurePreset": "ci",
+      "configuration": "Debug",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "asan-ubsan",
+      "configurePreset": "asan-ubsan",
+      "configuration": "Debug",
+      "environment": {
+        "ASAN_OPTIONS": "halt_on_error=1",
+        "UBSAN_OPTIONS": "halt_on_error=1:print_stacktrace=1"
+      },
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "tsan",
+      "configurePreset": "tsan",
+      "configuration": "Debug",
+      "environment": {
+        "TSAN_OPTIONS": "halt_on_error=1:second_deadlock_stack=1"
+      },
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "native-gpu",
+      "configurePreset": "native-gpu",
+      "configuration": "Debug",
+      "output": {
+        "outputOnFailure": true
+      },
+      "filter": {
+        "include": {
+          "label": "gpu"
+        }
+      }
+    }
+  ]
+}

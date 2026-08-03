@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Point Cloud Inspector
+Comment=View LAS, LAZ, COPC, and EPT point clouds
+Exec=pcinspector %F
+Icon=pcinspector
+Terminal=false
+Categories=Graphics;Engineering;Science;
+StartupNotify=true

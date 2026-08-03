@@ -1,0 +1,31 @@
+Checks: >
+  -*,
+  bugprone-*,
+  -bugprone-empty-catch,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-exception-escape,
+  -bugprone-implicit-widening-of-multiplication-result,
+  -bugprone-misplaced-widening-cast,
+  -bugprone-nondeterministic-pointer-iteration-order,
+  -bugprone-unchecked-optional-access,
+  performance-*,
+  -performance-enum-size,
+  -performance-unnecessary-value-param,
+  modernize-use-nullptr,
+  modernize-use-override,
+  modernize-use-equals-default,
+  readability-container-size-empty,
+  readability-duplicate-include,
+  readability-redundant-control-flow,
+  readability-redundant-string-cstr
+# Fail the gate on every enabled diagnostic. The exclusions above are deliberate:
+# empty catches are deliberate best-effort cleanup/error boundaries; parameter-order
+# and enum-size findings demand API/ABI redesign; stop_token and
+# shared_ptr values often encode ownership; exception/optional analysis does not
+# model Qt/Catch control flow; widening and pointer-order findings need domain
+# review. Braces are governed by clang-format and the formatting ADR.
+WarningsAsErrors: '*'
+HeaderFilterRegex: '(^|/)(src|tests|tools)/'
+ExcludeHeaderFilterRegex: '(^|/)(third_party|build)/'
+SystemHeaders: false
+FormatStyle: file

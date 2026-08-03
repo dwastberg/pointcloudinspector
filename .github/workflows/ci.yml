@@ -1,0 +1,156 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  toolchain-contract:
+    name: ${{ matrix.name }} toolchain contract
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: GCC
+            os: ubuntu-24.04
+            cc: gcc
+            cxx: g++
+          - name: Clang
+            os: ubuntu-24.04
+            cc: clang
+            cxx: clang++
+          - name: AppleClang
+            os: macos-15
+            cc: ""
+            cxx: ""
+          - name: MSVC
+            os: windows-2022
+            cc: ""
+            cxx: ""
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Select compiler
+        if: matrix.cxx != ''
+        shell: bash
+        run: |
+          echo "CC=${{ matrix.cc }}" >> "$GITHUB_ENV"
+          echo "CXX=${{ matrix.cxx }}" >> "$GITHUB_ENV"
+
+      - name: Verify compiler and standard-library floor
+        run: cmake -S cmake/toolchain-probe -B build/toolchain-probe
+
+  macos-non-gpu:
+    name: macOS non-GPU build and tests
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      HOMEBREW_NO_INSTALL_CLEANUP: "1"
+
+    steps:
+      - name: Check out source and test dependencies
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install build dependencies
+        run: brew install cmake ninja clang-format qt pdal gdal
+
+      - name: Export dependency prefixes
+        run: |
+          qt_prefix="$(brew --prefix qt)"
+          pdal_prefix="$(brew --prefix pdal)"
+          gdal_prefix="$(brew --prefix gdal)"
+          echo "CMAKE_PREFIX_PATH=${qt_prefix};${pdal_prefix};${gdal_prefix}" >> "$GITHUB_ENV"
+
+      - name: Configure
+        run: cmake --preset ci -G Ninja
+
+      - name: Build with warnings as errors
+        run: cmake --build --preset ci --parallel 3
+
+      - name: Check C++ formatting
+        run: cmake --build --preset ci --target format-check
+
+      - name: Run non-GPU tests
+        run: ctest --preset ci
+
+  macos-static-analysis:
+    name: macOS clang-tidy gate
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      HOMEBREW_NO_INSTALL_CLEANUP: "1"
+
+    steps:
+      - name: Check out source and test dependencies
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install build dependencies
+        run: brew install cmake ninja llvm qt pdal gdal
+
+      - name: Export dependency prefixes
+        run: |
+          qt_prefix="$(brew --prefix qt)"
+          pdal_prefix="$(brew --prefix pdal)"
+          gdal_prefix="$(brew --prefix gdal)"
+          echo "CMAKE_PREFIX_PATH=${qt_prefix};${pdal_prefix};${gdal_prefix}" >> "$GITHUB_ENV"
+
+      - name: Configure clang-tidy gate
+        run: cmake --preset clang-tidy -G Ninja
+
+      - name: Build with fail-on-diagnostic analysis
+        run: cmake --build --preset clang-tidy --parallel 3
+
+  macos-sanitizers:
+    name: macOS ${{ matrix.name }} gate
+    runs-on: macos-15
+    timeout-minutes: 90
+    env:
+      HOMEBREW_NO_INSTALL_CLEANUP: "1"
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: ASan and UBSan
+            preset: asan-ubsan
+          - name: TSan
+            preset: tsan
+
+    steps:
+      - name: Check out source and test dependencies
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install build dependencies
+        run: brew install cmake ninja qt pdal gdal
+
+      - name: Export dependency prefixes
+        run: |
+          qt_prefix="$(brew --prefix qt)"
+          pdal_prefix="$(brew --prefix pdal)"
+          gdal_prefix="$(brew --prefix gdal)"
+          echo "CMAKE_PREFIX_PATH=${qt_prefix};${pdal_prefix};${gdal_prefix}" >> "$GITHUB_ENV"
+
+      - name: Configure sanitizer
+        run: cmake --preset ${{ matrix.preset }} -G Ninja
+
+      - name: Build sanitizer binaries
+        run: cmake --build --preset ${{ matrix.preset }} --parallel 3
+
+      - name: Run complete non-GPU sanitizer suite
+        run: ctest --preset ${{ matrix.preset }}

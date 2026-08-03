@@ -1,0 +1,35 @@
+{
+  "schema": "pcinspector.qualification-tolerances.v1",
+  "measurements": {
+    "first_point_any": {
+      "maximum_relative_increase": 0.10
+    },
+    "first_point_all": {
+      "maximum_relative_increase": 0.10
+    },
+    "all_sources_display_ready": {
+      "maximum_relative_increase": 0.10
+    },
+    "sampled_frame_p95": {
+      "maximum_relative_increase": 0.15
+    },
+    "sampled_frame_max": {
+      "maximum_relative_increase": 0.25
+    },
+    "peak_cpu_page_residency": {
+      "maximum_relative_increase": 0.05
+    },
+    "peak_gpu_point_residency": {
+      "maximum_relative_increase": 0.05
+    },
+    "settled_visible_draw_calls": {
+      "maximum_relative_increase": 0.05
+    },
+    "full_detail_hierarchy_pages": {
+      "exact": true
+    },
+    "gpu_evictions": {
+      "exact": true
+    }
+  }
+}

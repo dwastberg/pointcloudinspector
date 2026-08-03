@@ -1,0 +1,111 @@
+# Prerequisites
+*.d
+
+# Compiled Object files
+*.slo
+*.lo
+*.o
+*.obj
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Linker files
+*.ilk
+
+# Debugger Files
+*.pdb
+
+# Compiled Dynamic libraries
+*.so
+*.dylib
+*.dll
+*.so.*
+
+# Fortran module files
+*.mod
+*.smod
+
+# Compiled Static libraries
+*.lai
+*.la
+*.a
+*.lib
+
+# Executables
+*.exe
+*.out
+*.app
+
+# Build directories
+build/
+Build/
+build-*/
+
+# CMake generated files
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+install_manifest.txt
+compile_commands.json
+CMakeUserPresets.json
+
+# Temporary files
+*.tmp
+*.log
+*.bak
+*.swp
+
+# Operating system metadata
+.DS_Store
+Thumbs.db
+
+# Local environment and tool state
+.env
+.env.*
+!.env.example
+.claude/settings.local.json
+.superpowers/
+
+# vcpkg
+vcpkg_installed/
+
+# debug information files
+*.dwo
+
+# test output & cache
+Testing/
+.cache/
+/cmake-build-debug/
+
+# In-source CMake, Ninja, Qt, coverage, and crash output
+build.ninja
+rules.ninja
+.ninja_*
+CTestTestfile.cmake
+DartConfiguration.tcl
+.qt/
+.qsb/
+*_autogen/
+*.gcda
+*.gcno
+*.profraw
+*.profdata
+*.dmp
+*.crash
+core
+core.*
+
+.idea/
+.vscode/
+.vs/
+*.user
+*.code-workspace
+
+# Local point-cloud datasets
+*.las
+*.laz
+/test_data/
+/qualification/page-cache/
