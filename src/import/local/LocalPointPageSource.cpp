@@ -118,9 +118,26 @@ void saturatedAtomicAdd(std::atomic_uint64_t &destination,
 
 // Probes stay out of the Qt-free import layer's dependencies: read the same
 // PCI_PROBE_RESIDENCY switch the renderer uses, without linking QtCore here.
+bool environmentVariableExists(const char *name) noexcept
+{
+#ifdef _WIN32
+    char *value = nullptr;
+    std::size_t valueSize = 0;
+    if (_dupenv_s(&value, &valueSize, name) != 0) {
+        return false;
+    }
+    const bool exists = value != nullptr;
+    std::free(value);
+    return exists;
+#else
+    return std::getenv(name) != nullptr;
+#endif
+}
+
 bool probeResidencyEnabled() noexcept
 {
-    static const bool enabled = std::getenv("PCI_PROBE_RESIDENCY") != nullptr;
+    static const bool enabled =
+        environmentVariableExists("PCI_PROBE_RESIDENCY");
     return enabled;
 }
 
