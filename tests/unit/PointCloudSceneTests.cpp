@@ -769,7 +769,7 @@ TEST_CASE("hierarchy cache churn stays bounded across a 20x working set",
         .maximum = {1.0, 1.0, 1.0},
     };
     const auto source =
-        std::make_shared<StressHierarchySource>(2, pointsPerNode);
+        std::make_shared<StressHierarchySource>(std::uint8_t{2}, pointsPerNode);
     auto root = rootPayload();
     auto prototype = std::make_shared<pci::PointCloudNodePayload>();
     prototype->nodeId = {2, 0, 0, 0};
@@ -838,7 +838,8 @@ TEST_CASE("rapid hierarchy request churn cancels obsolete decodes promptly",
         .minimum = {-1.0, -1.0, -1.0},
         .maximum = {1.0, 1.0, 1.0},
     };
-    const auto source = std::make_shared<StressHierarchySource>(2, 64, 100ms);
+    const auto source = std::make_shared<StressHierarchySource>(
+        std::uint8_t{2}, std::size_t{64}, 100ms);
     pci::PointCloudScene scene(metadata, source, rootPayload(), 1024 * 1024);
 
     std::vector<pci::PointCloudNodeId> requests;
