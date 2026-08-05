@@ -71,16 +71,22 @@ jobs:
           cache-downloads: true
           init-shell: powershell
 
-      - name: Configure MSVC environment
-        uses: ilammy/msvc-dev-cmd@v1
-        with:
-          arch: x64
+      - name: Configure and build with MSVC
+        run: |
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+          $installationPath = & $vswhere -latest -products "*" `
+            -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+            -property installationPath
+          if (-not $installationPath) {
+            throw "A Visual Studio installation with the MSVC x64 tools was not found."
+          }
 
-      - name: Configure
-        run: cmake --preset ci -G Ninja -DCMAKE_CXX_COMPILER=cl.exe
+          $devShell = Join-Path $installationPath "Common7\Tools\Launch-VsDevShell.ps1"
+          & $devShell -Arch amd64 -HostArch amd64 -SkipAutomaticLocation
 
-      - name: Build with warnings as errors
-        run: cmake --build --preset ci --parallel 3
+          $env:CXX = "cl.exe"
+          cmake --preset ci -G Ninja
+          cmake --build --preset ci --parallel 3
 
       - name: Run non-GPU tests
         run: ctest --preset ci
