@@ -109,3 +109,7 @@ core.*
 *.laz
 /test_data/
 /qualification/page-cache/
+
+/.claude
+/docs/
+/tools/
