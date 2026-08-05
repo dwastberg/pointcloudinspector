@@ -12,7 +12,7 @@
 namespace pci {
 namespace {
 
-constexpr std::uint64_t bytesPerMiB = 1024ULL * 1024;
+constexpr std::uint64_t bytesPerMiB = std::uint64_t{1024} * 1024;
 
 ConfigEarlyExit error(QString message, const int exitCode = 2)
 {

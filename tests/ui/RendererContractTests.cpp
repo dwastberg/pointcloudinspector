@@ -4,6 +4,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <cstdint>
 #include <memory>
 
 namespace {
@@ -12,8 +13,11 @@ TEST_CASE("render viewport exposes its public widget contract",
           "[ui][renderer][api]")
 {
     const auto colorMaps = pci::test::createTestPointColorMapCatalog();
-    auto viewport = pci::createRenderViewport(
-        true, 512ULL * 1024 * 1024, pci::GraphicsApi::Auto, false, colorMaps);
+    auto viewport = pci::createRenderViewport(true,
+                                              std::uint64_t{512} * 1024 * 1024,
+                                              pci::GraphicsApi::Auto,
+                                              false,
+                                              colorMaps);
     REQUIRE(viewport != nullptr);
     REQUIRE(viewport->widget() != nullptr);
     CHECK_FALSE(viewport->backendName().isEmpty());

@@ -25,7 +25,8 @@ struct PointCloudImportProgress {
     std::uint64_t total = 0;
 };
 
-inline constexpr std::uint64_t flatImportWorkingBytes = 64ULL * 1024 * 1024;
+inline constexpr std::uint64_t flatImportWorkingBytes =
+    std::uint64_t{64} * 1024 * 1024;
 
 [[nodiscard]] inline std::uint64_t
 estimatedFlatResidentBytes(const std::uint64_t pointCount) noexcept
@@ -63,7 +64,7 @@ struct PointCloudImportPreflight {
 };
 
 inline constexpr std::uint64_t defaultPointCloudDecodedByteBudget =
-    512ULL * 1024 * 1024;
+    std::uint64_t{512} * 1024 * 1024;
 
 struct LocalPagingOptions {
     // Ordinary LAS/LAZ above this source size uses the persistent local page
@@ -72,8 +73,8 @@ struct LocalPagingOptions {
     std::filesystem::path cacheDirectory;
     std::uint32_t pagePoints = 32'768;
     std::uint32_t rootPreviewPoints = 16'384;
-    std::uint64_t sortMemoryBytes = 64ULL * 1024 * 1024;
-    std::uint64_t diskCacheBytes = 20ULL * 1024 * 1024 * 1024;
+    std::uint64_t sortMemoryBytes = std::uint64_t{64} * 1024 * 1024;
+    std::uint64_t diskCacheBytes = std::uint64_t{20} * 1024 * 1024 * 1024;
 
     bool operator==(const LocalPagingOptions &) const = default;
 };

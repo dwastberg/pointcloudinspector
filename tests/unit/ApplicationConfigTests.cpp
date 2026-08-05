@@ -48,7 +48,7 @@ TEST_CASE("application invocation parser returns typed configuration",
     CHECK(config.maximumLoadPoints == 50);
     CHECK(config.cpuBudget ==
           pci::MemoryBudgetOption{.automatic = false, .mebibytes = 256});
-    CHECK(config.gpuByteBudget == 64ULL * 1024 * 1024);
+    CHECK(config.gpuByteBudget == std::uint64_t{64} * 1024 * 1024);
     CHECK(config.graphicsApi == pci::GraphicsApi::Auto);
     CHECK(config.smokeTest);
     REQUIRE(config.sources.size() == 1);
@@ -150,7 +150,7 @@ TEST_CASE("application invocation parser returns help and version text",
 TEST_CASE("memory and cache resolution are deterministic",
           "[unit][app-config][memory][path]")
 {
-    constexpr std::uint64_t MiB = 1024ULL * 1024;
+    constexpr std::uint64_t MiB = std::uint64_t{1024} * 1024;
     pci::ApplicationConfig explicitConfig;
     explicitConfig.cpuBudget = {.automatic = false, .mebibytes = 768};
     const pci::ResolvedMemoryBudget explicitBudget =
@@ -162,8 +162,8 @@ TEST_CASE("memory and cache resolution are deterministic",
     automaticConfig.gpuByteBudget = 64 * MiB;
     const pci::ResolvedMemoryBudget automaticBudget = pci::resolveMemoryBudget(
         automaticConfig,
-        {.totalPhysicalBytes = 16ULL * 1024 * MiB,
-         .availablePhysicalBytes = 14ULL * 1024 * MiB});
+        {.totalPhysicalBytes = std::uint64_t{16} * 1024 * MiB,
+         .availablePhysicalBytes = std::uint64_t{14} * 1024 * MiB});
     REQUIRE(automaticBudget.automaticParameters);
     CHECK(automaticBudget.automaticParameters->gpuByteBudget == 64 * MiB);
     CHECK(automaticBudget.pointByteBudget ==
@@ -210,8 +210,8 @@ TEST_CASE("point-count parsing accepts positive 64-bit values",
 {
     using pci::parsePointCount;
 
-    CHECK(parsePointCount("10000000") == 10'000'000ULL);
-    CHECK(parsePointCount("1") == 1ULL);
+    CHECK(parsePointCount("10000000") == std::uint64_t{10'000'000});
+    CHECK(parsePointCount("1") == std::uint64_t{1});
     CHECK_FALSE(parsePointCount("0"));
     CHECK_FALSE(parsePointCount("-1"));
     CHECK_FALSE(parsePointCount("12x"));
@@ -253,8 +253,8 @@ TEST_CASE("graphics API parsing accepts only documented values",
 TEST_CASE("automatic memory budget preserves serious system headroom",
           "[unit][app-config][memory]")
 {
-    constexpr std::uint64_t MiB = 1024ULL * 1024;
-    constexpr std::uint64_t GiB = 1024ULL * MiB;
+    constexpr std::uint64_t MiB = std::uint64_t{1024} * 1024;
+    constexpr std::uint64_t GiB = std::uint64_t{1024} * MiB;
     const pci::AutomaticMemoryBudget budget = pci::automaticMemoryBudget({
         .totalPhysicalBytes = 16 * GiB,
         .availablePhysicalBytes = 14 * GiB,
@@ -269,7 +269,7 @@ TEST_CASE("automatic memory budget preserves serious system headroom",
 TEST_CASE("automatic memory budget keeps existing point residency admissible",
           "[unit][app-config][memory]")
 {
-    constexpr std::uint64_t GiB = 1024ULL * 1024 * 1024;
+    constexpr std::uint64_t GiB = std::uint64_t{1024} * 1024 * 1024;
     pci::AutomaticMemoryBudgetParameters parameters;
     parameters.currentPointBytes = 6 * GiB;
     const pci::AutomaticMemoryBudget budget = pci::automaticMemoryBudget(
@@ -284,7 +284,7 @@ TEST_CASE("automatic memory budget keeps existing point residency admissible",
 TEST_CASE("automatic memory budget has a deterministic query fallback",
           "[unit][app-config][memory]")
 {
-    constexpr std::uint64_t GiB = 1024ULL * 1024 * 1024;
+    constexpr std::uint64_t GiB = std::uint64_t{1024} * 1024 * 1024;
     const pci::AutomaticMemoryBudget budget = pci::automaticMemoryBudget({});
     CHECK(budget.usedFallback);
     CHECK(budget.pointByteBudget == GiB);

@@ -368,7 +368,7 @@ TEST_CASE(
             },
         .resources =
             {
-                .decodedByteBudget = 8ULL * 1024 * 1024,
+                .decodedByteBudget = std::uint64_t{8} * 1024 * 1024,
             },
     };
     const pci::PointCloudLoadContext context{
@@ -488,7 +488,7 @@ TEST_CASE(
             .pointsPerLeaf = 2,
             .rootPreviewPoints = 2,
             .sortMemoryBytes = 4096,
-            .diskCacheBytes = 64ULL * 1024 * 1024,
+            .diskCacheBytes = std::uint64_t{64} * 1024 * 1024,
         };
     };
     const std::filesystem::path cacheA =

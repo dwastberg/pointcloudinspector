@@ -1188,7 +1188,8 @@ void SceneSession::updateBatchProgress()
             .arg(batchTotal_)
             .arg(metrics.scheduler.active)
             .arg(metrics.scheduler.pending)
-            .arg(metrics.scheduler.activeEstimatedBytes / (1024ULL * 1024));
+            .arg(metrics.scheduler.activeEstimatedBytes /
+                 (std::uint64_t{1024} * 1024));
     if (batchProgress.failedSources > 0 || batchProgress.cancelledSources > 0) {
         details += QStringLiteral("; %1 failed, %2 cancelled")
                        .arg(batchProgress.failedSources)

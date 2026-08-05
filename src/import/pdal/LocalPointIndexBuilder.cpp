@@ -82,7 +82,8 @@ StorageEstimate estimateStorage(const std::uint64_t sourcePoints,
                                 const std::uint32_t rootPreviewPoints,
                                 const std::uint8_t maximumLevel) noexcept
 {
-    constexpr std::uint64_t manifestFixedAllowance = 1ULL * 1024 * 1024;
+    constexpr std::uint64_t manifestFixedAllowance =
+        std::uint64_t{1} * 1024 * 1024;
     constexpr std::uint64_t manifestBytesPerPage = 128;
     std::uint64_t payloadPoints = sourcePoints;
     std::uint64_t pageCount = 1;

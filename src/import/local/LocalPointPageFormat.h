@@ -23,8 +23,8 @@ struct LocalPointPageStoreOptions {
     std::filesystem::path cacheDirectory;
     std::uint32_t pointsPerLeaf = 32'768;
     std::uint32_t rootPreviewPoints = 16'384;
-    std::uint64_t sortMemoryBytes = 64ULL * 1024 * 1024;
-    std::uint64_t diskCacheBytes = 20ULL * 1024 * 1024 * 1024;
+    std::uint64_t sortMemoryBytes = std::uint64_t{64} * 1024 * 1024;
+    std::uint64_t diskCacheBytes = std::uint64_t{20} * 1024 * 1024 * 1024;
 
     bool operator==(const LocalPointPageStoreOptions &) const = default;
 };

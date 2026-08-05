@@ -46,7 +46,7 @@ public:
 
     static constexpr std::size_t defaultMaximumWorkers = 2;
     static constexpr std::uint64_t defaultActiveByteBudget =
-        256ULL * 1024 * 1024;
+        std::uint64_t{256} * 1024 * 1024;
 
     explicit TaskScheduler(
         std::size_t maximumWorkers = defaultMaximumWorkers,

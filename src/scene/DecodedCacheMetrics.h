@@ -5,7 +5,7 @@
 namespace pci {
 
 inline constexpr std::uint64_t defaultDecodedCacheByteBudget =
-    512ULL * 1024 * 1024;
+    std::uint64_t{512} * 1024 * 1024;
 
 struct DecodedCacheMetrics {
     std::uint64_t hits = 0;

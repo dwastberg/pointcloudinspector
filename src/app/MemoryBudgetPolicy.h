@@ -7,9 +7,9 @@
 namespace pci {
 
 struct AutomaticMemoryBudgetParameters {
-    std::uint64_t gpuByteBudget = 512ULL * 1024 * 1024;
-    std::uint64_t activeDecodeByteBudget = 256ULL * 1024 * 1024;
-    std::uint64_t applicationReserveBytes = 512ULL * 1024 * 1024;
+    std::uint64_t gpuByteBudget = std::uint64_t{512} * 1024 * 1024;
+    std::uint64_t activeDecodeByteBudget = std::uint64_t{256} * 1024 * 1024;
+    std::uint64_t applicationReserveBytes = std::uint64_t{512} * 1024 * 1024;
     std::uint64_t currentPointBytes = 0;
 };
 

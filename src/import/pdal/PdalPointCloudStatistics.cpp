@@ -72,9 +72,9 @@ private:
 
 std::uint64_t splitMix64(std::uint64_t value) noexcept
 {
-    value += 0x9e3779b97f4a7c15ULL;
-    value = (value ^ (value >> 30U)) * 0xbf58476d1ce4e5b9ULL;
-    value = (value ^ (value >> 27U)) * 0x94d049bb133111ebULL;
+    value += std::uint64_t{0x9e3779b97f4a7c15};
+    value = (value ^ (value >> 30U)) * std::uint64_t{0xbf58476d1ce4e5b9};
+    value = (value ^ (value >> 27U)) * std::uint64_t{0x94d049bb133111eb};
     return value ^ (value >> 31U);
 }
 

@@ -12,7 +12,7 @@
 namespace pci {
 namespace {
 
-constexpr std::uint64_t inspectionReservationBytes = 1024ULL * 1024;
+constexpr std::uint64_t inspectionReservationBytes = std::uint64_t{1024} * 1024;
 
 template <typename Completion>
 void post(

@@ -5,9 +5,9 @@ namespace {
 
 std::uint64_t mix(std::uint64_t value)
 {
-    value += 0x9e3779b97f4a7c15ULL;
-    value = (value ^ (value >> 30U)) * 0xbf58476d1ce4e5b9ULL;
-    value = (value ^ (value >> 27U)) * 0x94d049bb133111ebULL;
+    value += std::uint64_t{0x9e3779b97f4a7c15};
+    value = (value ^ (value >> 30U)) * std::uint64_t{0xbf58476d1ce4e5b9};
+    value = (value ^ (value >> 27U)) * std::uint64_t{0x94d049bb133111eb};
     return value ^ (value >> 31U);
 }
 
@@ -20,9 +20,9 @@ std::uint16_t coordinate(const std::uint64_t index, const std::uint64_t seed)
 
 GpuPoint generatePoint(const std::uint64_t index)
 {
-    const auto x = coordinate(index, 0x243f6a8885a308d3ULL);
-    const auto y = coordinate(index, 0x13198a2e03707344ULL);
-    const auto z = coordinate(index, 0xa4093822299f31d0ULL);
+    const auto x = coordinate(index, std::uint64_t{0x243f6a8885a308d3});
+    const auto y = coordinate(index, std::uint64_t{0x13198a2e03707344});
+    const auto z = coordinate(index, std::uint64_t{0xa4093822299f31d0});
     const auto red = static_cast<std::uint32_t>(x >> 8U);
     const auto green = static_cast<std::uint32_t>(y >> 8U);
     const auto blue = static_cast<std::uint32_t>(z >> 8U);

@@ -28,7 +28,7 @@ struct ApplicationConfig {
     std::uint64_t syntheticPointCount = 10'000'000;
     std::uint64_t maximumLoadPoints = 10'000'000;
     MemoryBudgetOption cpuBudget{.automatic = true};
-    std::uint64_t gpuByteBudget = 512ULL * 1024 * 1024;
+    std::uint64_t gpuByteBudget = std::uint64_t{512} * 1024 * 1024;
     GraphicsApi graphicsApi = GraphicsApi::Auto;
     bool smokeTest = false;
     bool gpuValidation = false;

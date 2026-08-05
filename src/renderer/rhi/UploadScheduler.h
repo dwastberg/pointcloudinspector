@@ -51,9 +51,10 @@ planGpuEvictions(std::span<const GpuResidencyRecord> records,
 
 class UploadScheduler {
 public:
-    static constexpr std::uint64_t defaultFrameByteBudget = 48ULL * 1024 * 1024;
+    static constexpr std::uint64_t defaultFrameByteBudget =
+        std::uint64_t{48} * 1024 * 1024;
     static constexpr std::uint64_t defaultResidencyByteBudget =
-        512ULL * 1024 * 1024;
+        std::uint64_t{512} * 1024 * 1024;
 
     explicit UploadScheduler(
         std::uint64_t residencyByteBudget = defaultResidencyByteBudget);

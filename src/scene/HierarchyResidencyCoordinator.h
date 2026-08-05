@@ -92,7 +92,8 @@ public:
     using ParticipantId = std::uint64_t;
     using DecodeLease = HierarchyDecodeAdmission::Lease;
 
-    static constexpr std::uint64_t defaultByteBudget = 512ULL * 1024 * 1024;
+    static constexpr std::uint64_t defaultByteBudget =
+        std::uint64_t{512} * 1024 * 1024;
     static constexpr std::size_t defaultMaximumConcurrentDecodes =
         HierarchyDecodeAdmission::defaultMaximumConcurrentDecodes;
 

@@ -60,8 +60,9 @@ struct VectorImportLimits {
     std::uint64_t maximumFillIndices = 48'000'000;
     std::uint64_t maximumSegments = 8'000'000;
     std::uint64_t maximumMarkers = 8'000'000;
-    std::uint64_t maximumRetainedBytes = 256ULL * 1024 * 1024;
-    std::uint64_t maximumApplicationWorkingBytes = 256ULL * 1024 * 1024;
+    std::uint64_t maximumRetainedBytes = std::uint64_t{256} * 1024 * 1024;
+    std::uint64_t maximumApplicationWorkingBytes =
+        std::uint64_t{256} * 1024 * 1024;
     std::uint64_t maximumCurveControlPoints = 100'000;
     std::uint64_t maximumLinearizedCurvePoints = 1'000'000;
     double curveMaximumAngleStepDegrees = 4.0;

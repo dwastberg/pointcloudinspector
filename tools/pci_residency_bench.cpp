@@ -31,7 +31,7 @@ namespace {
 using Clock = std::chrono::steady_clock;
 using Milliseconds = std::chrono::duration<double, std::milli>;
 
-constexpr std::uint64_t bytesPerMiB = 1024ULL * 1024ULL;
+constexpr std::uint64_t bytesPerMiB = std::uint64_t{1024} * 1024;
 
 struct Options {
     std::uint64_t maximumPoints = 100'000'000;

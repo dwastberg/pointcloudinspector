@@ -968,13 +968,14 @@ void RenderViewportWidget::render(QRhiCommandBuffer *commandBuffer)
                        .arg(pointBudget_.current())
                        .arg(pointBudget_.total())
                        .arg(uploadScheduler_.frameMetrics().protectedBytes /
-                            (1024ULL * 1024))
-                       .arg(uploadScheduler_.residentBytes() / (1024ULL * 1024))
+                            (std::uint64_t{1024} * 1024))
+                       .arg(uploadScheduler_.residentBytes() /
+                            (std::uint64_t{1024} * 1024))
                        .arg(uploadScheduler_.residencyByteBudget() /
-                            (1024ULL * 1024))
+                            (std::uint64_t{1024} * 1024))
                        .arg(uploadScheduler_.evictionCount())
                        .arg(probeDroppedUploads_)
-                       .arg(probeDroppedBytes_ / (1024ULL * 1024))
+                       .arg(probeDroppedBytes_ / (std::uint64_t{1024} * 1024))
                        .arg(pendingDisplayReadyLayerIds_.size())
                        .arg(!pointFrameCoordinator_.fullDetailPlanned()
                                 ? QStringLiteral("none")

@@ -81,11 +81,11 @@ public:
     }
 };
 
-std::unique_ptr<RenderViewport>
-createRenderViewport(bool smokeTest,
-                     std::uint64_t gpuByteBudget = 512ULL * 1024 * 1024,
-                     GraphicsApi graphicsApi = GraphicsApi::Auto,
-                     bool enableGpuValidation = false,
-                     PointColorMapCatalogSnapshotPtr colorMaps = {});
+std::unique_ptr<RenderViewport> createRenderViewport(
+    bool smokeTest,
+    std::uint64_t gpuByteBudget = std::uint64_t{512} * 1024 * 1024,
+    GraphicsApi graphicsApi = GraphicsApi::Auto,
+    bool enableGpuValidation = false,
+    PointColorMapCatalogSnapshotPtr colorMaps = {});
 
 } // namespace pci

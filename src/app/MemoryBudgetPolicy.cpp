@@ -8,10 +8,11 @@
 namespace pci {
 namespace {
 
-constexpr std::uint64_t bytesPerMiB = 1024ULL * 1024;
-constexpr std::uint64_t bytesPerGiB = 1024ULL * 1024 * 1024;
-constexpr std::uint64_t fallbackPointBudget = 1024ULL * bytesPerMiB;
-constexpr std::uint64_t minimumAutomaticBudget = 256ULL * bytesPerMiB;
+constexpr std::uint64_t bytesPerMiB = std::uint64_t{1024} * 1024;
+constexpr std::uint64_t bytesPerGiB = std::uint64_t{1024} * 1024 * 1024;
+constexpr std::uint64_t fallbackPointBudget = std::uint64_t{1024} * bytesPerMiB;
+constexpr std::uint64_t minimumAutomaticBudget =
+    std::uint64_t{256} * bytesPerMiB;
 
 std::uint64_t fractionTenths(const std::uint64_t value,
                              const std::uint64_t numerator) noexcept
@@ -44,8 +45,9 @@ AutomaticMemoryBudget automaticMemoryBudget(
     // cannot be reclaimed safely (Linux MemAvailable, Windows standby/free,
     // or reusable Mach pages). Preserve an additional live reserve without
     // subtracting the much larger static 30% envelope a second time.
-    result.systemReserveBytes = std::max(
-        2ULL * bytesPerGiB, fractionTenths(memory.totalPhysicalBytes, 1));
+    result.systemReserveBytes =
+        std::max(std::uint64_t{2} * bytesPerGiB,
+                 fractionTenths(memory.totalPhysicalBytes, 1));
     // On small systems never reserve more than half the effective RAM solely
     // for the OS; the working reserve below remains independently protected.
     result.systemReserveBytes =

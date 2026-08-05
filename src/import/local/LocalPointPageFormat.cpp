@@ -43,7 +43,7 @@ constexpr std::array<std::byte, 8> manifestMagic{std::byte{'P'},
                                                  std::byte{'0'},
                                                  std::byte{'1'}};
 constexpr std::uint32_t endianMarker = 0x01020304U;
-constexpr std::uint64_t sourceSampleBytes = 64ULL * 1024;
+constexpr std::uint64_t sourceSampleBytes = std::uint64_t{64} * 1024;
 constexpr std::uint8_t maximumSupportedLevel = 20;
 
 template <typename Integer>

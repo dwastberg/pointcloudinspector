@@ -84,7 +84,7 @@ double mebibytes(const std::uint64_t bytes)
 int main(int argc, char **argv)
 {
     const std::vector<std::string> args(argv + 1, argv + argc);
-    std::uint64_t maxPoints = 10'000'000ULL;
+    std::uint64_t maxPoints = std::uint64_t{10'000'000};
     std::vector<std::filesystem::path> fileArgs;
     for (std::size_t i = 0; i < args.size(); ++i) {
         if (args[i] == "--max-points" && i + 1 < args.size()) {
