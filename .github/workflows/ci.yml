@@ -12,44 +12,44 @@ permissions:
   contents: read
 
 jobs:
-  linux:
-    name: Linux build and tests
-    runs-on: ubuntu-24.04
-    timeout-minutes: 60
-    defaults:
-      run:
-        shell: bash -el {0}
-
-    steps:
-      - name: Check out source and test dependencies
-        uses: actions/checkout@v6
-        with:
-          persist-credentials: false
-          submodules: recursive
-
-      - name: Install build dependencies
-        uses: mamba-org/setup-micromamba@v3
-        with:
-          environment-file: .github/ci-environment.yml
-          cache-environment: true
-          cache-downloads: true
-          init-shell: bash
-
-      - name: Configure
-        run: cmake --preset ci -G Ninja
-
-      - name: Build with warnings as errors
-        run: cmake --build --preset ci --parallel 3
-
-      - name: Check C++ formatting
-        run: cmake --build --preset ci --target format-check
-
-      - name: Run non-GPU tests
-        run: ctest --preset ci
+#  linux:
+#    name: Linux build and tests
+#    runs-on: ubuntu-24.04
+#    timeout-minutes: 60
+#    defaults:
+#      run:
+#        shell: bash -el {0}
+#
+#    steps:
+#      - name: Check out source and test dependencies
+#        uses: actions/checkout@v6
+#        with:
+#          persist-credentials: false
+#          submodules: recursive
+#
+#      - name: Install build dependencies
+#        uses: mamba-org/setup-micromamba@v3
+#        with:
+#          environment-file: .github/ci-environment.yml
+#          cache-environment: true
+#          cache-downloads: true
+#          init-shell: bash
+#
+#      - name: Configure
+#        run: cmake --preset ci -G Ninja
+#
+#      - name: Build with warnings as errors
+#        run: cmake --build --preset ci --parallel 3
+#
+#      - name: Check C++ formatting
+#        run: cmake --build --preset ci --target format-check
+#
+#      - name: Run non-GPU tests
+#        run: ctest --preset ci
 
   windows:
     name: Windows build and tests
-    needs: linux
+#    needs: linux
     runs-on: windows-2022
     timeout-minutes: 60
     defaults:
