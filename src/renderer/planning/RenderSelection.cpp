@@ -426,7 +426,7 @@ RenderSelection::select(const std::span<const PointCloudNodeId> roots,
         return true;
     };
 
-    const auto selectNode = [&](this const auto &self,
+    const auto selectNode = [&](const auto &self,
                                 const PointCloudNodeId id) -> bool {
         if (remaining == 0) {
             return false;
@@ -502,7 +502,7 @@ RenderSelection::select(const std::span<const PointCloudNodeId> roots,
                 const std::uint64_t remainingStart = remaining;
                 bool complete = true;
                 for (const RenderSelectionNodeState &child : visibleChildren) {
-                    if (!self(child.node.id)) {
+                    if (!self(self, child.node.id)) {
                         complete = false;
                         break;
                     }
@@ -525,7 +525,7 @@ RenderSelection::select(const std::span<const PointCloudNodeId> roots,
     };
 
     for (const PointCloudNodeId root : roots) {
-        static_cast<void>(selectNode(root));
+        static_cast<void>(selectNode(selectNode, root));
     }
     refinedLastFrame_ = std::move(nextRefined);
     return result;
