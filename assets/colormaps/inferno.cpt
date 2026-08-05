@@ -1,4 +1,7 @@
 #
+# PCINSPECTOR_NAME = High-Contrast Sequential — Inferno
+# PCINSPECTOR_DESCRIPTION = A dark-to-bright sequential palette for intensity, density, elevation, and values needing strong luminance contrast.
+#
 # matplotlib/inferno : New matplotlib colormap Option B, via cpt-city
 # Design: Nathaniel J. Smith and Stefan van der Walt
 #

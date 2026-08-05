@@ -1,4 +1,7 @@
 #
+# PCINSPECTOR_NAME = General Values — Viridis
+# PCINSPECTOR_DESCRIPTION = A color-vision-friendly purple-to-yellow palette for general ordered scalar data and accurate visual comparison.
+#
 # matplotlib/viridis : New matplotlib colormap Option D, via cpt-city
 # Design: Nathaniel J. Smith, Stefan van der Walt, and Eric Firing
 #

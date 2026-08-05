@@ -1,4 +1,5 @@
 #include "scene/SceneDocument.h"
+#include "support/TestPointColorMaps.h"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -77,7 +78,12 @@ hierarchicalSceneWith(const pci::Bounds3d bounds,
 TEST_CASE("point-cloud document owns independently configured layers",
           "[unit][scene]")
 {
-    pci::SceneDocument document;
+    pci::SceneDocument document(
+        pci::HierarchyResidencyCoordinator::defaultByteBudget,
+        pci::HierarchyResidencyCoordinator::defaultMaximumConcurrentDecodes,
+        {},
+        {},
+        pci::test::createTestPointColorMapCatalog());
     const auto colorLayer = document.addLayer(sceneWith(
         {.minimum = {-2.0, -1.0, 0.0}, .maximum = {1.0, 2.0, 3.0}}, 10, true));
     const auto scalarLayer = document.addLayer(sceneWith(
@@ -177,7 +183,12 @@ TEST_CASE(
 TEST_CASE("document rejects incompatible maps and invalid manual ranges",
           "[unit][scene][color]")
 {
-    pci::SceneDocument document;
+    pci::SceneDocument document(
+        pci::HierarchyResidencyCoordinator::defaultByteBudget,
+        pci::HierarchyResidencyCoordinator::defaultMaximumConcurrentDecodes,
+        {},
+        {},
+        pci::test::createTestPointColorMapCatalog());
     const auto layer = document.addLayer(sceneWith(
         {.minimum = {0.0, 0.0, 0.0}, .maximum = {1.0, 1.0, 1.0}}, 10, true));
 

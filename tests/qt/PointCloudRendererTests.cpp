@@ -2,6 +2,7 @@
 #include "renderer/PointColorMapAtlas.h"
 #include "renderer/rhi/EyeDomeLightingPass.h"
 #include "renderer/rhi/PointCloudRenderer.h"
+#include "support/TestPointColorMaps.h"
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -162,7 +163,7 @@ TEST_CASE("uniform staging rejects an undersized stride",
 TEST_CASE("color map atlas provides padded portable lookup rows",
           "[qt][renderer][color]")
 {
-    const auto catalog = pci::createBuiltInPointColorMapCatalog();
+    const auto catalog = pci::test::createTestPointColorMapCatalog();
     const QImage atlas = pci::buildPointColorMapAtlas(*catalog);
     REQUIRE_FALSE(atlas.isNull());
     CHECK(atlas.width() == pci::pointColorMapAtlasWidth);

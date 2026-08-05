@@ -3,6 +3,7 @@
 #include "app/SceneLayersDock.h"
 #include "app/TaskDock.h"
 #include "app/WorkspaceSettings.h"
+#include "support/TestPointColorMaps.h"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -146,7 +147,8 @@ TEST_CASE("layer editor follows stable ids through reorder and removal",
           "[ui][layers][inspector][characterization]")
 {
     pci::SceneLayersDock panel;
-    pci::LayerInspectorDock inspector;
+    pci::LayerInspectorDock inspector(
+        nullptr, pci::test::createTestPointColorMapCatalog());
     const pci::PointCloudLayer rgb =
         pointLayer(11,
                    "rgb.las",
@@ -197,7 +199,8 @@ TEST_CASE("layer and inspector edits route the selected id after reordering",
           "[ui][layers][inspector][routing][characterization]")
 {
     pci::SceneLayersDock panel;
-    pci::LayerInspectorDock inspector;
+    pci::LayerInspectorDock inspector(
+        nullptr, pci::test::createTestPointColorMapCatalog());
     const pci::PointCloudLayer first =
         pointLayer(101,
                    "first.las",

@@ -1,5 +1,6 @@
 #
-# PCINSPECTOR_NAME = Oleron Land
+# PCINSPECTOR_NAME = Land Elevation — Oleron Land
+# PCINSPECTOR_DESCRIPTION = A green-to-brown-to-pale terrain palette for relative land elevation without bathymetric colors.
 #
 # Land-only derivative of SCM/oleron, the perceptually uniform topography
 # colour map by Fabio Crameri. The original bathymetry intervals below zero

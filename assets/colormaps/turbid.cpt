@@ -1,3 +1,6 @@
+# PCINSPECTOR_NAME = Water Turbidity — Turbid
+# PCINSPECTOR_DESCRIPTION = A sequential palette for turbidity, suspended sediment, water clarity, and similar concentration measurements.
+#
 # This colormap is part of the cmocean package by Kristen Thyng, 2016.
 # COLOR_MODEL = RGB
 1 233 246 171 2 233 246 171

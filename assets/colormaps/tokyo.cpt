@@ -1,4 +1,7 @@
 #
+# PCINSPECTOR_NAME = Muted Sequential — Tokyo
+# PCINSPECTOR_DESCRIPTION = A perceptually uniform dark-purple-to-pale-green palette for general ordered values without black or white endpoints.
+#
 # SCM/tokyo : Perceptually uniform colormap without black or white, by Fabio Crameri [C=RGB]
 #
 #	www.fabiocrameri.ch/visualisation

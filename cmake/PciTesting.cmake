@@ -29,6 +29,7 @@ function(pci_add_catch_test_target target)
     add_executable(${target} ${ARG_SOURCES})
     target_include_directories(${target} PRIVATE
             "${PROJECT_SOURCE_DIR}/src"
+            "${PROJECT_SOURCE_DIR}/tests"
             ${ARG_INCLUDE_DIRECTORIES})
     target_link_libraries(${target} PRIVATE ${ARG_LIBRARIES})
     if(ARG_WITH_MAIN)

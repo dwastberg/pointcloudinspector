@@ -34,6 +34,8 @@ TEST_CASE("embedded CPT resources join the startup color-map catalog",
                           &pci::PointColorMapDefinition::key);
     REQUIRE(embedded != catalog.end());
     CHECK(embedded->name == "Embedded test gradient");
+    CHECK(embedded->description ==
+          "A test gradient carried through embedded metadata.");
     CHECK(pci::pointColorMapSupportsSource(
         *snapshot, embedded->id, pci::PointColorSource::Z));
     CHECK_FALSE(pci::pointColorMapSupportsSource(

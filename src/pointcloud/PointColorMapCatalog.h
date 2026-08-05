@@ -2,7 +2,6 @@
 
 #include "pointcloud/PointColorPolicy.h"
 
-#include <array>
 #include <cstdint>
 #include <memory>
 #include <span>
@@ -37,22 +36,16 @@ struct PointCategoricalColor {
     PointRgba color;
 };
 
-struct PointColorPolynomial {
-    std::array<double, 6> red{};
-    std::array<double, 6> green{};
-    std::array<double, 6> blue{};
-};
-
 struct PointColorMapDefinition {
     PointColorMap id = PointColorMap::Rgb;
     std::string_view key;
     std::string_view name;
+    std::string_view description;
     PointColorMapKind kind = PointColorMapKind::Direct;
     std::uint32_t compatibleSourceMask = 0;
     std::span<const PointColorStop> stops;
     std::span<const PointCategoricalColor> categoricalColors;
     PointRgba fallbackColor;
-    const PointColorPolynomial *polynomial = nullptr;
 };
 
 struct PointColorMapRegistrationResult {
@@ -116,7 +109,10 @@ public:
     // IDs are deterministic for stable keys, so registration order does not
     // renumber existing selections.
     [[nodiscard]] PointColorMapRegistrationResult registerContinuous(
-        std::string key, std::string name, std::vector<PointColorStop> stops);
+        std::string key,
+        std::string name,
+        std::vector<PointColorStop> stops,
+        std::string description = {});
     [[nodiscard]] PointColorMapCatalogSnapshotPtr freeze();
 
 private:

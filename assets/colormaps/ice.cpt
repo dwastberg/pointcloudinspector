@@ -1,3 +1,6 @@
+# PCINSPECTOR_NAME = Sea-Ice Concentration — Ice
+# PCINSPECTOR_DESCRIPTION = A pale-to-dark sequential palette for sea-ice concentration, snow cover, or other frozen-surface measurements.
+#
 # This colormap is part of the cmocean package by Kristen Thyng, 2016.
 # COLOR_MODEL = RGB
 1 4 6 19 2 4 6 19

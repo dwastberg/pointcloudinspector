@@ -1,4 +1,7 @@
 #
+# PCINSPECTOR_NAME = Vivid Sequential — Plasma
+# PCINSPECTOR_DESCRIPTION = A vivid purple-to-yellow sequential palette for ordered scalar data requiring strong visual separation.
+#
 # matplotlib/plasma : New matplotlib colormap Option C, via cpt-city
 # Design: Nathaniel J. Smith and Stefan van der Walt
 #

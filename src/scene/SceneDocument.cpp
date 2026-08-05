@@ -140,7 +140,8 @@ PointCloudLayerId SceneDocument::addLayer(PointCloudScenePtr scene)
     }
 
     const PointCloudLayerId id{nextLayerValue_++};
-    const PointColorMode colorMode = defaultPointColorMode(scene->metadata());
+    const PointColorMode colorMode =
+        defaultPointColorMode(*colorMaps_, scene->metadata());
     scene->setDocumentHierarchyResources(
         residencyCoordinator_, decodedPageCache_, hierarchyScheduler_, true);
     try {

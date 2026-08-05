@@ -1,4 +1,7 @@
 #
+# PCINSPECTOR_NAME = Warm Sequential — Lajolla
+# PCINSPECTOR_DESCRIPTION = A perceptually uniform warm palette for ordered values where black and pure white endpoints are undesirable.
+#
 # SCM/lajolla : Perceptually uniform colormap, without black or white, by Fabio Crameri [C=RGB]
 #
 #	www.fabiocrameri.ch/visualisation

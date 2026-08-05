@@ -1,3 +1,6 @@
+# PCINSPECTOR_NAME = Salinity — Haline
+# PCINSPECTOR_DESCRIPTION = A sequential palette designed for salinity and similar low-to-high concentration measurements.
+#
 # This colormap is part of the cmocean package by Kristen Thyng, 2016.
 # COLOR_MODEL = RGB
 1 42 24 108 2 42 24 108

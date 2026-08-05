@@ -1,3 +1,6 @@
+# PCINSPECTOR_NAME = High-Contrast Spectrum — Turbo
+# PCINSPECTOR_DESCRIPTION = A vivid rainbow-like palette for exploratory feature separation; avoid it when precise perceptual comparison is important.
+#
 # google/turbo : Google's Improved Rainbow Colormap for Visualization [C=RGB]
 # https://ai.googleblog.com/2019/08/turbo-improved-rainbow-colormap-for.html
 #

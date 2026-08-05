@@ -1,4 +1,7 @@
 #
+# PCINSPECTOR_NAME = Terrain and Bathymetry — Oleron
+# PCINSPECTOR_DESCRIPTION = A perceptually uniform topographic palette separating underwater depth from land elevation around sea level.
+#
 # SCM/oleron : Perceptually uniform topography colormap, by Fabio Crameri [H,C=RGB]
 #
 #	www.fabiocrameri.ch/visualisation

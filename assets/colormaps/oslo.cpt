@@ -1,4 +1,7 @@
 #
+# PCINSPECTOR_NAME = Grayscale-Compatible Sequential — Oslo
+# PCINSPECTOR_DESCRIPTION = A dark-to-light blue sequential palette with black and white limits, useful when grayscale readability matters.
+#
 # SCM/oslo : Perceptually uniform, B&W limits, by Fabio Crameri [C=RGB]
 #
 #	www.fabiocrameri.ch/visualisation

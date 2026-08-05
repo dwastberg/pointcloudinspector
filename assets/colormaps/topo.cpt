@@ -1,3 +1,6 @@
+# PCINSPECTOR_NAME = Terrain and Bathymetry — Topo
+# PCINSPECTOR_DESCRIPTION = A cmocean palette for combined bathymetry and topography, with separate visual ranges for water and land.
+#
 # This colormap is part of the cmocean package by Kristen Thyng, 2016.
 # COLOR_MODEL = RGB
 1 40 26 44 2 40 26 44

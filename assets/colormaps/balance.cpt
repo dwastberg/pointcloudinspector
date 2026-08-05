@@ -1,3 +1,6 @@
+# PCINSPECTOR_NAME = Signed Change — Balance
+# PCINSPECTOR_DESCRIPTION = A diverging palette for differences, residuals, or changes with a meaningful neutral midpoint.
+#
 # This colormap is part of the cmocean package by Kristen Thyng, 2016.
 # COLOR_MODEL = RGB
 1 24 28 67 2 24 28 67

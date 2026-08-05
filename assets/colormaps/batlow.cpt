@@ -1,4 +1,7 @@
 #
+# PCINSPECTOR_NAME = General Values — Batlow
+# PCINSPECTOR_DESCRIPTION = A perceptually uniform multihue palette for general ordered scalar data and accurate visual comparison.
+#
 # SCM/batlow : Perceptually uniform 'rainbow' colormap by Fabio Crameri [C=RGB]
 #
 #	www.fabiocrameri.ch/visualisation

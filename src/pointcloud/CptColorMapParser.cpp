@@ -355,6 +355,7 @@ CptColorMapParseResult parseCptColorMap(const std::string_view contents,
 {
     ColorModel colorModel = ColorModel::Rgb;
     std::string name(trim(fallbackName));
+    std::string description;
     std::vector<RawInterval> intervals;
 
     std::size_t lineNumber = 0;
@@ -410,6 +411,15 @@ CptColorMapParseResult parseCptColorMap(const std::string_view contents,
                         "PCINSPECTOR_NAME requires a non-empty value");
                 }
                 name = std::string(trim(directive.substr(equals + 1)));
+            } else if (key == "PCINSPECTOR_DESCRIPTION") {
+                if (equals == std::string_view::npos ||
+                    trim(directive.substr(equals + 1)).empty()) {
+                    return failure(
+                        lineNumber,
+                        "PCINSPECTOR_DESCRIPTION requires a non-empty value");
+                }
+                description =
+                    std::string(trim(directive.substr(equals + 1)));
             } else if (key == "CYCLIC") {
                 return failure(lineNumber,
                                "cyclic CPT maps are not supported by clamped "
@@ -507,6 +517,7 @@ CptColorMapParseResult parseCptColorMap(const std::string_view contents,
 
     return ParsedCptColorMap{
         .name = std::move(name),
+        .description = std::move(description),
         .stops = std::move(stops),
     };
 }

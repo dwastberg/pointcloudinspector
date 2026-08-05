@@ -1,5 +1,6 @@
 #include "pointcloud/PointColorMapCatalog.h"
 #include "pointcloud/PointColorPolicy.h"
+#include "support/TestPointColorMaps.h"
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -31,7 +32,8 @@ TEST_CASE("color sources reflect available point-cloud attributes",
           });
 
     metadata.hasColor = false;
-    CHECK(pci::defaultPointColorMode(metadata) ==
+    const auto catalog = pci::test::createTestPointColorMapCatalog();
+    CHECK(pci::defaultPointColorMode(*catalog, metadata) ==
           pci::PointColorMode{
               .source = pci::PointColorSource::Z,
               .colorMap = pci::PointColorMap::Viridis,
@@ -40,14 +42,18 @@ TEST_CASE("color sources reflect available point-cloud attributes",
 
 TEST_CASE("color map policy only permits compatible maps", "[unit][pointcloud]")
 {
-    const auto catalog = pci::createBuiltInPointColorMapCatalog();
+    const auto baseCatalog = pci::createBuiltInPointColorMapCatalog();
+    CHECK(pci::availablePointColorMaps(*baseCatalog,
+                                       pci::PointColorSource::Z)
+              .empty());
+
+    const auto catalog = pci::test::createTestPointColorMapCatalog();
     CHECK(pci::availablePointColorMaps(*catalog, pci::PointColorSource::Rgb) ==
           std::vector{pci::PointColorMap::Rgb});
     CHECK(pci::availablePointColorMaps(*catalog, pci::PointColorSource::Z) ==
           std::vector{
-              pci::PointColorMap::Grayscale,
-              pci::PointColorMap::Viridis,
               pci::PointColorMap::Turbo,
+              pci::PointColorMap::Viridis,
           });
     CHECK(pci::availablePointColorMaps(*catalog,
                                        pci::PointColorSource::Classification) ==
@@ -70,7 +76,7 @@ TEST_CASE("color modes validate maps and manual scalar ranges",
     metadata.hasColor = true;
     metadata.hasIntensity = true;
 
-    const auto catalog = pci::createBuiltInPointColorMapCatalog();
+    const auto catalog = pci::test::createTestPointColorMapCatalog();
     CHECK(pci::pointColorModeAvailable(
         *catalog,
         metadata,
@@ -143,9 +149,9 @@ TEST_CASE("automatic coordinate ranges use document-wide bounds",
 TEST_CASE("color map catalog owns interpolation and categorical palettes",
           "[unit][pointcloud][color]")
 {
-    const auto snapshot = pci::createBuiltInPointColorMapCatalog();
+    const auto snapshot = pci::test::createTestPointColorMapCatalog();
     const auto catalog = pci::pointColorMapCatalog(*snapshot);
-    CHECK(catalog.size() == 6);
+    CHECK(catalog.size() == 5);
     for (const pci::PointColorMapDefinition &definition : catalog) {
         CHECK(pci::pointColorMapDefinition(*snapshot, definition.id) ==
               &definition);
@@ -153,11 +159,11 @@ TEST_CASE("color map catalog owns interpolation and categorical palettes",
         CHECK_FALSE(definition.name.empty());
     }
 
-    const pci::PointRgba grayscaleMid = pci::sampleContinuousPointColorMap(
-        *snapshot, pci::PointColorMap::Grayscale, 0.5F);
-    CHECK(grayscaleMid.red == Catch::Approx(0.5F));
-    CHECK(grayscaleMid.green == Catch::Approx(0.5F));
-    CHECK(grayscaleMid.blue == Catch::Approx(0.5F));
+    const pci::PointRgba viridisLow = pci::sampleContinuousPointColorMap(
+        *snapshot, pci::PointColorMap::Viridis, 0.0F);
+    CHECK(viridisLow.red == Catch::Approx(0.27F));
+    CHECK(viridisLow.green == Catch::Approx(0.0F));
+    CHECK(viridisLow.blue == Catch::Approx(0.33F));
 
     const pci::PointRgba ground = pci::sampleCategoricalPointColorMap(
         *snapshot, pci::PointColorMap::LasClassification, 2);
@@ -183,10 +189,14 @@ TEST_CASE("color map catalogs freeze independently with typed errors",
     REQUIRE(registration);
     const auto firstSnapshot = first.freeze();
     const auto secondSnapshot = second.freeze();
-    CHECK(firstSnapshot->definitions().size() == 7);
-    CHECK(secondSnapshot->definitions().size() == 6);
+    CHECK(firstSnapshot->definitions().size() == 4);
+    CHECK(secondSnapshot->definitions().size() == 3);
     CHECK(firstSnapshot->definition(registration.id) != nullptr);
     CHECK(secondSnapshot->definition(registration.id) == nullptr);
+    CHECK(pci::pointColorMapName(*firstSnapshot, registration.id) ==
+          "Isolated");
+    CHECK(pci::pointColorMapDescription(*firstSnapshot, registration.id) ==
+          "A continuous color map for ordered numeric values.");
 
     const auto late = first.registerContinuous("test:late", "Late", stops);
     CHECK_FALSE(late);

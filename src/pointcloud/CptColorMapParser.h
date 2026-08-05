@@ -12,6 +12,7 @@ namespace pci {
 
 struct ParsedCptColorMap {
     std::string name;
+    std::string description;
     std::vector<PointColorStop> stops;
 };
 

@@ -1,3 +1,6 @@
+# PCINSPECTOR_NAME = Flow Speed — Speed
+# PCINSPECTOR_DESCRIPTION = A sequential palette for current speed, wind speed, velocity magnitude, and similar non-negative rates.
+#
 # This colormap is part of the cmocean package by Kristen Thyng, 2016.
 # COLOR_MODEL = RGB
 1 255 253 205 2 255 253 205

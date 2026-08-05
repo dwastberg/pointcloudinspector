@@ -24,7 +24,8 @@ enum class PointColorSource : int {
 
 enum class PointColorMap : int {
     Rgb = 0,
-    Grayscale = 1,
+    // Stable IDs retained for the CPT-backed palettes used as defaults and by
+    // persisted selections. Their color data is not built into the program.
     Viridis = 2,
     Turbo = 3,
     LasClassification = 4,
@@ -66,13 +67,18 @@ availablePointColorMaps(const PointColorMapCatalogSnapshot &catalog,
 pointColorMapAvailable(const std::vector<PointColorMap> &maps,
                        PointColorMap map);
 [[nodiscard]] PointColorMap
-defaultPointColorMap(PointColorSource source) noexcept;
+defaultPointColorMap(const PointColorMapCatalogSnapshot &catalog,
+                     PointColorSource source) noexcept;
 [[nodiscard]] PointColorMode
-defaultPointColorMode(const PointCloudMetadata &metadata) noexcept;
+defaultPointColorMode(const PointColorMapCatalogSnapshot &catalog,
+                      const PointCloudMetadata &metadata) noexcept;
 
 [[nodiscard]] std::string_view
 pointColorMapName(const PointColorMapCatalogSnapshot &catalog,
                   PointColorMap map);
+[[nodiscard]] std::string_view
+pointColorMapDescription(const PointColorMapCatalogSnapshot &catalog,
+                         PointColorMap map);
 [[nodiscard]] bool
 pointColorSourceUsesScalarRange(PointColorSource source) noexcept;
 [[nodiscard]] bool validPointScalarRange(const PointScalarRange &range,

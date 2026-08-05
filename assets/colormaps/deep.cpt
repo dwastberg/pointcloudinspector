@@ -1,3 +1,6 @@
+# PCINSPECTOR_NAME = Water Depth — Deep
+# PCINSPECTOR_DESCRIPTION = A sequential palette designed for bathymetry and other measurements that increase with water depth.
+#
 # This colormap is part of the cmocean package by Kristen Thyng, 2016.
 # COLOR_MODEL = RGB
 1 253 254 204 2 253 254 204

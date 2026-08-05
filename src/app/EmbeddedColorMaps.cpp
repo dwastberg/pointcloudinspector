@@ -95,7 +95,8 @@ EmbeddedColorMapLoadResult loadEmbeddedColorMaps(PointColorMapCatalog &catalog)
         PointColorMapRegistrationResult registration =
             catalog.registerContinuous(stableKeyForResource(path),
                                        std::move(colorMap.name),
-                                       std::move(colorMap.stops));
+                                       std::move(colorMap.stops),
+                                       std::move(colorMap.description));
         if (!registration) {
             result.issues.push_back({
                 .resourcePath = path,

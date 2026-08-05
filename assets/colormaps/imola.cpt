@@ -1,4 +1,7 @@
 #
+# PCINSPECTOR_NAME = Low-Light Sequential — Imola
+# PCINSPECTOR_DESCRIPTION = A perceptually uniform blue-to-yellow palette for ordered values displayed against subdued or dark surroundings.
+#
 # SCM/imola : Perceptually uniform, low-lightness gradient colormap, by Fabio Crameri [C=RGB]
 #
 #	www.fabiocrameri.ch/visualisation

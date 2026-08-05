@@ -1,4 +1,5 @@
 # PCINSPECTOR_NAME = Embedded test gradient
+# PCINSPECTOR_DESCRIPTION = A test gradient carried through embedded metadata.
 # Project-authored fixture for embedded color-map resource tests.
 0.000 32/64/96 1.000 224/240/255
 F 255/255/255

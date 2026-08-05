@@ -1,4 +1,7 @@
 #
+# PCINSPECTOR_NAME = Centered Differences — Vik
+# PCINSPECTOR_DESCRIPTION = A perceptually uniform blue-to-red diverging palette for values varying around a meaningful central reference.
+#
 # SCM/vik : Perceptually uniform bimodal colormap, light, by Fabio Crameri [S,C=RGB]
 #
 #	www.fabiocrameri.ch/visualisation

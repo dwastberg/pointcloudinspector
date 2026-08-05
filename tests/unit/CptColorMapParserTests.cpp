@@ -12,6 +12,7 @@ TEST_CASE("regular CPT intervals become normalized color stops",
 {
     constexpr std::string_view cpt = R"cpt(
 # PCINSPECTOR_NAME = Test relief
+# PCINSPECTOR_DESCRIPTION = A test relief palette.
 10 0/0/0 15 255/0/0
 15 0/0/255 20 255/255/255
 F 255/255/255
@@ -21,6 +22,7 @@ F 255/255/255
         pci::parseCptColorMap(cpt, "Fallback");
     REQUIRE(result);
     CHECK(result->name == "Test relief");
+    CHECK(result->description == "A test relief palette.");
     REQUIRE(result->stops.size() == 4);
     CHECK(result->stops[0].position == 0.0F);
     CHECK(result->stops[1].position == Catch::Approx(0.5F));
@@ -36,6 +38,8 @@ TEST_CASE("CPT parser accepts separated RGB and HSV colors",
     const pci::CptColorMapParseResult rgb =
         pci::parseCptColorMap("0 0 64 255 1 255 128 0\n", "Separated RGB");
     REQUIRE(rgb);
+    CHECK(rgb->name == "Separated RGB");
+    CHECK(rgb->description.empty());
     REQUIRE(rgb->stops.size() == 2);
     CHECK(rgb->stops.front().color.blue == 1.0F);
     CHECK(rgb->stops.back().color.red == 1.0F);

@@ -9,6 +9,7 @@
 #include "pointcloud/PointColorPolicy.h"
 #include "renderer/RenderViewport.h"
 #include "scene/PointCloudDataSource.h"
+#include "support/TestPointColorMaps.h"
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -1057,7 +1058,14 @@ TEST_CASE("main window color selectors apply compatible renderer modes",
     auto viewport = std::make_unique<FakeViewport>();
     FakeViewport *viewportPointer = viewport.get();
     auto services = makeTestImportServices(std::make_shared<ImmediateLoader>());
-    pci::MainWindow window(std::move(viewport), std::move(services), 100);
+    pci::MainWindow window(
+        std::move(viewport),
+        std::move(services),
+        100,
+        pci::defaultPointCloudDecodedByteBudget,
+        std::nullopt,
+        {},
+        pci::test::createTestPointColorMapCatalog());
     window.show();
 
     auto *sources =
@@ -1090,10 +1098,17 @@ TEST_CASE("main window color selectors apply compatible renderer modes",
     REQUIRE(waitFor([&] {
         return maps->findText(QStringLiteral("Turbo")) >= 0;
     }));
+    REQUIRE(maps->count() == 2);
+    CHECK(maps->itemText(0) == QStringLiteral("Turbo"));
+    CHECK(maps->itemText(1) == QStringLiteral("Viridis"));
 
     const int turboIndex = maps->findText(QStringLiteral("Turbo"));
     REQUIRE(turboIndex >= 0);
+    const QString turboToolTip =
+        maps->itemData(turboIndex, Qt::ToolTipRole).toString();
+    CHECK(turboToolTip.contains(QStringLiteral("high-contrast")));
     maps->setCurrentIndex(turboIndex);
+    CHECK(maps->toolTip() == turboToolTip);
     CHECK(
         viewportPointer->document()->pointLayers().front().colorMode.colorMap ==
         pci::PointColorMap::Turbo);
@@ -1138,7 +1153,14 @@ TEST_CASE("main window add mode keeps per-layer colors independent",
     auto viewport = std::make_unique<FakeViewport>();
     FakeViewport *viewportPointer = viewport.get();
     auto services = makeTestImportServices(std::make_shared<ImmediateLoader>());
-    pci::MainWindow window(std::move(viewport), std::move(services), 100);
+    pci::MainWindow window(
+        std::move(viewport),
+        std::move(services),
+        100,
+        pci::defaultPointCloudDecodedByteBudget,
+        std::nullopt,
+        {},
+        pci::test::createTestPointColorMapCatalog());
     window.show();
 
     auto *openAction =
@@ -1205,7 +1227,14 @@ TEST_CASE("layer colors can be applied to every compatible point cloud",
     auto viewport = std::make_unique<FakeViewport>();
     FakeViewport *viewportPointer = viewport.get();
     auto services = makeTestImportServices(std::make_shared<ImmediateLoader>());
-    pci::MainWindow window(std::move(viewport), std::move(services), 100);
+    pci::MainWindow window(
+        std::move(viewport),
+        std::move(services),
+        100,
+        pci::defaultPointCloudDecodedByteBudget,
+        std::nullopt,
+        {},
+        pci::test::createTestPointColorMapCatalog());
     window.show();
 
     auto *list =
@@ -1399,7 +1428,14 @@ TEST_CASE("coordinate color ranges default to all document layers",
     auto viewport = std::make_unique<FakeViewport>();
     FakeViewport *viewportPointer = viewport.get();
     auto services = makeTestImportServices(std::make_shared<ImmediateLoader>());
-    pci::MainWindow window(std::move(viewport), std::move(services), 100);
+    pci::MainWindow window(
+        std::move(viewport),
+        std::move(services),
+        100,
+        pci::defaultPointCloudDecodedByteBudget,
+        std::nullopt,
+        {},
+        pci::test::createTestPointColorMapCatalog());
     window.show();
 
     auto *list =

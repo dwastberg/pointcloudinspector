@@ -1,3 +1,6 @@
+# PCINSPECTOR_NAME = Solar Radiation — Solar
+# PCINSPECTOR_DESCRIPTION = A sequential palette designed for solar radiation, irradiance, and other light or energy measurements.
+#
 # This colormap is part of the cmocean package by Kristen Thyng, 2016.
 # COLOR_MODEL = RGB
 1 51 20 24 2 51 20 24

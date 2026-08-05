@@ -1,4 +1,5 @@
 #include "app/SceneSession.h"
+#include "support/TestPointColorMaps.h"
 
 #include "import/PointCloudLoadController.h"
 
@@ -213,7 +214,12 @@ TEST_CASE("scene session retires replace and add loads at display readiness",
           "[scene-session][loading]")
 {
     auto loader = std::make_shared<SessionLoader>();
-    pci::SceneSession session(makeServices(loader), 100, 1024 * 1024);
+    pci::SceneSession session(makeServices(loader),
+                              100,
+                              1024 * 1024,
+                              std::nullopt,
+                              {},
+                              pci::test::createTestPointColorMapCatalog());
 
     session.loadPointCloud("first.las", pci::PointCloudLoadMode::Replace);
     finishVisibleLoads(session);
@@ -301,7 +307,12 @@ TEST_CASE("scene session rolls back cancellation and failure after preview",
 TEST_CASE("scene session owns document commands", "[scene-session][commands]")
 {
     auto loader = std::make_shared<SessionLoader>();
-    pci::SceneSession session(makeServices(loader), 100, 1024 * 1024);
+    pci::SceneSession session(makeServices(loader),
+                              100,
+                              1024 * 1024,
+                              std::nullopt,
+                              {},
+                              pci::test::createTestPointColorMapCatalog());
     session.loadPointCloud("first.las", pci::PointCloudLoadMode::Replace);
     finishVisibleLoads(session);
     session.loadPointCloud("second.las", pci::PointCloudLoadMode::Add);

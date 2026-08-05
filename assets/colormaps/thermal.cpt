@@ -1,3 +1,6 @@
+# PCINSPECTOR_NAME = Temperature — Thermal
+# PCINSPECTOR_DESCRIPTION = A perceptually uniform sequential palette for temperature and other measurements progressing from cold to hot.
+#
 # This colormap is part of the cmocean package by Kristen Thyng, 2016.
 # COLOR_MODEL = RGB
 1 4 35 51 2 4 35 51

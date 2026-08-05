@@ -22,80 +22,6 @@ constexpr std::uint32_t scalarSources =
     sourceBit(PointColorSource::X) | sourceBit(PointColorSource::Y) |
     sourceBit(PointColorSource::Z) | sourceBit(PointColorSource::Intensity);
 
-constexpr std::array grayscaleStops{
-    PointColorStop{
-        .position = 0.0F,
-        .color = {0.0F, 0.0F, 0.0F, 1.0F},
-    },
-    PointColorStop{
-        .position = 1.0F,
-        .color = {1.0F, 1.0F, 1.0F, 1.0F},
-    },
-};
-
-// Coefficients are the former shader polynomials, represented as catalog
-// data. Adding another polynomial or stop-based map does not require GLSL or
-// pipeline changes.
-constexpr PointColorPolynomial viridisPolynomial{
-    .red =
-        {
-            0.280268,
-            -0.143510,
-            2.225793,
-            -14.815088,
-            -0.637081,
-            0.283091,
-        },
-    .green =
-        {
-            -0.002117,
-            1.617109,
-            -1.546676,
-            4.292160,
-            4.555625,
-            -1.226593,
-        },
-    .blue =
-        {
-            0.300805,
-            2.614650,
-            -12.019139,
-            28.933559,
-            -7.879381,
-            0.832852,
-        },
-};
-
-constexpr PointColorPolynomial turboPolynomial{
-    .red =
-        {
-            0.13572138,
-            4.61539260,
-            -42.66032258,
-            132.13108234,
-            -152.94239396,
-            59.28637943,
-        },
-    .green =
-        {
-            0.09140261,
-            2.19418839,
-            4.84296658,
-            -14.18503333,
-            4.27729857,
-            2.82956604,
-        },
-    .blue =
-        {
-            0.10667330,
-            12.64194608,
-            -60.58204836,
-            110.36276771,
-            -89.90310912,
-            27.34824973,
-        },
-};
-
 constexpr std::array classificationColors{
     PointCategoricalColor{1, {0.55F, 0.55F, 0.55F, 1.0F}},
     PointCategoricalColor{2, {0.45F, 0.30F, 0.18F, 1.0F}},
@@ -120,37 +46,15 @@ constexpr std::array builtinDefinitions{
         .id = PointColorMap::Rgb,
         .key = "builtin:rgb",
         .name = "RGB",
+        .description = "Uses the RGB colors stored in the point cloud.",
         .kind = PointColorMapKind::Direct,
         .compatibleSourceMask = sourceBit(PointColorSource::Rgb),
-    },
-    PointColorMapDefinition{
-        .id = PointColorMap::Grayscale,
-        .key = "builtin:grayscale",
-        .name = "Grayscale",
-        .kind = PointColorMapKind::Continuous,
-        .compatibleSourceMask = scalarSources,
-        .stops = grayscaleStops,
-    },
-    PointColorMapDefinition{
-        .id = PointColorMap::Viridis,
-        .key = "builtin:viridis",
-        .name = "Viridis",
-        .kind = PointColorMapKind::Continuous,
-        .compatibleSourceMask = scalarSources,
-        .polynomial = &viridisPolynomial,
-    },
-    PointColorMapDefinition{
-        .id = PointColorMap::Turbo,
-        .key = "builtin:turbo",
-        .name = "Turbo",
-        .kind = PointColorMapKind::Continuous,
-        .compatibleSourceMask = scalarSources,
-        .polynomial = &turboPolynomial,
     },
     PointColorMapDefinition{
         .id = PointColorMap::LasClassification,
         .key = "builtin:las-classification",
         .name = "LAS Classification",
+        .description = "Uses distinct colors for LAS classification codes.",
         .kind = PointColorMapKind::Categorical,
         .compatibleSourceMask = sourceBit(PointColorSource::Classification),
         .categoricalColors = classificationColors,
@@ -160,6 +64,7 @@ constexpr std::array builtinDefinitions{
         .id = PointColorMap::ReturnNumber,
         .key = "builtin:return-number",
         .name = "Return numbers",
+        .description = "Uses distinct colors for point return numbers.",
         .kind = PointColorMapKind::Categorical,
         .compatibleSourceMask = sourceBit(PointColorSource::ReturnNumber) |
                                 sourceBit(PointColorSource::NumberOfReturns),
@@ -172,11 +77,21 @@ struct OwnedContinuousPointColorMap {
     PointColorMap id = PointColorMap::Rgb;
     std::string key;
     std::string name;
+    std::string description;
     std::vector<PointColorStop> stops;
 };
 
+constexpr std::string_view defaultContinuousDescription =
+    "A continuous color map for ordered numeric values.";
+
 PointColorMap dynamicMapId(const std::string_view key) noexcept
 {
+    if (key == "cpt:viridis.cpt") {
+        return PointColorMap::Viridis;
+    }
+    if (key == "cpt:turbo.cpt") {
+        return PointColorMap::Turbo;
+    }
     constexpr std::uint32_t fnvOffset = 2166136261U;
     constexpr std::uint32_t fnvPrime = 16777619U;
     constexpr std::uint32_t dynamicIdBase = 1024U;
@@ -235,16 +150,6 @@ PointRgba clampColor(PointRgba color) noexcept
     color.blue = std::clamp(color.blue, 0.0F, 1.0F);
     color.alpha = std::clamp(color.alpha, 0.0F, 1.0F);
     return color;
-}
-
-float evaluatePolynomial(const std::array<double, 6> &coefficients,
-                         const double value) noexcept
-{
-    double result = coefficients.back();
-    for (std::size_t index = coefficients.size() - 1; index > 0; --index) {
-        result = result * value + coefficients[index - 1];
-    }
-    return static_cast<float>(result);
 }
 
 PointRgba interpolateStops(const std::span<const PointColorStop> stops,
@@ -327,15 +232,6 @@ PointRgba PointColorMapCatalogSnapshot::sampleContinuous(
         return {};
     }
     const float value = std::clamp(normalizedValue, 0.0F, 1.0F);
-    if (found->polynomial) {
-        const double t = static_cast<double>(value);
-        return clampColor({
-            .red = evaluatePolynomial(found->polynomial->red, t),
-            .green = evaluatePolynomial(found->polynomial->green, t),
-            .blue = evaluatePolynomial(found->polynomial->blue, t),
-            .alpha = 1.0F,
-        });
-    }
     return clampColor(interpolateStops(found->stops, value));
 }
 
@@ -365,7 +261,10 @@ PointColorMapCatalog &
 PointColorMapCatalog::operator=(PointColorMapCatalog &&) noexcept = default;
 
 PointColorMapRegistrationResult PointColorMapCatalog::registerContinuous(
-    std::string key, std::string name, std::vector<PointColorStop> stops)
+    std::string key,
+    std::string name,
+    std::vector<PointColorStop> stops,
+    std::string description)
 {
     if (impl_->snapshot) {
         return {
@@ -391,6 +290,9 @@ PointColorMapRegistrationResult PointColorMapCatalog::registerContinuous(
             .errorCode = PointColorMapRegistrationResult::Error::InvalidStops,
             .error = validation,
         };
+    }
+    if (description.empty()) {
+        description = defaultContinuousDescription;
     }
 
     const auto builtinKey = std::ranges::find(
@@ -428,6 +330,7 @@ PointColorMapRegistrationResult PointColorMapCatalog::registerContinuous(
         .id = id,
         .key = std::move(key),
         .name = std::move(name),
+        .description = std::move(description),
         .stops = std::move(stops),
     });
     return {
@@ -452,6 +355,7 @@ PointColorMapCatalogSnapshotPtr PointColorMapCatalog::freeze()
             .id = owned.id,
             .key = owned.key,
             .name = owned.name,
+            .description = owned.description,
             .kind = PointColorMapKind::Continuous,
             .compatibleSourceMask = scalarSources,
             .stops = owned.stops,

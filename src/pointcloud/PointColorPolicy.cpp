@@ -3,9 +3,34 @@
 #include "pointcloud/PointColorMapCatalog.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 
 namespace pci {
+namespace {
+
+bool colorMapNameLess(const std::string_view left,
+                      const std::string_view right)
+{
+    const auto fold = [](const unsigned char character) {
+        return static_cast<unsigned char>(std::tolower(character));
+    };
+    const bool foldedLess = std::lexicographical_compare(
+        left.begin(), left.end(), right.begin(), right.end(),
+        [&fold](const unsigned char leftCharacter,
+                const unsigned char rightCharacter) {
+            return fold(leftCharacter) < fold(rightCharacter);
+        });
+    const bool foldedGreater = std::lexicographical_compare(
+        right.begin(), right.end(), left.begin(), left.end(),
+        [&fold](const unsigned char leftCharacter,
+                const unsigned char rightCharacter) {
+            return fold(leftCharacter) < fold(rightCharacter);
+        });
+    return foldedLess || (!foldedGreater && left < right);
+}
+
+} // namespace
 
 std::vector<PointColorSource>
 availablePointColorSources(const PointCloudMetadata &metadata)
@@ -49,6 +74,11 @@ availablePointColorMaps(const PointColorMapCatalogSnapshot &catalog,
             result.push_back(definition.id);
         }
     }
+    std::ranges::sort(result, [&catalog](const PointColorMap left,
+                                         const PointColorMap right) {
+        return colorMapNameLess(pointColorMapName(catalog, left),
+                                pointColorMapName(catalog, right));
+    });
     return result;
 }
 
@@ -58,7 +88,9 @@ bool pointColorMapAvailable(const std::vector<PointColorMap> &maps,
     return std::ranges::find(maps, map) != maps.end();
 }
 
-PointColorMap defaultPointColorMap(const PointColorSource source) noexcept
+PointColorMap
+defaultPointColorMap(const PointColorMapCatalogSnapshot &catalog,
+                     const PointColorSource source) noexcept
 {
     switch (source) {
     case PointColorSource::Rgb:
@@ -66,25 +98,43 @@ PointColorMap defaultPointColorMap(const PointColorSource source) noexcept
     case PointColorSource::X:
     case PointColorSource::Y:
     case PointColorSource::Z:
-    case PointColorSource::Intensity:
-        return PointColorMap::Viridis;
+    case PointColorSource::Intensity: {
+        constexpr std::string_view preferredKey = "cpt:viridis.cpt";
+        const auto definitions = pointColorMapCatalog(catalog);
+        const auto preferred = std::ranges::find(
+            definitions, preferredKey, &PointColorMapDefinition::key);
+        if (preferred != definitions.end() &&
+            pointColorMapSupportsSource(catalog, preferred->id, source)) {
+            return preferred->id;
+        }
+        const auto firstCompatible =
+            std::ranges::find_if(definitions, [&catalog, source](
+                                                   const auto &definition) {
+                return definition.kind == PointColorMapKind::Continuous &&
+                       pointColorMapSupportsSource(
+                           catalog, definition.id, source);
+            });
+        return firstCompatible != definitions.end() ? firstCompatible->id
+                                                    : PointColorMap::Rgb;
+    }
     case PointColorSource::Classification:
         return PointColorMap::LasClassification;
     case PointColorSource::ReturnNumber:
     case PointColorSource::NumberOfReturns:
         return PointColorMap::ReturnNumber;
     }
-    return PointColorMap::Viridis;
+    return PointColorMap::Rgb;
 }
 
 PointColorMode
-defaultPointColorMode(const PointCloudMetadata &metadata) noexcept
+defaultPointColorMode(const PointColorMapCatalogSnapshot &catalog,
+                      const PointCloudMetadata &metadata) noexcept
 {
     const PointColorSource source =
         metadata.hasColor ? PointColorSource::Rgb : PointColorSource::Z;
     return {
         .source = source,
-        .colorMap = defaultPointColorMap(source),
+        .colorMap = defaultPointColorMap(catalog, source),
     };
 }
 
@@ -94,6 +144,17 @@ std::string_view pointColorMapName(const PointColorMapCatalogSnapshot &catalog,
     const PointColorMapDefinition *definition =
         pointColorMapDefinition(catalog, map);
     return definition ? definition->name : std::string_view{"Unknown"};
+}
+
+std::string_view
+pointColorMapDescription(const PointColorMapCatalogSnapshot &catalog,
+                         const PointColorMap map)
+{
+    const PointColorMapDefinition *definition =
+        pointColorMapDefinition(catalog, map);
+    return definition && !definition->description.empty()
+               ? definition->description
+               : std::string_view{"Color map details are unavailable."};
 }
 
 bool pointColorSourceUsesScalarRange(const PointColorSource source) noexcept

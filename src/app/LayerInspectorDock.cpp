@@ -44,6 +44,20 @@
 namespace pci {
 namespace {
 
+void addPointColorMapOption(QComboBox &combo,
+                            const PointColorMapCatalogSnapshot &catalog,
+                            const PointColorMap map)
+{
+    combo.addItem(pointColorMapLabel(catalog, map), static_cast<int>(map));
+    combo.setItemData(
+        combo.count() - 1, pointColorMapToolTip(catalog, map), Qt::ToolTipRole);
+}
+
+void updatePointColorMapToolTip(QComboBox &combo)
+{
+    combo.setToolTip(combo.currentData(Qt::ToolTipRole).toString());
+}
+
 QString layerLabel(const PointCloudLayer &layer)
 {
     const std::filesystem::path &path = layer.scene->metadata().sourcePath;
@@ -559,6 +573,7 @@ LayerInspectorDock::LayerInspectorDock(
             qOverload<int>(&QComboBox::currentIndexChanged),
             this,
             [this](int index) {
+                updatePointColorMapToolTip(*colorMapCombo_);
                 applyColorMap(index);
             });
     connect(applyColorToAllButton_, &QPushButton::clicked, this, [this] {
@@ -704,7 +719,7 @@ void LayerInspectorDock::applyColorSource(const int index)
         colorSourceCombo_->itemData(index).toInt());
     const PointColorMode mode{
         .source = source,
-        .colorMap = defaultPointColorMap(source),
+        .colorMap = defaultPointColorMap(*colorMaps_, source),
     };
 
     // Refresh the map choices for the new source without re-firing.
@@ -713,12 +728,12 @@ void LayerInspectorDock::applyColorSource(const int index)
         colorMapCombo_->clear();
         for (const PointColorMap map :
              availablePointColorMaps(*colorMaps_, source)) {
-            colorMapCombo_->addItem(pointColorMapLabel(*colorMaps_, map),
-                                    static_cast<int>(map));
+            addPointColorMapOption(*colorMapCombo_, *colorMaps_, map);
         }
         const int mapIndex =
             colorMapCombo_->findData(static_cast<int>(mode.colorMap));
         colorMapCombo_->setCurrentIndex(mapIndex >= 0 ? mapIndex : 0);
+        updatePointColorMapToolTip(*colorMapCombo_);
         colorMapCombo_->setEnabled(source != PointColorSource::Rgb &&
                                    colorMapCombo_->count() > 1);
     }
@@ -1093,12 +1108,12 @@ void LayerInspectorDock::updateProperties()
     colorMapCombo_->clear();
     for (const PointColorMap map :
          availablePointColorMaps(*colorMaps_, layer->colorMode.source)) {
-        colorMapCombo_->addItem(pointColorMapLabel(*colorMaps_, map),
-                                static_cast<int>(map));
+        addPointColorMapOption(*colorMapCombo_, *colorMaps_, map);
     }
     const int mapIndex =
         colorMapCombo_->findData(static_cast<int>(layer->colorMode.colorMap));
     colorMapCombo_->setCurrentIndex(mapIndex >= 0 ? mapIndex : 0);
+    updatePointColorMapToolTip(*colorMapCombo_);
     colorMapCombo_->setEnabled(layer->colorMode.source !=
                                    PointColorSource::Rgb &&
                                colorMapCombo_->count() > 1);
