@@ -71,8 +71,13 @@ jobs:
           cache-downloads: true
           init-shell: powershell
 
+      - name: Configure MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
       - name: Configure
-        run: cmake --preset ci -G Ninja
+        run: cmake --preset ci -G Ninja -DCMAKE_CXX_COMPILER=cl.exe
 
       - name: Build with warnings as errors
         run: cmake --build --preset ci --parallel 3
