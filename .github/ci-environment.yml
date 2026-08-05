@@ -1,0 +1,13 @@
+name: pcinspector-ci
+
+channels:
+  - conda-forge
+
+dependencies:
+  - clang-format
+  - cmake>=3.24
+  - cxx-compiler
+  - libgdal-core>=3.4
+  - libpdal>=2.10
+  - ninja
+  - qt6-main>=6.7
