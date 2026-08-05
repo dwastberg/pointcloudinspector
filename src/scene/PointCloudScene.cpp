@@ -507,6 +507,7 @@ PointCloudSceneSnapshot PointCloudScene::snapshot() const
         .scalarRanges = completeScalarRangesLocked(),
         .intensityMinimum = intensityMinimum_,
         .intensityMaximum = intensityMaximum_,
+        .flatBlocks = {},
     };
     if (hierarchical) {
         return result;

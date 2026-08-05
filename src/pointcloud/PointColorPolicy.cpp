@@ -9,20 +9,25 @@
 namespace pci {
 namespace {
 
-bool colorMapNameLess(const std::string_view left,
-                      const std::string_view right)
+bool colorMapNameLess(const std::string_view left, const std::string_view right)
 {
     const auto fold = [](const unsigned char character) {
         return static_cast<unsigned char>(std::tolower(character));
     };
     const bool foldedLess = std::lexicographical_compare(
-        left.begin(), left.end(), right.begin(), right.end(),
+        left.begin(),
+        left.end(),
+        right.begin(),
+        right.end(),
         [&fold](const unsigned char leftCharacter,
                 const unsigned char rightCharacter) {
             return fold(leftCharacter) < fold(rightCharacter);
         });
     const bool foldedGreater = std::lexicographical_compare(
-        right.begin(), right.end(), left.begin(), left.end(),
+        right.begin(),
+        right.end(),
+        left.begin(),
+        left.end(),
         [&fold](const unsigned char leftCharacter,
                 const unsigned char rightCharacter) {
             return fold(leftCharacter) < fold(rightCharacter);
@@ -74,11 +79,12 @@ availablePointColorMaps(const PointColorMapCatalogSnapshot &catalog,
             result.push_back(definition.id);
         }
     }
-    std::ranges::sort(result, [&catalog](const PointColorMap left,
-                                         const PointColorMap right) {
-        return colorMapNameLess(pointColorMapName(catalog, left),
-                                pointColorMapName(catalog, right));
-    });
+    std::ranges::sort(
+        result,
+        [&catalog](const PointColorMap left, const PointColorMap right) {
+            return colorMapNameLess(pointColorMapName(catalog, left),
+                                    pointColorMapName(catalog, right));
+        });
     return result;
 }
 
@@ -88,9 +94,8 @@ bool pointColorMapAvailable(const std::vector<PointColorMap> &maps,
     return std::ranges::find(maps, map) != maps.end();
 }
 
-PointColorMap
-defaultPointColorMap(const PointColorMapCatalogSnapshot &catalog,
-                     const PointColorSource source) noexcept
+PointColorMap defaultPointColorMap(const PointColorMapCatalogSnapshot &catalog,
+                                   const PointColorSource source) noexcept
 {
     switch (source) {
     case PointColorSource::Rgb:
@@ -107,9 +112,8 @@ defaultPointColorMap(const PointColorMapCatalogSnapshot &catalog,
             pointColorMapSupportsSource(catalog, preferred->id, source)) {
             return preferred->id;
         }
-        const auto firstCompatible =
-            std::ranges::find_if(definitions, [&catalog, source](
-                                                   const auto &definition) {
+        const auto firstCompatible = std::ranges::find_if(
+            definitions, [&catalog, source](const auto &definition) {
                 return definition.kind == PointColorMapKind::Continuous &&
                        pointColorMapSupportsSource(
                            catalog, definition.id, source);
@@ -135,6 +139,7 @@ defaultPointColorMode(const PointColorMapCatalogSnapshot &catalog,
     return {
         .source = source,
         .colorMap = defaultPointColorMap(catalog, source),
+        .manualRange = std::nullopt,
     };
 }
 

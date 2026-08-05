@@ -80,6 +80,9 @@ FullDetailController::configure(FullDetailConfiguration configuration)
         layers.push_back({
             .descriptor = std::move(layer),
             .detail = std::move(detail),
+            .decodedPayloads = {},
+            .probeCursor = 0,
+            .recoveryAttempts = 0,
         });
     }
 

@@ -1,10 +1,13 @@
 #include "platform/ProcessMemory.h"
 
+#include "foundation/CheckedArithmetic.h"
+
 #include <algorithm>
 
 #if defined(_WIN32)
-#include <psapi.h>
 #include <windows.h>
+
+#include <psapi.h>
 #elif defined(__APPLE__)
 #include <mach/mach.h>
 #include <sys/resource.h>
@@ -22,9 +25,10 @@ ProcessMemoryMetrics processMemoryMetrics() noexcept
     ProcessMemoryMetrics result;
 #if defined(_WIN32)
     PROCESS_MEMORY_COUNTERS counters{};
-    counters.cb = sizeof(counters);
-    if (GetProcessMemoryInfo(
-            GetCurrentProcess(), &counters, sizeof(counters)) != FALSE) {
+    counters.cb = static_cast<DWORD>(sizeof(counters));
+    if (GetProcessMemoryInfo(GetCurrentProcess(),
+                             &counters,
+                             static_cast<DWORD>(sizeof(counters))) != FALSE) {
         result.residentBytes = counters.WorkingSetSize;
         result.peakResidentBytes = counters.PeakWorkingSetSize;
     }
@@ -49,14 +53,14 @@ ProcessMemoryMetrics processMemoryMetrics() noexcept
         static_cast<void>(totalPages);
         const long pageSize = sysconf(_SC_PAGESIZE);
         if (pageSize > 0) {
-            result.residentBytes =
-                residentPages * static_cast<std::uint64_t>(pageSize);
+            result.residentBytes = saturatingMultiply(
+                residentPages, static_cast<std::uint64_t>(pageSize));
         }
     }
     rusage usage{};
     if (getrusage(RUSAGE_SELF, &usage) == 0 && usage.ru_maxrss > 0) {
-        result.peakResidentBytes =
-            static_cast<std::uint64_t>(usage.ru_maxrss) * 1024U;
+        result.peakResidentBytes = saturatingMultiply(
+            static_cast<std::uint64_t>(usage.ru_maxrss), std::uint64_t{1024});
     }
 #endif
     result.peakResidentBytes =

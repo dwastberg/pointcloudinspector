@@ -199,6 +199,8 @@ SchemaDefinition definitionFor(const QString &schema)
                     QStringLiteral("reused_persistent_sources"),
                 },
             .stringComparabilityFields = {QStringLiteral("status")},
+            .boolComparabilityFields = {},
+            .hasNativeLayerIdentity = false,
         };
     }
     if (schema == QString::fromLatin1(nativeSchema)) {

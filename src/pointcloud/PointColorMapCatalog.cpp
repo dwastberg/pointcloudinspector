@@ -49,6 +49,9 @@ constexpr std::array builtinDefinitions{
         .description = "Uses the RGB colors stored in the point cloud.",
         .kind = PointColorMapKind::Direct,
         .compatibleSourceMask = sourceBit(PointColorSource::Rgb),
+        .stops = {},
+        .categoricalColors = {},
+        .fallbackColor = {},
     },
     PointColorMapDefinition{
         .id = PointColorMap::LasClassification,
@@ -57,6 +60,7 @@ constexpr std::array builtinDefinitions{
         .description = "Uses distinct colors for LAS classification codes.",
         .kind = PointColorMapKind::Categorical,
         .compatibleSourceMask = sourceBit(PointColorSource::Classification),
+        .stops = {},
         .categoricalColors = classificationColors,
         .fallbackColor = {0.95F, 0.95F, 0.95F, 1.0F},
     },
@@ -68,6 +72,7 @@ constexpr std::array builtinDefinitions{
         .kind = PointColorMapKind::Categorical,
         .compatibleSourceMask = sourceBit(PointColorSource::ReturnNumber) |
                                 sourceBit(PointColorSource::NumberOfReturns),
+        .stops = {},
         .categoricalColors = returnColors,
         .fallbackColor = {0.85F, 0.85F, 0.85F, 1.0F},
     },
@@ -260,11 +265,11 @@ PointColorMapCatalog::PointColorMapCatalog(PointColorMapCatalog &&) noexcept =
 PointColorMapCatalog &
 PointColorMapCatalog::operator=(PointColorMapCatalog &&) noexcept = default;
 
-PointColorMapRegistrationResult PointColorMapCatalog::registerContinuous(
-    std::string key,
-    std::string name,
-    std::vector<PointColorStop> stops,
-    std::string description)
+PointColorMapRegistrationResult
+PointColorMapCatalog::registerContinuous(std::string key,
+                                         std::string name,
+                                         std::vector<PointColorStop> stops,
+                                         std::string description)
 {
     if (impl_->snapshot) {
         return {
@@ -301,12 +306,19 @@ PointColorMapRegistrationResult PointColorMapCatalog::registerContinuous(
         return {
             .id = builtinKey->id,
             .added = false,
+            .errorCode = PointColorMapRegistrationResult::Error::None,
+            .error = {},
         };
     }
     const auto existingKey = std::ranges::find(
         impl_->ownedMaps, key, &OwnedContinuousPointColorMap::key);
     if (existingKey != impl_->ownedMaps.end()) {
-        return {.id = existingKey->id, .added = false};
+        return {
+            .id = existingKey->id,
+            .added = false,
+            .errorCode = PointColorMapRegistrationResult::Error::None,
+            .error = {},
+        };
     }
 
     const PointColorMap id = dynamicMapId(key);
@@ -336,6 +348,8 @@ PointColorMapRegistrationResult PointColorMapCatalog::registerContinuous(
     return {
         .id = id,
         .added = true,
+        .errorCode = PointColorMapRegistrationResult::Error::None,
+        .error = {},
     };
 }
 
@@ -359,6 +373,8 @@ PointColorMapCatalogSnapshotPtr PointColorMapCatalog::freeze()
             .kind = PointColorMapKind::Continuous,
             .compatibleSourceMask = scalarSources,
             .stops = owned.stops,
+            .categoricalColors = {},
+            .fallbackColor = {},
         });
     }
     impl_->snapshot = PointColorMapCatalogSnapshotPtr(

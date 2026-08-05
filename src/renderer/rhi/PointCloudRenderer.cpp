@@ -296,7 +296,7 @@ void PointCloudRenderer::createResourceBindings(const std::size_t drawCapacity)
             0,
             QRhiShaderResourceBinding::VertexStage,
             newUniformBuffer.get(),
-            sizeof(BlockUniform)),
+            static_cast<quint32>(sizeof(BlockUniform))),
         QRhiShaderResourceBinding::sampledTexture(
             1,
             QRhiShaderResourceBinding::FragmentStage,
@@ -347,7 +347,8 @@ void PointCloudRenderer::createPipeline(
     }
 
     QRhiVertexInputLayout inputLayout;
-    inputLayout.setBindings({QRhiVertexInputBinding(sizeof(GpuPoint))});
+    inputLayout.setBindings(
+        {QRhiVertexInputBinding(static_cast<quint32>(sizeof(GpuPoint)))});
     inputLayout.setAttributes({
         QRhiVertexInputAttribute(0, 0, QRhiVertexInputAttribute::UShort4, 0),
         QRhiVertexInputAttribute(0, 1, QRhiVertexInputAttribute::UNormByte4, 8),

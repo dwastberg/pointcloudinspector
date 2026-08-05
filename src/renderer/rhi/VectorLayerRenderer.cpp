@@ -326,7 +326,7 @@ void VectorLayerRenderer::createResourceBindings(const std::size_t drawCapacity)
             QRhiShaderResourceBinding::VertexStage |
                 QRhiShaderResourceBinding::FragmentStage,
             buffer.get(),
-            sizeof(VectorLayerUniform))});
+            static_cast<quint32>(sizeof(VectorLayerUniform)))});
     if (!bindings->create()) {
         throw std::runtime_error(
             "Could not create QRhi vector shader resource bindings");
@@ -369,7 +369,8 @@ void VectorLayerRenderer::createPipelines(QRhiRenderPassDescriptor *renderPass)
         QRhiVertexInputLayout layout;
         if (primitive == static_cast<std::size_t>(VectorPrimitive::Line)) {
             layout.setBindings({QRhiVertexInputBinding(
-                sizeof(VectorSegment2f), QRhiVertexInputBinding::PerInstance)});
+                static_cast<quint32>(sizeof(VectorSegment2f)),
+                QRhiVertexInputBinding::PerInstance)});
             layout.setAttributes({QRhiVertexInputAttribute(
                 0, 0, QRhiVertexInputAttribute::Float4, 0)});
         } else {
@@ -377,8 +378,8 @@ void VectorLayerRenderer::createPipelines(QRhiRenderPassDescriptor *renderPass)
                 primitive == static_cast<std::size_t>(VectorPrimitive::Marker)
                     ? QRhiVertexInputBinding::PerInstance
                     : QRhiVertexInputBinding::PerVertex;
-            layout.setBindings({QRhiVertexInputBinding(sizeof(VectorVertex2f),
-                                                       classification)});
+            layout.setBindings({QRhiVertexInputBinding(
+                static_cast<quint32>(sizeof(VectorVertex2f)), classification)});
             layout.setAttributes({QRhiVertexInputAttribute(
                 0, 0, QRhiVertexInputAttribute::Float2, 0)});
         }

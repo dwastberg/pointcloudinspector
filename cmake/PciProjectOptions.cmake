@@ -2,7 +2,9 @@ add_library(pcinspector_project_options INTERFACE)
 add_library(pcinspector::project_options ALIAS pcinspector_project_options)
 target_compile_features(pcinspector_project_options INTERFACE cxx_std_23)
 target_compile_definitions(pcinspector_project_options INTERFACE
-        $<$<BOOL:${PCINSPECTOR_ENABLE_DIAGNOSTIC_UI}>:PCINSPECTOR_ENABLE_DIAGNOSTIC_UI>)
+        $<$<BOOL:${PCINSPECTOR_ENABLE_DIAGNOSTIC_UI}>:PCINSPECTOR_ENABLE_DIAGNOSTIC_UI>
+        $<$<PLATFORM_ID:Windows>:NOMINMAX>
+        $<$<PLATFORM_ID:Windows>:WIN32_LEAN_AND_MEAN>)
 
 option(PCINSPECTOR_ENABLE_CLANG_TIDY
        "Run the gating project clang-tidy checks while compiling" OFF)

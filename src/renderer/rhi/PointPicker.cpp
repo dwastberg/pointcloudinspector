@@ -131,7 +131,8 @@ void PointPicker::ensureResources(QRhi *rhi,
     }
 
     QRhiVertexInputLayout inputLayout;
-    inputLayout.setBindings({QRhiVertexInputBinding(sizeof(GpuPoint))});
+    inputLayout.setBindings(
+        {QRhiVertexInputBinding(static_cast<quint32>(sizeof(GpuPoint)))});
     inputLayout.setAttributes({
         QRhiVertexInputAttribute(0, 0, QRhiVertexInputAttribute::UShort4, 0),
     });

@@ -43,8 +43,7 @@ TEST_CASE("color sources reflect available point-cloud attributes",
 TEST_CASE("color map policy only permits compatible maps", "[unit][pointcloud]")
 {
     const auto baseCatalog = pci::createBuiltInPointColorMapCatalog();
-    CHECK(pci::availablePointColorMaps(*baseCatalog,
-                                       pci::PointColorSource::Z)
+    CHECK(pci::availablePointColorMaps(*baseCatalog, pci::PointColorSource::Z)
               .empty());
 
     const auto catalog = pci::test::createTestPointColorMapCatalog();

@@ -153,6 +153,9 @@
       "name": "ci",
       "configurePreset": "ci",
       "configuration": "Debug",
+      "execution": {
+        "noTestsAction": "error"
+      },
       "output": {
         "outputOnFailure": true
       }
@@ -165,6 +168,9 @@
         "ASAN_OPTIONS": "halt_on_error=1",
         "UBSAN_OPTIONS": "halt_on_error=1:print_stacktrace=1"
       },
+      "execution": {
+        "noTestsAction": "error"
+      },
       "output": {
         "outputOnFailure": true
       }
@@ -175,6 +181,9 @@
       "configuration": "Debug",
       "environment": {
         "TSAN_OPTIONS": "halt_on_error=1:second_deadlock_stack=1"
+      },
+      "execution": {
+        "noTestsAction": "error"
       },
       "output": {
         "outputOnFailure": true

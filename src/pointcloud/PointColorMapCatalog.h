@@ -108,11 +108,11 @@ public:
 
     // IDs are deterministic for stable keys, so registration order does not
     // renumber existing selections.
-    [[nodiscard]] PointColorMapRegistrationResult registerContinuous(
-        std::string key,
-        std::string name,
-        std::vector<PointColorStop> stops,
-        std::string description = {});
+    [[nodiscard]] PointColorMapRegistrationResult
+    registerContinuous(std::string key,
+                       std::string name,
+                       std::vector<PointColorStop> stops,
+                       std::string description = {});
     [[nodiscard]] PointColorMapCatalogSnapshotPtr freeze();
 
 private:

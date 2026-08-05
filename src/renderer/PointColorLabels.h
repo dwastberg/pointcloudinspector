@@ -36,9 +36,8 @@ inline QString pointColorMapLabel(const PointColorMapCatalogSnapshot &catalog,
     return QString::fromUtf8(name.data(), static_cast<qsizetype>(name.size()));
 }
 
-inline QString
-pointColorMapToolTip(const PointColorMapCatalogSnapshot &catalog,
-                     const PointColorMap colorMap)
+inline QString pointColorMapToolTip(const PointColorMapCatalogSnapshot &catalog,
+                                    const PointColorMap colorMap)
 {
     const std::string_view description =
         pointColorMapDescription(catalog, colorMap);

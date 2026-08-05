@@ -138,8 +138,10 @@ void EyeDomeLightingPass::updateUniforms(QRhiCommandBuffer *commandBuffer,
     uniforms.farPlane = farPlane;
 
     RhiResourceUpdateBatchPtr updates(rhi_->nextResourceUpdateBatch());
-    updates->updateDynamicBuffer(
-        uniformBuffer_.get(), 0, sizeof(uniforms), &uniforms);
+    updates->updateDynamicBuffer(uniformBuffer_.get(),
+                                 0,
+                                 static_cast<quint32>(sizeof(uniforms)),
+                                 &uniforms);
     commandBuffer->resourceUpdate(updates.release());
 }
 
@@ -215,9 +217,10 @@ void EyeDomeLightingPass::createSampler()
 
 void EyeDomeLightingPass::createBindings()
 {
-    uniformBuffer_.reset(rhi_->newBuffer(QRhiBuffer::Dynamic,
-                                         QRhiBuffer::UniformBuffer,
-                                         sizeof(EyeDomeLightingUniforms)));
+    uniformBuffer_.reset(
+        rhi_->newBuffer(QRhiBuffer::Dynamic,
+                        QRhiBuffer::UniformBuffer,
+                        static_cast<quint32>(sizeof(EyeDomeLightingUniforms))));
     uniformBuffer_->setName(QByteArrayLiteral("EDL uniforms"));
     requireCreated(uniformBuffer_->create(), "EDL uniform buffer");
 

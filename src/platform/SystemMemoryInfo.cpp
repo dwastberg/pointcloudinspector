@@ -88,7 +88,7 @@ SystemMemoryInfo systemMemoryInfo() noexcept
     SystemMemoryInfo result;
 #if defined(_WIN32)
     MEMORYSTATUSEX status{};
-    status.dwLength = sizeof(status);
+    status.dwLength = static_cast<DWORD>(sizeof(status));
     if (GlobalMemoryStatusEx(&status) != FALSE) {
         result.totalPhysicalBytes = status.ullTotalPhys;
         result.availablePhysicalBytes = status.ullAvailPhys;
@@ -142,9 +142,11 @@ SystemMemoryInfo systemMemoryInfo() noexcept
             continue;
         }
         if (key == "MemTotal:") {
-            result.totalPhysicalBytes = saturatingMultiply(valueKiB, 1024);
+            result.totalPhysicalBytes =
+                saturatingMultiply(valueKiB, std::uint64_t{1024});
         } else if (key == "MemAvailable:") {
-            result.availablePhysicalBytes = saturatingMultiply(valueKiB, 1024);
+            result.availablePhysicalBytes =
+                saturatingMultiply(valueKiB, std::uint64_t{1024});
         }
     }
 

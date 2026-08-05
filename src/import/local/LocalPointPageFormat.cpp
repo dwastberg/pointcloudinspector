@@ -358,6 +358,9 @@ bool localPointProcessAlive(const std::uint64_t processId) noexcept
         return false;
     }
 #if defined(_WIN32)
+    if (processId > std::numeric_limits<DWORD>::max()) {
+        return false;
+    }
     const HANDLE process =
         OpenProcess(SYNCHRONIZE, FALSE, static_cast<DWORD>(processId));
     if (process == nullptr) {

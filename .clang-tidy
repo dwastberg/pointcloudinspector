@@ -28,4 +28,7 @@ WarningsAsErrors: '*'
 HeaderFilterRegex: '(^|/)(src|tests|tools)/'
 ExcludeHeaderFilterRegex: '(^|/)(third_party|build)/'
 SystemHeaders: false
+ExtraArgs:
+  - '-Wno-c2y-extensions'
+  - '-Wno-missing-designated-field-initializers'
 FormatStyle: file

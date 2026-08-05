@@ -152,6 +152,7 @@ PointCloudLayerId SceneDocument::addLayer(PointCloudScenePtr scene)
                 PointCloudLayerState{
                     .scene = scene,
                     .colorMode = colorMode,
+                    .classificationFilter = {},
                 },
         });
     } catch (...) {

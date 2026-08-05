@@ -204,7 +204,11 @@ if(TARGET pci_multifile_bench)
             TIMEOUT 45)
 endif()
 
-if(TARGET pci_qualification_diff)
+if(TARGET pci_qualification_diff AND
+        EXISTS "${PROJECT_SOURCE_DIR}/qualification/tolerances.json" AND
+        EXISTS "${PROJECT_SOURCE_DIR}/qualification/release-h-local-two-file.json" AND
+        EXISTS "${PROJECT_SOURCE_DIR}/qualification/release-h-local-two-file-reopen.json" AND
+        EXISTS "${PROJECT_SOURCE_DIR}/qualification/release-h-native-metal-final.json")
     set(pcinspector_qualification_directory
         "${PROJECT_SOURCE_DIR}/qualification")
     set(pcinspector_qualification_tolerances

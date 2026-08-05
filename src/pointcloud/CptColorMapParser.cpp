@@ -418,8 +418,7 @@ CptColorMapParseResult parseCptColorMap(const std::string_view contents,
                         lineNumber,
                         "PCINSPECTOR_DESCRIPTION requires a non-empty value");
                 }
-                description =
-                    std::string(trim(directive.substr(equals + 1)));
+                description = std::string(trim(directive.substr(equals + 1)));
             } else if (key == "CYCLIC") {
                 return failure(lineNumber,
                                "cyclic CPT maps are not supported by clamped "
