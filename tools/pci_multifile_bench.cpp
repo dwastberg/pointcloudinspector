@@ -353,6 +353,7 @@ int main(int argc, char **argv)
                     .decodedByteBudget = cpuBudget,
                     .residency = document->residencyCoordinator(),
                     .memoryBudget = memoryBudget,
+                    .flatReservation = {},
                 },
         });
     }

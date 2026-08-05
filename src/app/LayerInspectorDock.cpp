@@ -720,6 +720,7 @@ void LayerInspectorDock::applyColorSource(const int index)
     const PointColorMode mode{
         .source = source,
         .colorMap = defaultPointColorMap(*colorMaps_, source),
+        .manualRange = std::nullopt,
     };
 
     // Refresh the map choices for the new source without re-firing.
@@ -785,6 +786,7 @@ void LayerInspectorDock::applyColorToAll()
     emit allPointColorModesChanged({
         .source = layer->colorMode.source,
         .colorMap = layer->colorMode.colorMap,
+        .manualRange = std::nullopt,
     });
 }
 
@@ -1121,6 +1123,7 @@ void LayerInspectorDock::updateProperties()
     const PointColorMode sharedColorMode{
         .source = layer->colorMode.source,
         .colorMap = layer->colorMode.colorMap,
+        .manualRange = std::nullopt,
     };
     const bool allCompatible = std::ranges::all_of(
         layers_, [this, &sharedColorMode](const PointCloudLayer &candidate) {

@@ -285,9 +285,26 @@ PdalPointCloudStatistics::calculate(const PointCloudMetadata &metadata,
 
     PointCloudStatistics result{
         .sourcePointCount = metadata.sourcePointCount,
+        .scannedPointCount = 0,
+        .x = {},
+        .y = {},
+        .z = {},
+        .intensity = std::nullopt,
+        .red = std::nullopt,
+        .green = std::nullopt,
+        .blue = std::nullopt,
+        .classificationCounts = {},
+        .returnNumberCounts = {},
+        .numberOfReturnsCounts = {},
         .hasClassification = metadata.hasClassification,
         .hasReturnNumber = metadata.hasReturnNumber,
         .hasNumberOfReturns = metadata.hasNumberOfReturns,
+        .horizontalBoundingArea = std::nullopt,
+        .boundingVolume = std::nullopt,
+        .horizontalDensity = std::nullopt,
+        .volumetricDensity = std::nullopt,
+        .nominalHorizontalSpacing = std::nullopt,
+        .spatialOutliers = std::nullopt,
     };
     NumericAccumulator x;
     NumericAccumulator y;

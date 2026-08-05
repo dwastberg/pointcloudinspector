@@ -47,6 +47,7 @@ pci::PointCloudScenePtr loadOne(const std::filesystem::path &path,
     pci::PointCloudLoadOptions options{
         .sourcePath = path,
         .maximumPoints = maxPoints,
+        .localPaging = {},
     };
     // This tool measures the retained-flat PDAL decode path. Persistent local
     // page construction/reuse is measured separately from this baseline.
@@ -54,6 +55,7 @@ pci::PointCloudScenePtr loadOne(const std::filesystem::path &path,
         std::numeric_limits<std::uint64_t>::max();
     const pci::PointCloudLoadResources resources;
     const pci::PointCloudLoadContext context{
+        .stopToken = {},
         .progress = [](pci::PointCloudImportProgress) {},
         .sceneReady = [](pci::PointCloudScenePtr) {},
     };

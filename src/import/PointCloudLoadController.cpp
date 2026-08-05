@@ -194,7 +194,10 @@ LoadJobId PointCloudLoadController::load(PointCloudLoadRequest request)
 
 LoadJobId PointCloudLoadController::load(PointCloudLoadOptions options)
 {
-    return load(PointCloudLoadRequest{.options = std::move(options)});
+    return load(PointCloudLoadRequest{
+        .options = std::move(options),
+        .resources = {},
+    });
 }
 
 std::vector<LoadJobId>
@@ -259,6 +262,7 @@ LoadJobId PointCloudLoadController::createJob(PointCloudLoadRequest request,
                                     .jobId = jobId,
                                     .sourcePath = request.options.sourcePath,
                                     .phase = PointCloudLoadJobPhase::Queued,
+                                    .detail = {},
                                 });
     emit jobStateChanged(jobId);
     job.options = std::move(request.options);

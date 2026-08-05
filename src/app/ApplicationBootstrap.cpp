@@ -125,6 +125,8 @@ void populateInitialDocument(RenderViewport &viewport,
         const PointCloudLoadResources resources{
             .decodedByteBudget = decodedByteBudget,
             .residency = document->residencyCoordinator(),
+            .memoryBudget = {},
+            .flatReservation = {},
         };
         const PointCloudImportPreflight preflight = loader.inspect(
             options, resources.decodedByteBudget, std::stop_token{});

@@ -368,6 +368,7 @@ void SceneSession::loadPointClouds(
                     .decodedByteBudget = decodedByteBudget_,
                     .residency = document_->residencyCoordinator(),
                     .memoryBudget = memoryBudget_,
+                    .flatReservation = {},
                 },
         });
     }
@@ -431,6 +432,7 @@ LoadJobId SceneSession::startLoadJob(const std::filesystem::path &sourcePath,
                 .decodedByteBudget = decodedByteBudget_,
                 .residency = document_->residencyCoordinator(),
                 .memoryBudget = memoryBudget_,
+                .flatReservation = {},
             },
     });
     trackLoadJob(jobId, sourcePath, mode, order, dispatchTime);
@@ -451,7 +453,27 @@ void SceneSession::trackLoadJob(
                              .sourcePath = sourcePath,
                              .sourceName = displayPathName(sourcePath),
                              .mode = mode,
+                             .scene = {},
+                             .previousDocument = {},
+                             .layerId = std::nullopt,
+                             .admitted = false,
+                             .importCompleted = false,
+                             .firstFrameCompleted = false,
+                             .displayCompleted = false,
+                             .fullDetailWarming = false,
+                             .fullDetailDecoded = 0,
+                             .fullDetailUploaded = 0,
+                             .fullDetailTotal = 0,
+                             .renderUploaded = 0,
+                             .renderUploadTotal = 0,
+                             .importStage = PointCloudImportStage::Reading,
+                             .importProcessed = 0,
+                             .importTotal = 0,
+                             .incrementalImportProgress = false,
+                             .loadedPointCountText = {},
                              .dispatchTime = dispatchTime,
+                             .timeToFirstPointsMilliseconds = std::nullopt,
+                             .displayReadyMilliseconds = std::nullopt,
                          });
 }
 

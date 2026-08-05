@@ -78,7 +78,13 @@ LoadJobId VectorLoadController::createJob(VectorImportRequest request,
     job.request.stopToken = job.stop.get_token();
     job.phase = phase;
     jobs_.emplace(jobId, std::move(job));
-    states_.emplace(jobId, VectorLoadJobState{.jobId = jobId, .phase = phase});
+    states_.emplace(jobId,
+                    VectorLoadJobState{
+                        .jobId = jobId,
+                        .phase = phase,
+                        .summary = {},
+                        .detail = {},
+                    });
     emit jobStateChanged(jobId);
     return jobId;
 }

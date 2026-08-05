@@ -89,7 +89,11 @@ struct LeafPageWriter::Impl {
         if (active) {
             throw std::logic_error("local point page already active");
         }
-        active = LocalPointPageRecord{.id = id, .payloadOffset = bytesWritten};
+        active = LocalPointPageRecord{
+            .id = id,
+            .tightBounds = {},
+            .payloadOffset = bytesWritten,
+        };
     }
 
     void append(const PointSample &sample)

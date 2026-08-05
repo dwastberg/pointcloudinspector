@@ -139,9 +139,15 @@ PointBudgetUpdate PointFrameCoordinator::pointBudgetUpdate(
     if (allFlat) {
         capacity = std::min(capacity, gpuByteBudget / sizeof(GpuPoint));
     }
-    PointBudgetUpdate result{.total = std::max<std::uint64_t>(capacity, 1)};
+    PointBudgetUpdate result{
+        .total = std::max<std::uint64_t>(capacity, 1),
+        .current = std::nullopt,
+    };
     if (allFlatComplete) {
-        FlatBudgetSettlementKey key{.gpuByteBudget = gpuByteBudget};
+        FlatBudgetSettlementKey key{
+            .gpuByteBudget = gpuByteBudget,
+            .retainedLayerPoints = {},
+        };
         key.retainedLayerPoints.reserve(layers.size());
         for (const PointFrameLayer &layer : layers) {
             key.retainedLayerPoints.emplace_back(
@@ -405,7 +411,10 @@ PointFramePlan PointFrameCoordinator::buildPlan(const PointFrameInput &input)
         if (!inFrustumLayers.contains(layer.layer.id)) {
             result.outOfFrustumLayerIds.insert(layer.layer.id);
             if (layer.snapshot->hierarchical) {
-                result.nodeRequests.push_back({.layerId = layer.layer.id});
+                result.nodeRequests.push_back({
+                    .layerId = layer.layer.id,
+                    .nodes = {},
+                });
                 scene->requestNodes({});
                 scene->trimDecodedCache();
                 hierarchySelections_[layer.layer.id].reset();
@@ -418,7 +427,10 @@ PointFramePlan PointFrameCoordinator::buildPlan(const PointFrameInput &input)
         if (layer.snapshot->hierarchical) {
             std::uint64_t layerRemaining = layerBudgets[layer.layer.id];
             if (layerRemaining == 0) {
-                result.nodeRequests.push_back({.layerId = layer.layer.id});
+                result.nodeRequests.push_back({
+                    .layerId = layer.layer.id,
+                    .nodes = {},
+                });
                 scene->requestNodes({});
                 continue;
             }
@@ -565,6 +577,7 @@ PointFramePlan PointFrameCoordinator::buildPlan(const PointFrameInput &input)
             const VisibleBlock &block = visible[allocation.candidateIndex];
             const PointFrameBlockKey key{
                 .layerId = block.layer->layer.id,
+                .nodeId = {},
                 .sceneBlockId = block.sceneBlockId,
             };
             result.blocks.push_back({
@@ -602,6 +615,7 @@ PointFramePlan PointFrameCoordinator::buildPlan(const PointFrameInput &input)
                 block.block->points.size(), layerRemaining));
         const PointFrameBlockKey key{
             .layerId = block.layer->layer.id,
+            .nodeId = {},
             .sceneBlockId = block.sceneBlockId,
         };
         result.blocks.push_back({
@@ -632,6 +646,7 @@ PointFrameCoordinator::flatPlanKey(const PointFrameInput &input)
         .pointBudget = input.framePointBudget,
         .outputWidth = input.camera.outputWidth,
         .outputHeight = input.camera.outputHeight,
+        .sceneRevisions = {},
     };
     key.sceneRevisions.reserve(input.layers.size());
     for (const PointFrameLayer &layer : input.layers) {

@@ -417,10 +417,13 @@ void measureCancellation(StressResult &result,
     const pci::PointCloudLoadOptions loadOptions{
         .sourcePath = path,
         .maximumPoints = options.maximumPoints,
+        .localPaging = {},
     };
     const pci::PointCloudLoadResources loadResources{
         .decodedByteBudget = result.cacheBudget,
         .residency = document->residencyCoordinator(),
+        .memoryBudget = {},
+        .flatReservation = {},
     };
     const pci::PointCloudLoadContext loadContext;
     const pci::PdalPointCloudLoader loader;

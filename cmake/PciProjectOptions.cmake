@@ -77,10 +77,15 @@ else()
     target_compile_options(pcinspector_project_warnings INTERFACE
             -Wall
             -Wextra
-            -Wpedantic)
+            -Wpedantic
+            $<$<CXX_COMPILER_ID:GNU>:-Wmissing-field-initializers>
+            $<$<CXX_COMPILER_ID:AppleClang,Clang>:-Wmissing-designated-field-initializers>)
     if(PCINSPECTOR_WARNINGS_AS_ERRORS)
         target_compile_options(pcinspector_project_warnings INTERFACE -Werror)
     endif()
+    target_compile_options(pcinspector_project_warnings INTERFACE
+            $<$<AND:$<BOOL:$<TARGET_PROPERTY:PCINSPECTOR_PARTIAL_AGGREGATE_FIXTURES>>,$<CXX_COMPILER_ID:GNU>>:-Wno-missing-field-initializers>
+            $<$<AND:$<BOOL:$<TARGET_PROPERTY:PCINSPECTOR_PARTIAL_AGGREGATE_FIXTURES>>,$<CXX_COMPILER_ID:AppleClang,Clang>>:-Wno-missing-designated-field-initializers>)
 endif()
 
 function(pci_configure_target target)

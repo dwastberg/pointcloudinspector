@@ -194,8 +194,10 @@ QualificationWriteResult QualificationReporter::write(const QString &status,
     };
 
     QualificationWriteResult result{
+        .written = false,
         .exitRequested = exitAfterWrite_,
         .filename = pathToQString(outputPath_),
+        .error = {},
     };
     QDir().mkpath(QFileInfo(result.filename).absolutePath());
     QSaveFile output(result.filename);
