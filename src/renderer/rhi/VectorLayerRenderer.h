@@ -74,12 +74,22 @@ static_assert(offsetof(VectorLayerUniform, featherPixels) == 136);
 static_assert(offsetof(VectorLayerUniform, nearPlaneW) == 140);
 static_assert(sizeof(VectorLayerUniform) == 144);
 
+// VectorLayerUniform deliberately mirrors a 16-byte-aligned GPU uniform block.
+// MSVC reports the resulting padding in this CPU-side draw record even though
+// the alignment is part of the data contract.
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable : 4324)
+#endif
 struct VectorLayerDraw {
     SceneLayerId layerId;
     VectorLayer layer;
     VectorLayerUniform uniform;
     std::uint32_t uniformIndex = 0;
 };
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
 
 [[nodiscard]] std::vector<std::byte>
 stageVectorLayerUniforms(std::span<const VectorLayerDraw> draws,

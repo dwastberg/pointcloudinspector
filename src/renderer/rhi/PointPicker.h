@@ -18,7 +18,7 @@ class QRhi;
 class QRhiBuffer;
 class QRhiCommandBuffer;
 class QRhiGraphicsPipeline;
-class QRhiReadbackResult;
+struct QRhiReadbackResult;
 class QRhiRenderBuffer;
 class QRhiRenderPassDescriptor;
 class QRhiShaderResourceBindings;

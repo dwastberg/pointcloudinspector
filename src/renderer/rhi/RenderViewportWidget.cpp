@@ -682,7 +682,7 @@ void RenderViewportWidget::recordScene(
     const std::vector<BlockDraw> &draws,
     const std::span<const VectorLayerDraw> vectorDraws)
 {
-    const QColor clear = QColor::fromRgbF(0.015, 0.02, 0.035, 1.0);
+    const QColor clear = QColor::fromRgbF(0.015F, 0.02F, 0.035F, 1.0F);
     const QRhiDepthStencilClearValue depthClear{1.0F, 0};
     QRhiRenderTarget *pointTarget =
         eyeDomeLightingActive_ ? eyeDomeLightingPass_.pointRenderTarget()
@@ -1044,7 +1044,7 @@ void RenderViewportWidget::render(QRhiCommandBuffer *commandBuffer)
                                   ? snapshot->sourcePointCount
                                   : snapshot->retainedFlatPointCount;
         std::uint64_t decoded = 0;
-        std::uint64_t uploaded = 0;
+        std::uint64_t uploadedPoints = 0;
         if (const std::optional<FullDetailLayerStatus> planned =
                 pointFrameCoordinator_.fullDetailLayerStatus(layerId)) {
             if (!pointFrameCoordinator_.fullDetailActive()) {
@@ -1065,7 +1065,7 @@ void RenderViewportWidget::render(QRhiCommandBuffer *commandBuffer)
             completed = planned->pointCount;
             total = planned->pointCount;
             decoded = total;
-            uploaded = total;
+            uploadedPoints = total;
         }
         publishLoadProgress({
             .layerId = layerId,
@@ -1073,7 +1073,7 @@ void RenderViewportWidget::render(QRhiCommandBuffer *commandBuffer)
             .completed = completed,
             .total = total,
             .decoded = decoded,
-            .uploaded = uploaded,
+            .uploaded = uploadedPoints,
         });
         pending = pendingDisplayReadyLayerIds_.erase(pending);
     }

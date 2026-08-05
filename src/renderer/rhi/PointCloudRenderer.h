@@ -75,6 +75,13 @@ static_assert(offsetof(BlockUniform, padding) == 104);
 static_assert(offsetof(BlockUniform, classificationMask) == 112);
 static_assert(sizeof(BlockUniform) == 144);
 
+// BlockUniform deliberately mirrors a 16-byte-aligned GPU uniform block.
+// MSVC reports the resulting padding in this CPU-side draw record even though
+// the alignment is part of the data contract.
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable : 4324)
+#endif
 struct BlockDraw {
     PointBlockPtr block;
     QRhiBuffer *buffer = nullptr;
@@ -85,6 +92,9 @@ struct BlockDraw {
     quint32 uniformIndex = 0;
     BlockUniform uniform;
 };
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
 
 [[nodiscard]] std::vector<std::byte>
 stageBlockUniforms(std::span<const BlockDraw> draws, std::size_t uniformStride);
