@@ -85,8 +85,8 @@ jobs:
           & $devShell -Arch amd64 -HostArch amd64 -SkipAutomaticLocation
 
           $env:CXX = "cl.exe"
-          cmake --preset ci -G Ninja
-          cmake --build --preset ci --parallel 3
+          cmake --preset ci-windows -G Ninja
+          cmake --build --preset ci-windows --parallel 3
 
       - name: Run non-GPU tests
-        run: ctest --preset ci
+        run: ctest --preset ci-windows

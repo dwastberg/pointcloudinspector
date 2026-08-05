@@ -32,6 +32,16 @@
       }
     },
     {
+      "name": "ci-windows",
+      "displayName": "Windows continuous integration",
+      "description": "RelWithDebInfo tests using the release-compatible MSVC runtime required by conda dependencies",
+      "inherits": "ci",
+      "binaryDir": "${sourceDir}/build/ci-windows",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo"
+      }
+    },
+    {
       "name": "asan-ubsan",
       "displayName": "Address and undefined-behavior sanitizers",
       "description": "Debug non-GPU suite instrumented with ASan and UBSan",
@@ -110,6 +120,11 @@
       "configuration": "Debug"
     },
     {
+      "name": "ci-windows",
+      "configurePreset": "ci-windows",
+      "configuration": "RelWithDebInfo"
+    },
+    {
       "name": "asan-ubsan",
       "configurePreset": "asan-ubsan",
       "configuration": "Debug"
@@ -153,6 +168,17 @@
       "name": "ci",
       "configurePreset": "ci",
       "configuration": "Debug",
+      "execution": {
+        "noTestsAction": "error"
+      },
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "ci-windows",
+      "configurePreset": "ci-windows",
+      "configuration": "RelWithDebInfo",
       "execution": {
         "noTestsAction": "error"
       },
