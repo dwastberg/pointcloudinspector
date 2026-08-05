@@ -512,17 +512,18 @@ readLocalPointManifest(const std::filesystem::path &path,
     if (bytes.size() < manifestMagic.size() + sizeof(std::uint32_t)) {
         throw std::runtime_error("truncated local page manifest");
     }
+    const std::span<const std::byte> manifestBytes{bytes};
     const std::uint32_t storedChecksum = [&] {
-        ByteReader tail(std::span(bytes).last(sizeof(std::uint32_t)));
+        ByteReader tail(manifestBytes.last(sizeof(std::uint32_t)));
         return tail.integer<std::uint32_t>();
     }();
-    if (localPointCrc32(std::span(bytes).first(
+    if (localPointCrc32(manifestBytes.first(
             bytes.size() - sizeof(std::uint32_t))) != storedChecksum) {
         throw std::runtime_error("local page manifest checksum mismatch");
     }
 
     ByteReader reader(
-        std::span(bytes).first(bytes.size() - sizeof(std::uint32_t)));
+        manifestBytes.first(bytes.size() - sizeof(std::uint32_t)));
     if (!std::ranges::equal(reader.take(manifestMagic.size()), manifestMagic)) {
         throw std::runtime_error("local page manifest magic mismatch");
     }

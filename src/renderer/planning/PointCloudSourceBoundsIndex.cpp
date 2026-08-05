@@ -54,7 +54,9 @@ std::size_t PointCloudSourceBoundsIndex::buildNode(const std::size_t begin,
 {
     const std::size_t nodeIndex = nodes_.size();
     nodes_.push_back({
-        .bounds = combined(std::span(entries_).subspan(begin, end - begin)),
+        .bounds = combined(
+            std::span<const PointCloudSourceBoundsEntry>{entries_}.subspan(
+                begin, end - begin)),
         .begin = begin,
         .end = end,
     });
