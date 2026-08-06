@@ -44,15 +44,20 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 check_cxx_source_compiles(
     "#include <expected>
+     #include <stop_token>
+     #include <thread>
+     #include <type_traits>
      #if !defined(__cpp_lib_expected) || __cpp_lib_expected < 202202L
      #error std::expected is unavailable
      #endif
      int main()
      {
+         static_assert(std::is_default_constructible_v<std::stop_token>);
+         static_assert(std::is_default_constructible_v<std::jthread>);
          std::expected<int, int> value = 42;
          return value.value() == 42 ? 0 : 1;
-    }"
-    PCINSPECTOR_HAS_STD_EXPECTED)
+     }"
+    PCINSPECTOR_HAS_REQUIRED_STANDARD_LIBRARY)
 if(pcinspector_had_cxx_standard)
     set(CMAKE_CXX_STANDARD "${pcinspector_saved_cxx_standard}")
 else()
@@ -76,7 +81,7 @@ unset(pcinspector_saved_cxx_standard)
 unset(pcinspector_saved_cxx_standard_required)
 unset(pcinspector_saved_cxx_extensions)
 
-if(NOT PCINSPECTOR_HAS_STD_EXPECTED)
+if(NOT PCINSPECTOR_HAS_REQUIRED_STANDARD_LIBRARY)
     message(FATAL_ERROR
-            "Point Cloud Inspector requires a C++23 standard library with std::expected (__cpp_lib_expected >= 202202L)")
+            "Point Cloud Inspector requires a C++23 standard library with std::expected (__cpp_lib_expected >= 202202L), std::jthread, and std::stop_token")
 endif()

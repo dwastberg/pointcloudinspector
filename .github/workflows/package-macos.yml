@@ -25,44 +25,18 @@ jobs:
       - name: Verify ARM64 runner
         run: test "$(uname -m)" = arm64
 
-      - name: Select C++23-capable Xcode SDK
-        run: |
-          xcode_app="$(find /Applications -maxdepth 1 -type d -name 'Xcode_26*.app' -print | sort | tail -n 1)"
-          test -n "$xcode_app"
-          developer_dir="$xcode_app/Contents/Developer"
-          test -d "$developer_dir"
-          echo "DEVELOPER_DIR=$developer_dir" >> "$GITHUB_ENV"
-          DEVELOPER_DIR="$developer_dir" xcrun clang++ --version
-          DEVELOPER_DIR="$developer_dir" xcrun --sdk macosx --show-sdk-path
-
       - name: Install build dependencies
         uses: mamba-org/setup-micromamba@v3
         with:
-          environment-file: .github/package-environment.yml
+          environment-file: .github/package-environment-macos.yml
           cache-environment: true
           cache-downloads: true
           init-shell: bash
 
-      - name: Verify C++23 standard library
-        run: |
-          test -n "${CXX:-}"
-          sdk_path="$(xcrun --sdk macosx --show-sdk-path)"
-          "$CXX" --version
-          printf '%s\n' \
-            '#include <expected>' \
-            'static_assert(__cpp_lib_expected >= 202202L);' \
-            'int main() { std::expected<int, int> value = 42; return value.value(); }' |
-            "$CXX" -isysroot "$sdk_path" -mmacosx-version-min=15.0 \
-              -std=c++23 -x c++ -fsyntax-only -
-
       - name: Configure release package
-        run: |
-          sdk_path="$(xcrun --sdk macosx --show-sdk-path)"
-          cmake --preset package -G Ninja \
-            -DCMAKE_CXX_COMPILER="$CXX" \
-            -DCMAKE_OSX_ARCHITECTURES=arm64 \
-            -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0 \
-            -DCMAKE_OSX_SYSROOT="$sdk_path"
+        run: >-
+          cmake --preset package -G Ninja
+          -DCMAKE_OSX_ARCHITECTURES=arm64
 
       - name: Build with warnings as errors
         run: cmake --build --preset package --parallel 3

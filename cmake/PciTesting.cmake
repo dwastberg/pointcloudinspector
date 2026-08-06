@@ -41,7 +41,8 @@ function(pci_add_catch_test_target target)
     # Test fixtures intentionally omit irrelevant aggregate fields. Production
     # targets retain the corresponding missing-initializer warning.
     set_target_properties(${target} PROPERTIES
-            PCINSPECTOR_PARTIAL_AGGREGATE_FIXTURES TRUE)
+            PCINSPECTOR_PARTIAL_AGGREGATE_FIXTURES TRUE
+            PCINSPECTOR_CATCH_TEST TRUE)
     pci_configure_target(${target})
 
     # Discover at test time rather than build time. This keeps ordinary builds

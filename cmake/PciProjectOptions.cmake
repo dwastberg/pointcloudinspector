@@ -83,9 +83,12 @@ else()
     if(PCINSPECTOR_WARNINGS_AS_ERRORS)
         target_compile_options(pcinspector_project_warnings INTERFACE -Werror)
     endif()
+    # Catch2 uses __COUNTER__ for unique test identifiers. Clang 22 diagnoses
+    # that widely supported macro as a C2y extension under -Wpedantic.
     target_compile_options(pcinspector_project_warnings INTERFACE
             $<$<AND:$<BOOL:$<TARGET_PROPERTY:PCINSPECTOR_PARTIAL_AGGREGATE_FIXTURES>>,$<CXX_COMPILER_ID:GNU>>:-Wno-missing-field-initializers>
-            $<$<AND:$<BOOL:$<TARGET_PROPERTY:PCINSPECTOR_PARTIAL_AGGREGATE_FIXTURES>>,$<CXX_COMPILER_ID:AppleClang,Clang>>:-Wno-missing-designated-field-initializers>)
+            $<$<AND:$<BOOL:$<TARGET_PROPERTY:PCINSPECTOR_PARTIAL_AGGREGATE_FIXTURES>>,$<CXX_COMPILER_ID:AppleClang,Clang>>:-Wno-missing-designated-field-initializers>
+            $<$<AND:$<BOOL:$<TARGET_PROPERTY:PCINSPECTOR_CATCH_TEST>>,$<CXX_COMPILER_ID:Clang>,$<VERSION_GREATER_EQUAL:$<CXX_COMPILER_VERSION>,22>>:-Wno-c2y-extensions>)
 endif()
 
 function(pci_configure_target target)

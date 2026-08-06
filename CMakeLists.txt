@@ -5,6 +5,11 @@ project(pcinspector
         DESCRIPTION "Cross-platform point-cloud inspector"
         LANGUAGES CXX)
 
+# This project does not use C++ modules. CMake 3.28 and newer may otherwise
+# scan every C++20-or-newer source for module dependencies, which needlessly
+# requires compiler-specific scanning tools such as clang-scan-deps.
+set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
+
 set(PCINSPECTOR_APPLICATION_ID
     "io.github.dwastberg.PointCloudInspector")
 set(PCINSPECTOR_APPLICATION_NAME "Point Cloud Inspector")
