@@ -309,6 +309,7 @@ pci_add_catch_test_target(pcinspector_ui_tests
         ui/ApplicationHelpersTests.cpp
         ui/ClassificationFilterDialogTests.cpp
         ui/LoadingOverlayTests.cpp
+        ui/SettingsDialogTests.cpp
         ui/VectorColorButtonTests.cpp
         ui/VectorSublayerDialogTests.cpp
         ui/MainWindowTests.cpp

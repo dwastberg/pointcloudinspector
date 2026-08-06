@@ -1,5 +1,6 @@
 #pragma once
 
+#include "renderer/RenderViewport.h"
 #include "renderer/rhi/RhiResource.h"
 
 #include <QSize>
@@ -19,8 +20,9 @@ class QRhiTextureRenderTarget;
 
 namespace pci {
 
-inline constexpr float eyeDomeLightingRadius = 1.0F;
-inline constexpr float eyeDomeLightingStrength = 25.0F;
+inline constexpr float eyeDomeLightingRadius = defaultDepthEnhancementRadius;
+inline constexpr float eyeDomeLightingStrength =
+    defaultDepthEnhancementStrength;
 
 [[nodiscard]] float
 eyeDomeLightingShade(float centerViewDepth,
@@ -46,7 +48,9 @@ public:
 
     void updateUniforms(QRhiCommandBuffer *commandBuffer,
                         float nearPlane,
-                        float farPlane);
+                        float farPlane,
+                        float radius,
+                        float strength);
     void recordComposite(QRhiCommandBuffer *commandBuffer,
                          QRhiRenderTarget *outputRenderTarget);
     void releaseResources();

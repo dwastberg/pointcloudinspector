@@ -141,6 +141,57 @@ SceneSessionTimings SceneSession::timings() const noexcept
     return timings_;
 }
 
+std::uint64_t SceneSession::maximumLoadPoints() const noexcept
+{
+    return maximumLoadPoints_;
+}
+
+std::uint64_t SceneSession::decodedByteBudget() const noexcept
+{
+    return decodedByteBudget_;
+}
+
+bool SceneSession::automaticMemoryBudgetEnabled() const noexcept
+{
+    return automaticMemoryBudget_.has_value();
+}
+
+void SceneSession::setMaximumLoadPoints(const std::uint64_t maximumPoints)
+{
+    if (maximumPoints == 0) {
+        throw std::invalid_argument("maximum load points must be positive");
+    }
+    maximumLoadPoints_ = maximumPoints;
+}
+
+bool SceneSession::setDecodedByteBudget(
+    std::uint64_t byteBudget,
+    std::optional<AutomaticMemoryBudgetParameters> automaticParameters)
+{
+    if (byteBudget == 0) {
+        throw std::invalid_argument("decoded byte budget must be positive");
+    }
+    if (automaticParameters) {
+        automaticParameters->currentPointBytes =
+            document_->decodedResidentBytes();
+        const AutomaticMemoryBudget recommendation =
+            automaticMemoryBudget(systemMemoryInfo(), *automaticParameters);
+        if (!recommendation.usedFallback) {
+            byteBudget = recommendation.pointByteBudget;
+        }
+    }
+    const std::uint64_t requestedByteBudget = byteBudget;
+    byteBudget = std::max(requestedByteBudget, memoryBudget_->reservedBytes());
+    if (!memoryBudget_->setByteBudget(byteBudget)) {
+        return false;
+    }
+    automaticMemoryBudget_ = std::move(automaticParameters);
+    decodedByteBudget_ = byteBudget;
+    document_->syncResidencyBudgets();
+    publishDocument();
+    return byteBudget == requestedByteBudget;
+}
+
 void SceneSession::connectController()
 {
     connect(loadController_,

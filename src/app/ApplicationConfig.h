@@ -25,7 +25,7 @@ struct QualificationOptions {
 
 struct ApplicationConfig {
     std::vector<std::filesystem::path> sources;
-    std::uint64_t syntheticPointCount = 10'000'000;
+    std::optional<std::uint64_t> syntheticPointCount;
     std::uint64_t maximumLoadPoints = 10'000'000;
     MemoryBudgetOption cpuBudget{.automatic = true};
     std::uint64_t gpuByteBudget = std::uint64_t{512} * 1024 * 1024;

@@ -2,12 +2,15 @@
 
 #include "app/LayerInspectorDock.h"
 #include "app/LoadingOverlay.h"
+#include "app/PerformanceSettingsStore.h"
 #include "app/PointCloudLoadChoiceDialog.h"
 #include "app/PointCloudStatisticsDialog.h"
 #include "app/RenderDiagnosticsFormatter.h"
 #include "app/SceneLayersDock.h"
+#include "app/SettingsDialog.h"
 #include "app/TaskDock.h"
 #include "app/VectorSublayerDialog.h"
+#include "app/ViewportSettingsStore.h"
 #include "app/WorkspaceSettings.h"
 #ifdef PCINSPECTOR_ENABLE_DIAGNOSTIC_UI
 #include "app/DiagnosticsDock.h"
@@ -50,6 +53,8 @@
 
 namespace pci {
 namespace {
+
+constexpr std::uint64_t bytesPerMebibyte = std::uint64_t{1024} * 1024;
 
 QString loadingProgressDetails(const LoadingProgressState &state)
 {
@@ -158,6 +163,17 @@ MainWindow::MainWindow(
     if (!viewport_) {
         throw std::invalid_argument("main window requires a viewport");
     }
+    performanceSettings_ = PerformanceSettingsStore::restore({
+        .automaticCpuCache = automaticMemoryBudget.has_value(),
+        .cpuCacheMebibytes =
+            std::max<std::uint64_t>(decodedByteBudget / bytesPerMebibyte, 1),
+        .gpuCacheMebibytes = std::max<std::uint64_t>(
+            viewport_->gpuByteBudget() / bytesPerMebibyte, 1),
+        .maximumLoadPoints = maximumLoadPoints,
+    });
+    static_cast<void>(applyPerformanceSettings(performanceSettings_));
+    viewport_->setViewportSettings(
+        ViewportSettingsStore::restore(viewport_->viewportSettings()));
     setWindowTitle(QStringLiteral("Point Cloud Inspector"));
 #ifdef PCINSPECTOR_ENABLE_DIAGNOSTIC_UI
     profileLoading_ = qEnvironmentVariableIsSet("PCI_PROFILE_LOADING");
@@ -411,6 +427,12 @@ MainWindow::MainWindow(
             &QAction::triggered,
             sceneLayersDock_,
             &SceneLayersDock::selectAllLayers);
+    editMenu->addSeparator();
+    QAction *settingsAction = editMenu->addAction(QStringLiteral("&Settings…"));
+    settingsAction->setObjectName(QStringLiteral("settingsAction"));
+    settingsAction->setMenuRole(QAction::PreferencesRole);
+    connect(
+        settingsAction, &QAction::triggered, this, &MainWindow::showSettings);
 
     QMenu *viewMenu = menuBar()->addMenu(QStringLiteral("&View"));
     viewMenu->setObjectName(QStringLiteral("viewMenu"));
@@ -483,15 +505,15 @@ MainWindow::MainWindow(
 
     viewMenu->addSeparator();
 
-    QAction *eyeDomeLightingAction =
+    eyeDomeLightingAction_ =
         viewMenu->addAction(QStringLiteral("&Eye-Dome Lighting"));
-    eyeDomeLightingAction->setObjectName(
+    eyeDomeLightingAction_->setObjectName(
         QStringLiteral("eyeDomeLightingAction"));
-    eyeDomeLightingAction->setCheckable(true);
-    eyeDomeLightingAction->setChecked(viewport_->eyeDomeLightingEnabled());
-    eyeDomeLightingAction->setToolTip(
+    eyeDomeLightingAction_->setCheckable(true);
+    eyeDomeLightingAction_->setChecked(viewport_->eyeDomeLightingEnabled());
+    eyeDomeLightingAction_->setToolTip(
         QStringLiteral("Enhance point-cloud depth perception"));
-    connect(eyeDomeLightingAction,
+    connect(eyeDomeLightingAction_,
             &QAction::toggled,
             this,
             [this](const bool enabled) {
@@ -604,14 +626,14 @@ MainWindow::MainWindow(
         new QCheckBox(QStringLiteral("Depth enhancement"), pointCloudToolBar);
     eyeDomeLightingCheckBox->setObjectName(
         QStringLiteral("eyeDomeLightingCheckBox"));
-    eyeDomeLightingCheckBox->setChecked(eyeDomeLightingAction->isChecked());
-    eyeDomeLightingCheckBox->setToolTip(eyeDomeLightingAction->toolTip());
+    eyeDomeLightingCheckBox->setChecked(eyeDomeLightingAction_->isChecked());
+    eyeDomeLightingCheckBox->setToolTip(eyeDomeLightingAction_->toolTip());
     pointCloudToolBar->addWidget(eyeDomeLightingCheckBox);
     connect(eyeDomeLightingCheckBox,
             &QCheckBox::toggled,
-            eyeDomeLightingAction,
+            eyeDomeLightingAction_,
             &QAction::setChecked);
-    connect(eyeDomeLightingAction,
+    connect(eyeDomeLightingAction_,
             &QAction::toggled,
             eyeDomeLightingCheckBox,
             &QCheckBox::setChecked);
@@ -793,8 +815,93 @@ LoadJobId MainWindow::loadVectorLayers(VectorImportRequest request)
 
 void MainWindow::closeEvent(QCloseEvent *event)
 {
+    if (SettingsDialog *dialog = findChild<SettingsDialog *>();
+        dialog && dialog->isVisible()) {
+        dialog->reject();
+    }
     WorkspaceSettings::save(*this);
+    ViewportSettingsStore::save(viewport_->viewportSettings());
+    PerformanceSettingsStore::save(performanceSettings_);
     QMainWindow::closeEvent(event);
+}
+
+void MainWindow::showSettings()
+{
+    if (SettingsDialog *dialog = findChild<SettingsDialog *>()) {
+        dialog->raise();
+        dialog->activateWindow();
+        return;
+    }
+
+    auto *dialog = new SettingsDialog(
+        viewport_->viewportSettings(), performanceSettings_, this);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    const ViewportSettings originalViewportSettings =
+        viewport_->viewportSettings();
+    const PerformanceSettings originalPerformanceSettings =
+        performanceSettings_;
+    connect(dialog,
+            &SettingsDialog::settingsChanged,
+            this,
+            [this](const ViewportSettings viewportSettings,
+                   const PerformanceSettings performanceSettings) {
+                applySettingsPreview(viewportSettings, performanceSettings);
+            });
+    connect(dialog, &QDialog::accepted, this, [this, dialog] {
+        applySettingsPreview(dialog->settings(), dialog->performanceSettings());
+        ViewportSettingsStore::save(viewport_->viewportSettings());
+        PerformanceSettingsStore::save(performanceSettings_);
+    });
+    connect(dialog,
+            &QDialog::rejected,
+            this,
+            [this, originalViewportSettings, originalPerformanceSettings] {
+                applySettingsPreview(originalViewportSettings,
+                                     originalPerformanceSettings);
+            });
+    dialog->show();
+}
+
+void MainWindow::applySettingsPreview(
+    const ViewportSettings &viewportSettings,
+    const PerformanceSettings &performanceSettings)
+{
+    viewport_->setViewportSettings(viewportSettings);
+    eyeDomeLightingAction_->setChecked(
+        viewport_->viewportSettings().depthEnhancement.enabled);
+    if (!applyPerformanceSettings(performanceSettings)) {
+        statusBar()->showMessage(
+            QStringLiteral("The CPU cache limit will fully apply after "
+                           "restarting or closing loaded layers."),
+            8000);
+    }
+}
+
+bool MainWindow::applyPerformanceSettings(const PerformanceSettings &settings)
+{
+    performanceSettings_ = settings;
+    performanceSettings_.cpuCacheMebibytes = std::clamp<std::uint64_t>(
+        performanceSettings_.cpuCacheMebibytes, 1, maximumCacheMebibytes);
+    performanceSettings_.gpuCacheMebibytes = std::clamp<std::uint64_t>(
+        performanceSettings_.gpuCacheMebibytes, 1, maximumCacheMebibytes);
+    performanceSettings_.maximumLoadPoints = std::clamp<std::uint64_t>(
+        performanceSettings_.maximumLoadPoints,
+        1,
+        static_cast<std::uint64_t>(maximumLoadPointsSetting));
+
+    const std::uint64_t gpuBytes =
+        performanceSettings_.gpuCacheMebibytes * bytesPerMebibyte;
+    viewport_->setGpuByteBudget(gpuBytes);
+    session_->setMaximumLoadPoints(performanceSettings_.maximumLoadPoints);
+
+    std::optional<AutomaticMemoryBudgetParameters> automaticParameters;
+    if (performanceSettings_.automaticCpuCache) {
+        automaticParameters.emplace();
+        automaticParameters->gpuByteBudget = gpuBytes;
+    }
+    return session_->setDecodedByteBudget(
+        performanceSettings_.cpuCacheMebibytes * bytesPerMebibyte,
+        automaticParameters);
 }
 
 void MainWindow::showControlsReference()

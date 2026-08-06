@@ -30,6 +30,14 @@ pci::ConfigEarlyExit earlyExitFor(const QStringList &arguments)
     return std::get<pci::ConfigEarlyExit>(invocation);
 }
 
+TEST_CASE("application invocation starts without a synthetic scene",
+          "[unit][app-config][cli]")
+{
+    const pci::ApplicationConfig config =
+        configFor({QStringLiteral("pcinspector")});
+    CHECK_FALSE(config.syntheticPointCount.has_value());
+}
+
 TEST_CASE("application invocation parser returns typed configuration",
           "[unit][app-config][cli]")
 {

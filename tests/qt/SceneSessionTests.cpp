@@ -348,6 +348,23 @@ TEST_CASE("scene session owns document commands", "[scene-session][commands]")
     CHECK(session.document()->layerCount() == 1);
 }
 
+TEST_CASE("scene session updates future-load and decoded-memory budgets",
+          "[scene-session][settings]")
+{
+    auto loader = std::make_shared<SessionLoader>();
+    pci::SceneSession session(
+        makeServices(loader), 100, std::uint64_t{1024} * 1024);
+
+    session.setMaximumLoadPoints(250);
+    CHECK(session.maximumLoadPoints() == 250);
+    CHECK(session.setDecodedByteBudget(std::uint64_t{2} * 1024 * 1024,
+                                       std::nullopt));
+    CHECK(session.decodedByteBudget() == std::uint64_t{2} * 1024 * 1024);
+    CHECK_FALSE(session.automaticMemoryBudgetEnabled());
+    CHECK(session.document()->decodedByteBudget() ==
+          std::uint64_t{2} * 1024 * 1024);
+}
+
 TEST_CASE("scene session publishes unified rows for partial vector success",
           "[scene-session][tasks][vector]")
 {

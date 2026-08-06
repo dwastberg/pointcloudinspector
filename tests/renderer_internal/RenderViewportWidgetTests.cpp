@@ -11,6 +11,7 @@
 #include <QKeyEvent>
 #include <QMouseEvent>
 
+#include <limits>
 #include <memory>
 
 namespace {
@@ -105,6 +106,33 @@ TEST_CASE("render viewport clamps point size internally",
 
     viewport.setPointSizePixels(pci::minimumPointSizePixels - 1);
     CHECK(viewport.pointSizePixels() == pci::minimumPointSizePixels);
+}
+
+TEST_CASE("render viewport bounds appearance and depth settings",
+          "[ui][renderer-internal][settings]")
+{
+    pci::RenderViewportWidget viewport(false);
+    pci::ViewportSettings settings;
+    settings.backgroundColor = {
+        .red = -1.0F,
+        .green = 2.0F,
+        .blue = std::numeric_limits<float>::quiet_NaN(),
+    };
+    settings.depthEnhancement.radius = 100.0F;
+    settings.depthEnhancement.strength = -10.0F;
+    viewport.setViewportSettings(settings);
+
+    const pci::ViewportSettings bounded = viewport.viewportSettings();
+    CHECK(bounded.backgroundColor.red == 0.0F);
+    CHECK(bounded.backgroundColor.green == 1.0F);
+    CHECK(bounded.backgroundColor.blue == pci::defaultBackgroundBlue);
+    CHECK(bounded.depthEnhancement.radius ==
+          pci::maximumDepthEnhancementRadius);
+    CHECK(bounded.depthEnhancement.strength ==
+          pci::minimumDepthEnhancementStrength);
+
+    viewport.setGpuByteBudget(std::uint64_t{256} * 1024 * 1024);
+    CHECK(viewport.gpuByteBudget() == std::uint64_t{256} * 1024 * 1024);
 }
 
 } // namespace

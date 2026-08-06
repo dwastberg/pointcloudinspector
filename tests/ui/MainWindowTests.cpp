@@ -2,6 +2,7 @@
 #include "app/MainWindow.h"
 #include "app/PointCloudLoadChoiceDialog.h"
 #include "app/SceneLayersDock.h"
+#include "app/SettingsDialog.h"
 #include "app/TaskDock.h"
 
 #include "import/PointCloudLoadController.h"
@@ -516,13 +517,41 @@ public:
 
     bool eyeDomeLightingEnabled() const noexcept override
     {
-        return eyeDomeLightingEnabled_;
+        return viewportSettings_.depthEnhancement.enabled;
     }
 
     void setEyeDomeLightingEnabled(const bool enabled) override
     {
-        eyeDomeLightingEnabled_ = enabled;
+        viewportSettings_.depthEnhancement.enabled = enabled;
         ++eyeDomeLightingSetCount_;
+    }
+
+    pci::ViewportSettings viewportSettings() const noexcept override
+    {
+        return viewportSettings_;
+    }
+
+    void setViewportSettings(const pci::ViewportSettings &settings) override
+    {
+        if (viewportSettings_ == settings) {
+            return;
+        }
+        viewportSettings_ = settings;
+        ++viewportSettingsSetCount_;
+    }
+
+    std::uint64_t gpuByteBudget() const noexcept override
+    {
+        return gpuByteBudget_;
+    }
+
+    void setGpuByteBudget(const std::uint64_t byteBudget) override
+    {
+        if (gpuByteBudget_ == byteBudget) {
+            return;
+        }
+        gpuByteBudget_ = byteBudget;
+        ++gpuByteBudgetSetCount_;
     }
 
     int pointSizePixels() const noexcept override
@@ -636,6 +665,11 @@ public:
         return pointSizeSetCount_;
     }
 
+    [[nodiscard]] int viewportSettingsSetCount() const noexcept
+    {
+        return viewportSettingsSetCount_;
+    }
+
     [[nodiscard]] bool lastDocumentWasFramed() const noexcept
     {
         return lastDocumentWasFramed_;
@@ -665,11 +699,14 @@ private:
     int renderRequestCount_ = 0;
     int eyeDomeLightingSetCount_ = 0;
     int pointSizeSetCount_ = 0;
+    int viewportSettingsSetCount_ = 0;
+    int gpuByteBudgetSetCount_ = 0;
     int frameVisibleLayersCount_ = 0;
     int frameVisibleLayersTopDownCount_ = 0;
     bool orthographic_ = false;
     bool lastDocumentWasFramed_ = false;
-    bool eyeDomeLightingEnabled_ = true;
+    pci::ViewportSettings viewportSettings_;
+    std::uint64_t gpuByteBudget_ = std::uint64_t{512} * 1024 * 1024;
     int pointSizePixels_ = pci::defaultPointSizePixels;
     pci::ViewportTool activeTool_ = pci::ViewportTool::Navigate;
     std::optional<pci::PointCloudLayerId> lastFramedLayerId_;
@@ -1017,6 +1054,65 @@ TEST_CASE("main window exposes a synchronized eye-dome lighting checkbox",
     CHECK(checkBox->isChecked());
     CHECK(viewportPointer->eyeDomeLightingEnabled());
     CHECK(viewportPointer->eyeDomeLightingSetCount() == 2);
+}
+
+TEST_CASE("settings dialog applies viewport appearance and depth enhancement",
+          "[ui][mainwindow][settings]")
+{
+    auto viewport = std::make_unique<FakeViewport>();
+    FakeViewport *viewportPointer = viewport.get();
+    auto services = makeTestImportServices(std::make_shared<ImmediateLoader>());
+    pci::MainWindow window(std::move(viewport), std::move(services), 100);
+    window.show();
+
+    QAction *settingsAction =
+        window.findChild<QAction *>(QStringLiteral("settingsAction"));
+    QAction *depthAction =
+        window.findChild<QAction *>(QStringLiteral("eyeDomeLightingAction"));
+    QCheckBox *depthCheckBox = window.findChild<QCheckBox *>(
+        QStringLiteral("eyeDomeLightingCheckBox"));
+    REQUIRE(settingsAction != nullptr);
+    REQUIRE(depthAction != nullptr);
+    REQUIRE(depthCheckBox != nullptr);
+
+    settingsAction->trigger();
+    auto *dialog = window.findChild<pci::SettingsDialog *>(
+        QStringLiteral("settingsDialog"));
+    REQUIRE(dialog != nullptr);
+    REQUIRE(dialog->isVisible());
+    CHECK_FALSE(dialog->isModal());
+
+    pci::ViewportSettings changed;
+    changed.backgroundColor = {.red = 0.2F, .green = 0.3F, .blue = 0.4F};
+    changed.depthEnhancement = {
+        .enabled = false,
+        .radius = 2.5F,
+        .strength = 40.0F,
+    };
+    const pci::PerformanceSettings changedPerformance{
+        .automaticCpuCache = false,
+        .cpuCacheMebibytes = 256,
+        .gpuCacheMebibytes = 64,
+        .maximumLoadPoints = 20'000'000,
+    };
+    dialog->setSettings(changed);
+    dialog->setPerformanceSettings(changedPerformance);
+
+    const pci::ViewportSettings applied = viewportPointer->viewportSettings();
+    CHECK(applied.backgroundColor.red == Catch::Approx(0.2F).margin(0.0001F));
+    CHECK(applied.backgroundColor.green == Catch::Approx(0.3F).margin(0.0001F));
+    CHECK(applied.backgroundColor.blue == Catch::Approx(0.4F).margin(0.0001F));
+    CHECK(applied.depthEnhancement == changed.depthEnhancement);
+    CHECK(viewportPointer->viewportSettingsSetCount() == 1);
+    CHECK(viewportPointer->gpuByteBudget() == std::uint64_t{64} * 1024 * 1024);
+    CHECK_FALSE(depthAction->isChecked());
+    CHECK_FALSE(depthCheckBox->isChecked());
+    dialog->reject();
+
+    CHECK(viewportPointer->viewportSettings() == pci::ViewportSettings{});
+    CHECK(viewportPointer->gpuByteBudget() == std::uint64_t{512} * 1024 * 1024);
+    CHECK(depthAction->isChecked());
+    CHECK(depthCheckBox->isChecked());
 }
 
 TEST_CASE("main window exposes a bounded point-size selector",

@@ -54,6 +54,9 @@ public:
     [[nodiscard]] bool batchLoading() const noexcept;
     [[nodiscard]] bool hasActiveVectorLoads() const noexcept;
     [[nodiscard]] SceneSessionTimings timings() const noexcept;
+    [[nodiscard]] std::uint64_t maximumLoadPoints() const noexcept;
+    [[nodiscard]] std::uint64_t decodedByteBudget() const noexcept;
+    [[nodiscard]] bool automaticMemoryBudgetEnabled() const noexcept;
 
     void loadPointCloud(const std::filesystem::path &sourcePath,
                         PointCloudLoadMode mode);
@@ -85,6 +88,10 @@ public:
     void showAllLayers();
     void onRenderLoadProgress(const RenderLoadProgress &progress);
     void refreshAutomaticMemoryBudget();
+    void setMaximumLoadPoints(std::uint64_t maximumPoints);
+    [[nodiscard]] bool setDecodedByteBudget(
+        std::uint64_t byteBudget,
+        std::optional<AutomaticMemoryBudgetParameters> automaticParameters);
 
 signals:
     void documentChanged(pci::SceneDocumentSnapshotPtr snapshot,

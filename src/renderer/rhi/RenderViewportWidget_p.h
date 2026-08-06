@@ -69,6 +69,10 @@ public:
     void frameLayer(PointCloudLayerId layerId) override;
     [[nodiscard]] bool eyeDomeLightingEnabled() const noexcept override;
     void setEyeDomeLightingEnabled(bool enabled) override;
+    [[nodiscard]] ViewportSettings viewportSettings() const noexcept override;
+    void setViewportSettings(const ViewportSettings &settings) override;
+    [[nodiscard]] std::uint64_t gpuByteBudget() const noexcept override;
+    void setGpuByteBudget(std::uint64_t byteBudget) override;
     [[nodiscard]] int pointSizePixels() const noexcept override;
     void setPointSizePixels(int pointSize) override;
     [[nodiscard]] ViewportTool activeTool() const noexcept override;
@@ -205,7 +209,7 @@ private:
     QString deviceName_;
     QString timingSource_ = QStringLiteral("CPU");
     bool failed_ = false;
-    bool eyeDomeLightingEnabled_ = true;
+    ViewportSettings viewportSettings_;
     bool orthographic_ = false;
     bool eyeDomeLightingActive_ = false;
     int pointSizePixels_ = defaultPointSizePixels;

@@ -73,7 +73,7 @@ wildcard patterns (`*`, `?`, and `[set]`) are supported.
 | `-h`, `--help` | Show command-line help. | |
 | `--help-all` | Show application and Qt command-line options. | |
 | `-v`, `--version` | Show the application version. | |
-| `-p`, `--points <count>` | Number of points in the synthetic scene used when no files are supplied. | `10000000` |
+| `-p`, `--points <count>` | Create a synthetic point cube with the requested number of points. | off |
 | `--max-points <count>` | Maximum number of source points exposed by a loaded point cloud. | `10000000` |
 | `--cpu-cache-mb <MiB\|auto>` | CPU budget shared by retained previews and decoded hierarchy pages. | `auto` |
 | `--gpu-cache-mb <MiB>` | GPU point-buffer residency budget. | `512` |

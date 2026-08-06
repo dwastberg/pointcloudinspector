@@ -1,6 +1,9 @@
+#include "app/PerformanceSettingsStore.h"
 #include "app/RenderDiagnosticsFormatter.h"
+#include "app/ViewportSettingsStore.h"
 #include "app/WorkspaceSettings.h"
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include <QDockWidget>
@@ -34,6 +37,54 @@ TEST_CASE("workspace settings preserve stable geometry and state keys",
 
     CHECK(restored.size() == source.size());
     CHECK(restored.dockWidgetArea(&restoredDock) == Qt::RightDockWidgetArea);
+}
+
+TEST_CASE("viewport settings preserve appearance and depth enhancement",
+          "[ui][settings][persistence]")
+{
+    QTemporaryDir directory;
+    REQUIRE(directory.isValid());
+    QSettings settings(directory.filePath(QStringLiteral("viewport.ini")),
+                       QSettings::IniFormat);
+    const pci::ViewportSettings source{
+        .backgroundColor = {.red = 0.2F, .green = 0.4F, .blue = 0.6F},
+        .depthEnhancement =
+            {
+                .enabled = false,
+                .radius = 2.5F,
+                .strength = 42.0F,
+            },
+    };
+
+    pci::ViewportSettingsStore::save(source, settings);
+    const pci::ViewportSettings restored =
+        pci::ViewportSettingsStore::restore(settings);
+
+    CHECK(restored.backgroundColor.red ==
+          Catch::Approx(source.backgroundColor.red).margin(0.0001F));
+    CHECK(restored.backgroundColor.green ==
+          Catch::Approx(source.backgroundColor.green).margin(0.0001F));
+    CHECK(restored.backgroundColor.blue ==
+          Catch::Approx(source.backgroundColor.blue).margin(0.0001F));
+    CHECK(restored.depthEnhancement == source.depthEnhancement);
+}
+
+TEST_CASE("performance settings preserve cache and point budgets",
+          "[ui][settings][persistence]")
+{
+    QTemporaryDir directory;
+    REQUIRE(directory.isValid());
+    QSettings settings(directory.filePath(QStringLiteral("performance.ini")),
+                       QSettings::IniFormat);
+    const pci::PerformanceSettings source{
+        .automaticCpuCache = false,
+        .cpuCacheMebibytes = 2048,
+        .gpuCacheMebibytes = 768,
+        .maximumLoadPoints = 75'000'000,
+    };
+
+    pci::PerformanceSettingsStore::save(source, settings);
+    CHECK(pci::PerformanceSettingsStore::restore(settings) == source);
 }
 
 TEST_CASE("render diagnostics formatter owns panel and status presentation",

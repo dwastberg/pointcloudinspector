@@ -337,6 +337,9 @@ add_library(pcinspector_app_ui STATIC
         app/PointCloudLoadMode.h
         app/PointCloudStatisticsDialog.cpp
         app/PointCloudStatisticsDialog.h
+        app/PerformanceSettings.h
+        app/PerformanceSettingsStore.cpp
+        app/PerformanceSettingsStore.h
         app/QualificationReporter.cpp
         app/QualificationReporter.h
         app/RenderDiagnosticsFormatter.cpp
@@ -346,6 +349,8 @@ add_library(pcinspector_app_ui STATIC
         app/SceneLayerListModel.cpp
         app/SceneLayerListModel.h
         app/SceneLayerMetaType.h
+        app/SettingsDialog.cpp
+        app/SettingsDialog.h
         app/StrataTheme.cpp
         app/StrataTheme.h
         app/TaskDock.cpp
@@ -356,6 +361,8 @@ add_library(pcinspector_app_ui STATIC
         app/VectorColorButton.h
         app/VectorSublayerDialog.cpp
         app/VectorSublayerDialog.h
+        app/ViewportSettingsStore.cpp
+        app/ViewportSettingsStore.h
         app/WorkspaceSettings.cpp
         app/WorkspaceSettings.h)
 add_library(pcinspector::app_ui ALIAS pcinspector_app_ui)

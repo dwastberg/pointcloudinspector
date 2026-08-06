@@ -122,11 +122,14 @@ EyeDomeLightingPass::pointRenderPassDescriptor() const noexcept
 
 void EyeDomeLightingPass::updateUniforms(QRhiCommandBuffer *commandBuffer,
                                          const float nearPlane,
-                                         const float farPlane)
+                                         const float farPlane,
+                                         const float radius,
+                                         const float strength)
 {
     if (!available() || !commandBuffer || !std::isfinite(nearPlane) ||
         !std::isfinite(farPlane) || nearPlane <= 0.0F ||
-        farPlane <= nearPlane) {
+        farPlane <= nearPlane || !std::isfinite(radius) || radius <= 0.0F ||
+        !std::isfinite(strength) || strength < 0.0F) {
         throw std::logic_error("eye-dome lighting pass is not ready to update");
     }
 
@@ -134,6 +137,8 @@ void EyeDomeLightingPass::updateUniforms(QRhiCommandBuffer *commandBuffer,
     uniforms.inverseViewport[0] = 1.0F / static_cast<float>(pixelSize_.width());
     uniforms.inverseViewport[1] =
         1.0F / static_cast<float>(pixelSize_.height());
+    uniforms.radius = radius;
+    uniforms.strength = strength;
     uniforms.nearPlane = nearPlane;
     uniforms.farPlane = farPlane;
 

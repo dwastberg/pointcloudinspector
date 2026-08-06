@@ -1,6 +1,7 @@
 #pragma once
 
 #include "app/MemoryBudgetPolicy.h"
+#include "app/PerformanceSettings.h"
 #include "app/PointCloudLoadMode.h"
 #include "app/QualificationReporter.h"
 #include "app/SceneSession.h"
@@ -63,6 +64,11 @@ private:
     void choosePointCloud(
         std::optional<PointCloudLoadMode> requestedMode = std::nullopt);
     void chooseVectorLayers();
+    void showSettings();
+    [[nodiscard]] bool
+    applyPerformanceSettings(const PerformanceSettings &settings);
+    void applySettingsPreview(const ViewportSettings &viewportSettings,
+                              const PerformanceSettings &performanceSettings);
     void showControlsReference();
     void updateUiContext();
     void requestLoadCancellation();
@@ -85,6 +91,7 @@ private:
     QAction *fitSceneAction_ = nullptr;
     QAction *topDownSceneAction_ = nullptr;
     QAction *orthographicAction_ = nullptr;
+    QAction *eyeDomeLightingAction_ = nullptr;
     QAction *navigateToolAction_ = nullptr;
     QAction *measureToolAction_ = nullptr;
     QAction *fitSelectedLayerAction_ = nullptr;
@@ -101,6 +108,7 @@ private:
     QLabel *emptySceneLabel_ = nullptr;
     QLabel *navigationHintLabel_ = nullptr;
     bool navigationHintDismissed_ = false;
+    PerformanceSettings performanceSettings_;
 #ifdef PCINSPECTOR_ENABLE_DIAGNOSTIC_UI
     bool profileLoading_ = false;
     QualificationReporter qualificationReporter_;

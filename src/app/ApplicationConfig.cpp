@@ -40,9 +40,8 @@ ApplicationInvocation parseApplicationInvocation(const QStringList &arguments)
         QStringLiteral("[files...]"));
     const QCommandLineOption pointsOption(
         QStringList{QStringLiteral("p"), QStringLiteral("points")},
-        QStringLiteral("Number of synthetic points to allocate."),
-        QStringLiteral("count"),
-        QStringLiteral("10000000"));
+        QStringLiteral("Create a synthetic point cube with this many points."),
+        QStringLiteral("count"));
     const QCommandLineOption smokeOption(
         QStringLiteral("smoke-test"),
         QStringLiteral("Exit after three rendered frames."));
@@ -109,13 +108,15 @@ ApplicationInvocation parseApplicationInvocation(const QStringList &arguments)
     }
 
     ApplicationConfig config;
-    const auto pointCount =
-        parsePointCount(parser.value(pointsOption).toStdString());
-    if (!pointCount) {
-        return error(
-            QStringLiteral("--points must be a positive 64-bit integer"));
+    if (parser.isSet(pointsOption)) {
+        const auto pointCount =
+            parsePointCount(parser.value(pointsOption).toStdString());
+        if (!pointCount) {
+            return error(
+                QStringLiteral("--points must be a positive 64-bit integer"));
+        }
+        config.syntheticPointCount = *pointCount;
     }
-    config.syntheticPointCount = *pointCount;
     const auto maximumPoints =
         parsePointCount(parser.value(maximumPointsOption).toStdString());
     if (!maximumPoints) {

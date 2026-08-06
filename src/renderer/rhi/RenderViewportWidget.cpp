@@ -462,16 +462,66 @@ void RenderViewportWidget::frameLayer(const PointCloudLayerId layerId)
 
 bool RenderViewportWidget::eyeDomeLightingEnabled() const noexcept
 {
-    return eyeDomeLightingEnabled_;
+    return viewportSettings_.depthEnhancement.enabled;
 }
 
 void RenderViewportWidget::setEyeDomeLightingEnabled(const bool enabled)
 {
-    if (eyeDomeLightingEnabled_ == enabled) {
+    if (viewportSettings_.depthEnhancement.enabled == enabled) {
         return;
     }
-    eyeDomeLightingEnabled_ = enabled;
+    viewportSettings_.depthEnhancement.enabled = enabled;
     requestRender();
+}
+
+ViewportSettings RenderViewportWidget::viewportSettings() const noexcept
+{
+    return viewportSettings_;
+}
+
+void RenderViewportWidget::setViewportSettings(const ViewportSettings &settings)
+{
+    const auto finiteColor = [](const float value, const float fallback) {
+        return std::isfinite(value) ? std::clamp(value, 0.0F, 1.0F) : fallback;
+    };
+    ViewportSettings bounded = settings;
+    bounded.backgroundColor.red =
+        finiteColor(bounded.backgroundColor.red, defaultBackgroundRed);
+    bounded.backgroundColor.green =
+        finiteColor(bounded.backgroundColor.green, defaultBackgroundGreen);
+    bounded.backgroundColor.blue =
+        finiteColor(bounded.backgroundColor.blue, defaultBackgroundBlue);
+    bounded.depthEnhancement.radius =
+        std::isfinite(bounded.depthEnhancement.radius)
+            ? std::clamp(bounded.depthEnhancement.radius,
+                         minimumDepthEnhancementRadius,
+                         maximumDepthEnhancementRadius)
+            : defaultDepthEnhancementRadius;
+    bounded.depthEnhancement.strength =
+        std::isfinite(bounded.depthEnhancement.strength)
+            ? std::clamp(bounded.depthEnhancement.strength,
+                         minimumDepthEnhancementStrength,
+                         maximumDepthEnhancementStrength)
+            : defaultDepthEnhancementStrength;
+    if (viewportSettings_ == bounded) {
+        return;
+    }
+    viewportSettings_ = bounded;
+    requestRender();
+}
+
+std::uint64_t RenderViewportWidget::gpuByteBudget() const noexcept
+{
+    return uploadScheduler_.residencyByteBudget();
+}
+
+void RenderViewportWidget::setGpuByteBudget(const std::uint64_t byteBudget)
+{
+    if (uploadScheduler_.residencyByteBudget() == byteBudget) {
+        return;
+    }
+    uploadScheduler_.setResidencyByteBudget(byteBudget);
+    queueSceneInvalidation();
 }
 
 int RenderViewportWidget::pointSizePixels() const noexcept
@@ -630,7 +680,7 @@ bool RenderViewportWidget::ensureRenderResources()
         eyeDomeLightingActive_ = false;
     }
 
-    if (eyeDomeLightingEnabled_) {
+    if (viewportSettings_.depthEnhancement.enabled) {
         eyeDomeLightingActive_ = eyeDomeLightingPass_.ensureResources(
             rhi(), outputSize, renderTarget()->renderPassDescriptor());
     } else {
@@ -682,7 +732,11 @@ void RenderViewportWidget::recordScene(
     const std::vector<BlockDraw> &draws,
     const std::span<const VectorLayerDraw> vectorDraws)
 {
-    const QColor clear = QColor::fromRgbF(0.015F, 0.02F, 0.035F, 1.0F);
+    const QColor clear =
+        QColor::fromRgbF(viewportSettings_.backgroundColor.red,
+                         viewportSettings_.backgroundColor.green,
+                         viewportSettings_.backgroundColor.blue,
+                         1.0F);
     const QRhiDepthStencilClearValue depthClear{1.0F, 0};
     QRhiRenderTarget *pointTarget =
         eyeDomeLightingActive_ ? eyeDomeLightingPass_.pointRenderTarget()
@@ -922,7 +976,9 @@ void RenderViewportWidget::render(QRhiCommandBuffer *commandBuffer)
                 eyeDomeLightingPass_.updateUniforms(
                     commandBuffer,
                     static_cast<float>(clip.nearPlane),
-                    static_cast<float>(clip.farPlane));
+                    static_cast<float>(clip.farPlane),
+                    viewportSettings_.depthEnhancement.radius,
+                    viewportSettings_.depthEnhancement.strength);
             }
             recordScene(commandBuffer, draws, vectorDraws);
             commandTime = elapsedSince(commandStart);
@@ -935,7 +991,9 @@ void RenderViewportWidget::render(QRhiCommandBuffer *commandBuffer)
                 eyeDomeLightingPass_.updateUniforms(
                     commandBuffer,
                     static_cast<float>(clip.nearPlane),
-                    static_cast<float>(clip.farPlane));
+                    static_cast<float>(clip.farPlane),
+                    viewportSettings_.depthEnhancement.radius,
+                    viewportSettings_.depthEnhancement.strength);
             }
             recordScene(commandBuffer, draws, vectorDraws);
             commandTime = elapsedSince(commandStart);

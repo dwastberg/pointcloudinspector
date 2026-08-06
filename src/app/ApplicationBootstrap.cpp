@@ -122,8 +122,10 @@ void populateInitialDocument(RenderViewport &viewport,
             HierarchyDecodeAdmissionPtr{},
             PointMemoryBudgetPtr{},
             colorMaps);
-        static_cast<void>(document->addLayer(
-            buildSyntheticScene(config.syntheticPointCount)));
+        if (config.syntheticPointCount) {
+            static_cast<void>(document->addLayer(
+                buildSyntheticScene(*config.syntheticPointCount)));
+        }
         viewport.setDocument(document->snapshot(), true);
         return;
     }
