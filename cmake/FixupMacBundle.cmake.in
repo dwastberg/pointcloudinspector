@@ -1,0 +1,15 @@
+include(BundleUtilities)
+
+get_filename_component(bundle
+    "${CMAKE_INSTALL_PREFIX}/@PCINSPECTOR_APPLICATION_NAME@.app"
+    ABSOLUTE)
+set(search_directories "@pcinspector_dependency_search_dirs@")
+
+if(NOT IS_DIRECTORY "${bundle}")
+    message(FATAL_ERROR "Installed application bundle was not found: ${bundle}")
+endif()
+
+# macdeployqt handles Qt frameworks and plugins. BundleUtilities then copies
+# and rewrites the remaining PDAL, GDAL, and transitive non-system libraries.
+set(BU_CHMOD_BUNDLE_ITEMS TRUE)
+fixup_bundle("${bundle}" "" "${search_directories}")

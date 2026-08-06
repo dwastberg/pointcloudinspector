@@ -1,0 +1,56 @@
+name: Package Linux Flatpak
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: Build x86_64 Flatpak
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:kde-6.10
+      options: --privileged
+
+    steps:
+      - name: Check out source and test dependencies
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          submodules: recursive
+
+      - name: Read CMake project version
+        id: version
+        shell: bash
+        run: |
+          version="$(sed -n '/project(pcinspector/,/LANGUAGES/{s/.*VERSION \([0-9][0-9.]*\).*/\1/p;}' CMakeLists.txt)"
+          test -n "$version"
+          echo "value=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Build Flatpak and run non-GPU tests
+        uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        with:
+          bundle: PointCloudInspector-${{ steps.version.outputs.value }}-linux-x86_64.flatpak
+          manifest-path: packaging/flatpak/io.github.dwastberg.PointCloudInspector.yml
+          branch: stable
+          run-tests: true
+          upload-artifact: false
+
+      - name: Create package checksum
+        shell: bash
+        run: |
+          package="PointCloudInspector-${{ steps.version.outputs.value }}-linux-x86_64.flatpak"
+          sha256sum "$package" > "$package.sha256"
+
+      - name: Upload Flatpak artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: PointCloudInspector-${{ steps.version.outputs.value }}-linux-x86_64
+          path: |
+            *.flatpak
+            *.flatpak.sha256
+          compression-level: 0
+          if-no-files-found: error

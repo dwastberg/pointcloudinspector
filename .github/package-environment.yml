@@ -1,0 +1,12 @@
+name: pcinspector-package
+
+channels:
+  - conda-forge
+
+dependencies:
+  - cmake>=3.30
+  - cxx-compiler
+  - libgdal-core>=3.4
+  - libpdal>=2.10
+  - ninja
+  - qt6-main>=6.10

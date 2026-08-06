@@ -1,0 +1,83 @@
+name: Package macOS
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: Build ARM64 DMG
+    runs-on: macos-15
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash -el {0}
+
+    steps:
+      - name: Check out source and test dependencies
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          submodules: recursive
+
+      - name: Verify ARM64 runner
+        run: test "$(uname -m)" = arm64
+
+      - name: Install build dependencies
+        uses: mamba-org/setup-micromamba@v3
+        with:
+          environment-file: .github/package-environment.yml
+          cache-environment: true
+          cache-downloads: true
+          init-shell: bash
+
+      - name: Configure release package
+        run: cmake --preset package -G Ninja -DCMAKE_OSX_ARCHITECTURES=arm64
+
+      - name: Build with warnings as errors
+        run: cmake --build --preset package --parallel 3
+
+      - name: Run non-GPU tests
+        run: ctest --preset package
+
+      - name: Install and create unsigned DMG
+        id: package
+        run: |
+          install_root="$PWD/dist/macos"
+          dmg_root="$PWD/dist/dmg-root"
+          app="$install_root/Point Cloud Inspector.app"
+          version="$(tr -d '\r\n' < build/package/pcinspector-version.txt)"
+
+          cmake --install build/package --config Release --prefix "$install_root"
+          test -d "$app"
+
+          # Bundle fixup modifies and adds third-party libraries after Qt's
+          # deployment step, so sign the completed bundle from the inside out.
+          bash packaging/macos/adhoc-sign.sh "$app"
+
+          mkdir -p "$dmg_root"
+          ditto "$app" "$dmg_root/Point Cloud Inspector.app"
+          cp README.md LICENSE "$dmg_root/"
+          ln -s /Applications "$dmg_root/Applications"
+
+          package="PointCloudInspector-${version}-macOS-arm64.dmg"
+          hdiutil create \
+            -volname "Point Cloud Inspector ${version}" \
+            -srcfolder "$dmg_root" \
+            -format UDZO \
+            -ov \
+            "dist/$package"
+          (cd dist && shasum -a 256 "$package" > "$package.sha256")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: PointCloudInspector-${{ steps.package.outputs.version }}-macOS-arm64
+          path: |
+            dist/*.dmg
+            dist/*.dmg.sha256
+          compression-level: 0
+          if-no-files-found: error

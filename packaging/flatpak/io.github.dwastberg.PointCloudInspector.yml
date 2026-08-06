@@ -1,0 +1,101 @@
+app-id: io.github.dwastberg.PointCloudInspector
+runtime: org.kde.Platform
+runtime-version: '6.10'
+sdk: org.kde.Sdk
+command: pcinspector
+
+finish-args:
+  - --share=ipc
+  - --share=network
+  - --socket=fallback-x11
+  - --socket=wayland
+  - --device=dri
+  - --filesystem=host:ro
+  - --env=GDAL_DATA=/app/share/gdal
+  - --env=PROJ_DATA=/app/share/proj
+
+cleanup:
+  - /include
+  - /lib/cmake
+  - /lib/pkgconfig
+  - /share/man
+  - '*.a'
+  - '*.la'
+
+modules:
+  - name: proj
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DBUILD_TESTING=OFF
+      - -DBUILD_APPS=OFF
+    sources:
+      - type: git
+        url: https://github.com/OSGeo/PROJ.git
+        tag: 9.8.1
+        commit: f08fa86c478c4bbbf003b1ec751dd84aa6eca486
+
+  - name: libgeotiff
+    config-opts:
+      - --with-jpeg=yes
+      - --with-zlib=yes
+    sources:
+      - type: archive
+        url: https://github.com/OSGeo/libgeotiff/releases/download/1.7.4/libgeotiff-1.7.4.tar.gz
+        sha256: c598d04fdf2ba25c4352844dafa81dde3f7fd968daa7ad131228cd91e9d3dc47
+
+  - name: gdal
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DBUILD_APPS=OFF
+      - -DBUILD_PYTHON_BINDINGS=OFF
+      - -DBUILD_JAVA_BINDINGS=OFF
+      - -DGDAL_ENABLE_PLUGINS=OFF
+      - -DGDAL_USE_ARROW=OFF
+      - -DGDAL_USE_CFITSIO=OFF
+      - -DGDAL_USE_CRYPTOPP=OFF
+      - -DGDAL_USE_GEOTIFF=ON
+      - -DGDAL_USE_HDF5=OFF
+      - -DGDAL_USE_HEIF=OFF
+      - -DGDAL_USE_MYSQL=OFF
+      - -DGDAL_USE_NETCDF=OFF
+      - -DGDAL_USE_ODBC=OFF
+      - -DGDAL_USE_OPENCL=OFF
+      - -DGDAL_USE_OPENEXR=OFF
+      - -DGDAL_USE_PARQUET=OFF
+      - -DGDAL_USE_POSTGRESQL=OFF
+      - -DGDAL_USE_SPATIALITE=OFF
+    sources:
+      - type: archive
+        url: https://download.osgeo.org/gdal/3.13.1/gdal-3.13.1.tar.xz
+        sha256: 7398fb132753140740fac4f099f0dbe49d1ad074c4162290c308e067c46b7f92
+
+  - name: pdal
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DWITH_BACKTRACE=OFF
+      - -DWITH_TESTS=OFF
+    sources:
+      - type: archive
+        url: https://github.com/PDAL/PDAL/releases/download/2.10.2/PDAL-2.10.2-src.tar.bz2
+        sha256: 882b97aa3ae5db682c3b2dc8edef4e29bcc7ecea51c70592e71bc1f34112ad00
+
+  - name: point-cloud-inspector
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DBUILD_TESTING=ON
+      - -DPCINSPECTOR_BUILD_TOOLS=OFF
+      - -DPCINSPECTOR_ENABLE_DIAGNOSTIC_UI=OFF
+      - -DPCINSPECTOR_ENABLE_GPU_TESTS=OFF
+      - -DPCINSPECTOR_WARNINGS_AS_ERRORS=ON
+      - -DPCINSPECTOR_DEPLOY_RUNTIME_DEPENDENCIES=OFF
+    sources:
+      - type: dir
+        path: ../..
+        skip:
+          - .flatpak-builder
+          - .git
+          - Build
+          - build
+          - dist

@@ -1,0 +1,76 @@
+name: Package Windows
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: Build x64 MSI
+    runs-on: windows-2022
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      - name: Check out source and test dependencies
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          submodules: recursive
+
+      - name: Install build dependencies
+        uses: mamba-org/setup-micromamba@v3
+        with:
+          environment-file: .github/package-environment.yml
+          cache-environment: true
+          cache-downloads: true
+          init-shell: powershell
+
+      - name: Configure, test, and package with MSVC
+        id: package
+        run: |
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+          $installationPath = & $vswhere -latest -products "*" `
+            -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+            -property installationPath
+          if (-not $installationPath) {
+            throw "A Visual Studio installation with the MSVC x64 tools was not found."
+          }
+
+          $devShell = Join-Path $installationPath "Common7\Tools\Launch-VsDevShell.ps1"
+          & $devShell -Arch amd64 -HostArch amd64 -SkipAutomaticLocation
+
+          $env:CXX = "cl.exe"
+          cmake --preset package -G Ninja
+          cmake --build --preset package --parallel 3
+          ctest --preset package
+
+          $wixDirectory = Join-Path $PWD "build\wix"
+          dotnet tool install --tool-path $wixDirectory wix --version 4.0.6
+          $wix = Join-Path $wixDirectory "wix.exe"
+          & $wix extension add --global WixToolset.UI.wixext/4.0.6
+          $env:PATH = "$wixDirectory;$env:PATH"
+          $env:WIX = $wixDirectory
+
+          cpack --config build/package/CPackConfig.cmake -G WIX -B dist
+
+          $packages = @(Get-ChildItem dist -Filter *.msi)
+          if ($packages.Count -ne 1) {
+            throw "Expected exactly one MSI package, found $($packages.Count)."
+          }
+          $version = (Get-Content build/package/pcinspector-version.txt -Raw).Trim()
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Upload MSI artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: PointCloudInspector-${{ steps.package.outputs.version }}-windows-x64
+          path: |
+            dist/*.msi
+            dist/*.msi.sha256
+          compression-level: 0
+          if-no-files-found: error
