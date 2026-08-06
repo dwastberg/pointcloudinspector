@@ -59,6 +59,10 @@ jobs:
           # deployment step, so sign the completed bundle from the inside out.
           bash packaging/macos/adhoc-sign.sh "$app"
 
+          # Constructing QApplication verifies that the deployed Cocoa plugin
+          # and its bundled dependencies can load outside the build environment.
+          "$app/Contents/MacOS/Point Cloud Inspector" --help >/dev/null
+
           mkdir -p "$dmg_root"
           ditto "$app" "$dmg_root/Point Cloud Inspector.app"
           cp README.md LICENSE "$dmg_root/"
