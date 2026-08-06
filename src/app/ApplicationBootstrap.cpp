@@ -11,7 +11,9 @@
 #include "pointcloud/PointColorMapCatalog.h"
 #include "renderer/RenderViewport.h"
 
+#include <QCoreApplication>
 #include <QDebug>
+#include <QDir>
 #include <QStandardPaths>
 #include <QTimer>
 
@@ -23,6 +25,31 @@
 
 namespace pci {
 namespace {
+
+void configurePackagedGeospatialData()
+{
+    const QDir executableDirectory(QCoreApplication::applicationDirPath());
+#ifdef Q_OS_MACOS
+    const QDir dataRoot(
+        executableDirectory.filePath(QStringLiteral("../Resources")));
+#else
+    const QDir dataRoot(
+        executableDirectory.filePath(QStringLiteral("../share")));
+#endif
+
+    const auto usePackagedDirectory = [&](const char *variable,
+                                          const QString &directoryName) {
+        if (!qEnvironmentVariableIsEmpty(variable)) {
+            return;
+        }
+        const QString path = dataRoot.filePath(directoryName);
+        if (QDir(path).exists()) {
+            qputenv(variable, path.toUtf8());
+        }
+    };
+    usePackagedDirectory("GDAL_DATA", QStringLiteral("gdal"));
+    usePackagedDirectory("PROJ_DATA", QStringLiteral("proj"));
+}
 
 void reportMemoryBudget(const ApplicationConfig &config,
                         const ResolvedMemoryBudget &memoryBudget)
@@ -161,6 +188,7 @@ std::unique_ptr<MainWindow>
 bootstrapApplication(const ApplicationConfig &config,
                      PointColorMapCatalogSnapshotPtr colorMaps)
 {
+    configurePackagedGeospatialData();
     if (!colorMaps) {
         throw std::invalid_argument(
             "application bootstrap requires a color-map catalog");

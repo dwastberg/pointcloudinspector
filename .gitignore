@@ -42,6 +42,7 @@
 build/
 Build/
 build-*/
+dist/
 
 # CMake generated files
 CMakeFiles/
@@ -97,6 +98,12 @@ DartConfiguration.tcl
 *.crash
 core
 core.*
+
+# Locally generated release packages
+*.dmg
+*.msi
+*.flatpak
+*.sha256
 
 .idea/
 .vscode/

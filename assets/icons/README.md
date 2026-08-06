@@ -15,8 +15,8 @@ application's Strata palette.
   through 256 pixels. `PointCloudInspector.rc` embeds it as the executable icon.
 - `platform/linux/hicolor/` follows the Freedesktop icon-theme layout with
   fixed 16, 24, 32, 48, 64, 96, 128, 256, and 512 pixel PNGs plus a scalable
-  SVG. CMake installs these files and `pcinspector.desktop` into the standard
-  data directories.
+  SVG. CMake installs these files and the application-ID desktop file into the
+  standard data directories.
 - `source/` contains the full-detail generated master and the deterministic
   optical-size SVG masters.
 

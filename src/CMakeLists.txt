@@ -456,12 +456,15 @@ set_target_properties(pcinspector PROPERTIES
         OUTPUT_NAME pcinspector
         WIN32_EXECUTABLE TRUE
         MACOSX_BUNDLE TRUE
-        MACOSX_BUNDLE_BUNDLE_NAME "Point Cloud Inspector"
-        # Pre-release placeholder; replace before signing a public build.
-        MACOSX_BUNDLE_GUI_IDENTIFIER "local.pointcloudinspector.pcinspector"
+        MACOSX_BUNDLE_BUNDLE_NAME "${PCINSPECTOR_APPLICATION_NAME}"
+        MACOSX_BUNDLE_GUI_IDENTIFIER "${PCINSPECTOR_APPLICATION_ID}"
         MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
         MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
         MACOSX_BUNDLE_ICON_FILE "PointCloudInspector.icns")
+if(APPLE)
+    set_target_properties(pcinspector PROPERTIES
+            OUTPUT_NAME "${PCINSPECTOR_APPLICATION_NAME}")
+endif()
 pci_configure_target(pcinspector)
 
 pci_add_point_shaders(pcinspector point_shaders)

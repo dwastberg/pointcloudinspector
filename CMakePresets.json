@@ -97,6 +97,18 @@
       }
     },
     {
+      "name": "package",
+      "displayName": "Release package",
+      "description": "Optimized, tested build with deployable runtime dependencies",
+      "inherits": "release",
+      "binaryDir": "${sourceDir}/build/package",
+      "cacheVariables": {
+        "BUILD_TESTING": "ON",
+        "PCINSPECTOR_WARNINGS_AS_ERRORS": "ON",
+        "PCINSPECTOR_DEPLOY_RUNTIME_DEPENDENCIES": "ON"
+      }
+    },
+    {
       "name": "profiling",
       "displayName": "Profiling tools",
       "description": "Optimized build with profiling tools and no test suite",
@@ -150,6 +162,11 @@
       "configuration": "Release"
     },
     {
+      "name": "package",
+      "configurePreset": "package",
+      "configuration": "Release"
+    },
+    {
       "name": "profiling",
       "configurePreset": "profiling",
       "configuration": "Release"
@@ -179,6 +196,17 @@
       "name": "ci-windows",
       "configurePreset": "ci-windows",
       "configuration": "RelWithDebInfo",
+      "execution": {
+        "noTestsAction": "error"
+      },
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "package",
+      "configurePreset": "package",
+      "configuration": "Release",
       "execution": {
         "noTestsAction": "error"
       },
