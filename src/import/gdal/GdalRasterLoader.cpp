@@ -642,6 +642,9 @@ GdalRasterLoader::inspect(const RasterImportRequest &request) const
     }
 
     checkCancelled(request.stopToken);
+    if (request.phase) {
+        request.phase(RasterImportPhase::Inspecting);
+    }
     RasterBandSelection selection = selectDisplayBands(*dataset);
     std::vector<RasterLevel> levels =
         intersectBackedLevels(*dataset, selection);
@@ -686,6 +689,9 @@ GdalRasterLoader::inspect(const RasterImportRequest &request) const
     metadata.insufficientOverviews = rasterRequiresTiledRendering(metadata);
 
     checkCancelled(request.stopToken);
+    if (request.phase) {
+        request.phase(RasterImportPhase::SamplingRange);
+    }
     metadata.defaultDisplay = inspectOrSampleDisplayRange(*dataset,
                                                           selection,
                                                           metadata.levels,

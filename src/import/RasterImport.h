@@ -3,12 +3,21 @@
 #include "foundation/Bounds3d.h"
 #include "raster/RasterTileSource.h"
 
+#include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <optional>
 #include <stop_token>
 #include <string>
 
 namespace pci {
+
+// Range sampling is reported separately because it is the only part of
+// inspection whose cost depends on the source rather than on its header.
+enum class RasterImportPhase : std::uint8_t {
+    Inspecting,
+    SamplingRange,
+};
 
 struct RasterImportRequest {
     std::filesystem::path sourcePath;
@@ -17,6 +26,7 @@ struct RasterImportRequest {
     std::string targetSpatialReferenceWkt;
     std::optional<Bounds3d> targetExtent;
     std::stop_token stopToken;
+    std::function<void(RasterImportPhase)> phase;
 };
 
 struct RasterImportPreflight {

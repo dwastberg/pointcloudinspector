@@ -84,6 +84,7 @@ function(pci_register_architecture_checks)
     set(allowed_pcinspector_import_async
         pcinspector_import_api
         pcinspector_platform
+        pcinspector_raster
         pcinspector_tasking
         Qt6::Core)
     set(allowed_pcinspector_app_ui

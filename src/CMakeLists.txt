@@ -347,6 +347,9 @@ add_library(pcinspector_import_async STATIC
         import/PointCloudImport.h
         import/PointCloudLoadController.cpp
         import/PointCloudLoadController.h
+        import/RasterImport.h
+        import/RasterLoadController.cpp
+        import/RasterLoadController.h
         import/VectorLoadController.cpp
         import/VectorLoadController.h
         import/ImportServices.h)
@@ -356,6 +359,7 @@ target_include_directories(pcinspector_import_async PUBLIC
 target_link_libraries(pcinspector_import_async
         PUBLIC
         pcinspector::import_api
+        pcinspector::raster
         pcinspector::tasking
         Qt6::Core
         PRIVATE
