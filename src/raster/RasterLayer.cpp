@@ -272,6 +272,22 @@ RasterLayerStyle defaultRasterLayerStyle(const RasterLayerMetadata &metadata)
     return clampRasterLayerStyle(std::move(style));
 }
 
+Bounds3d rasterSceneBounds(const RasterLayerMetadata &metadata,
+                           const RasterLayerStyle &style) noexcept
+{
+    Bounds3d result = metadata.bounds;
+    result.minimum[2] = style.zOffset - 0.5;
+    result.maximum[2] = style.zOffset + 0.5;
+    return result;
+}
+
+bool rasterDecodeAffectedBy(const RasterLayerStyle &before,
+                            const RasterLayerStyle &after) noexcept
+{
+    return before.displayRange != after.displayRange ||
+           before.colorRampKey != after.colorRampKey;
+}
+
 RasterLayerStyle clampRasterLayerStyle(RasterLayerStyle style)
 {
     if (!std::isfinite(style.opacity)) {

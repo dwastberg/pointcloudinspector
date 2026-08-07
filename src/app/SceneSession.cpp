@@ -369,7 +369,7 @@ void SceneSession::loadPointClouds(
             decodeAdmission_,
             memoryBudget_,
             document_->colorMaps());
-        static_cast<void>(replacement->copyVectorLayersFrom(*document_));
+        static_cast<void>(replacement->copyOverlayLayersFrom(*document_));
         document_ = std::move(replacement);
         emit documentChanged(document_->snapshot(), false, false);
     }
@@ -870,7 +870,7 @@ void SceneSession::handleSceneReadySingle(ActiveLoad &load)
             decodeAdmission_,
             memoryBudget_,
             document_->colorMaps());
-        static_cast<void>(replacement->copyVectorLayersFrom(*document_));
+        static_cast<void>(replacement->copyOverlayLayersFrom(*document_));
         load.layerId = replacement->addLayer(load.scene);
         load.admitted = true;
         document_ = std::move(replacement);

@@ -164,6 +164,7 @@ target_include_directories(pcinspector_scene PUBLIC
 target_link_libraries(pcinspector_scene PUBLIC
         pcinspector::foundation
         pcinspector::pointcloud
+        pcinspector::raster
         pcinspector::tasking
         pcinspector::vector)
 pci_configure_target(pcinspector_scene)

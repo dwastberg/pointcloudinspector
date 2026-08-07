@@ -151,6 +151,19 @@ rasterRequiresTiledRendering(const RasterLayerMetadata &metadata) noexcept;
 defaultRasterLayerStyle(const RasterLayerMetadata &metadata);
 [[nodiscard]] RasterLayerStyle clampRasterLayerStyle(RasterLayerStyle style);
 
+// Scene-facing bounds: the raster's XY footprint at the styled elevation. Only
+// the zero-thickness Z dimension is inflated, so scene fitting has something to
+// frame while the quad still draws at exactly the configured Z.
+[[nodiscard]] Bounds3d
+rasterSceneBounds(const RasterLayerMetadata &metadata,
+                  const RasterLayerStyle &style) noexcept;
+
+// True when a style change alters decoded pixels and must therefore invalidate
+// cached tiles. Opacity and elevation are shader uniforms and do not.
+[[nodiscard]] bool
+rasterDecodeAffectedBy(const RasterLayerStyle &before,
+                       const RasterLayerStyle &after) noexcept;
+
 // Affine transform. Coefficients follow GDAL exactly:
 //   worldX = gt[0] + pixel * gt[1] + line * gt[2]
 //   worldY = gt[3] + pixel * gt[4] + line * gt[5]

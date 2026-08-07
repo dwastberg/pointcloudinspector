@@ -52,6 +52,7 @@ function(pci_register_architecture_checks)
     set(allowed_pcinspector_scene
         pcinspector_foundation
         pcinspector_pointcloud
+        pcinspector_raster
         pcinspector_tasking
         pcinspector_vector)
     set(allowed_pcinspector_development_support

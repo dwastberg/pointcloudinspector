@@ -31,6 +31,26 @@ namespace {
     return std::get_if<VectorLayerState>(&layer.payload);
 }
 
+[[nodiscard]] RasterLayerState *rasterState(SceneLayer &layer)
+{
+    return std::get_if<RasterLayerState>(&layer.payload);
+}
+
+[[nodiscard]] const RasterLayerState *rasterState(const SceneLayer &layer)
+{
+    return std::get_if<RasterLayerState>(&layer.payload);
+}
+
+[[nodiscard]] RasterLayer rasterProjection(const SceneLayer &layer)
+{
+    const auto &raster = std::get<RasterLayerState>(layer.payload);
+    return {.id = layer.id,
+            .data = raster.data,
+            .visible = layer.visible,
+            .style = raster.style,
+            .renderGeneration = raster.renderGeneration};
+}
+
 [[nodiscard]] PointCloudLayer pointProjection(const SceneLayer &layer)
 {
     const auto &point = std::get<PointCloudLayerState>(layer.payload);
@@ -205,6 +225,129 @@ SceneLayerId SceneDocument::addVectorLayer(VectorLayerDataPtr data,
     return id;
 }
 
+SceneLayerId SceneDocument::addRasterLayer(RasterLayerDataPtr data,
+                                           const bool initiallyVisible)
+{
+    if (!data || !data->source) {
+        throw std::invalid_argument("raster layers require an attached source");
+    }
+    const RasterLayerMetadata &metadata = data->metadata();
+    if (metadata.width == 0 || metadata.height == 0 ||
+        metadata.levels.empty() ||
+        !rasterAffineInvertible(metadata.geoTransform)) {
+        throw std::invalid_argument("raster layers require usable metadata");
+    }
+    // The source identity distinguishes cache ownership, so attaching the same
+    // source twice would make two layers share tile-cache entries.
+    const bool duplicate =
+        std::ranges::any_of(sceneLayers_, [&data](const SceneLayer &layer) {
+            const RasterLayerState *raster = rasterState(layer);
+            return raster != nullptr &&
+                   raster->data->sourceId == data->sourceId;
+        });
+    if (duplicate) {
+        throw std::invalid_argument("raster source is already attached");
+    }
+    if (nextLayerValue_ == std::numeric_limits<std::uint64_t>::max()) {
+        throw std::overflow_error("scene layer ids are exhausted");
+    }
+
+    RasterLayerStyle style = defaultRasterLayerStyle(metadata);
+    const SceneLayerId id{nextLayerValue_++};
+    sceneLayers_.push_back({
+        .id = id,
+        .visible = initiallyVisible,
+        .payload =
+            RasterLayerState{
+                .data = std::move(data),
+                .style = std::move(style),
+            },
+    });
+    markRasterChanged();
+    return id;
+}
+
+std::optional<RasterLayer>
+SceneDocument::rasterLayer(const SceneLayerId id) const
+{
+    const auto found = findSceneLayer(id);
+    if (found == sceneLayers_.end() || !rasterState(*found)) {
+        return std::nullopt;
+    }
+    return rasterProjection(*found);
+}
+
+std::vector<RasterLayer> SceneDocument::rasterLayers() const
+{
+    std::vector<RasterLayer> result;
+    result.reserve(rasterLayerCount());
+    for (const SceneLayer &layer : sceneLayers_) {
+        if (rasterState(layer)) {
+            result.push_back(rasterProjection(layer));
+        }
+    }
+    return result;
+}
+
+std::size_t SceneDocument::rasterLayerCount() const noexcept
+{
+    return static_cast<std::size_t>(
+        std::ranges::count_if(sceneLayers_, [](const SceneLayer &layer) {
+            return rasterState(layer) != nullptr;
+        }));
+}
+
+bool SceneDocument::setRasterLayerStyle(const SceneLayerId id,
+                                        RasterLayerStyle style)
+{
+    const auto found = findSceneLayer(id);
+    RasterLayerState *raster =
+        found == sceneLayers_.end() ? nullptr : rasterState(*found);
+    if (!raster)
+        return false;
+    style = clampRasterLayerStyle(std::move(style));
+    if (raster->style == style) {
+        return true;
+    }
+    // Only a change that alters decoded pixels invalidates cached tiles.
+    // Opacity and elevation are shader uniforms, so bumping the generation for
+    // them would discard reusable tiles on every slider movement.
+    if (rasterDecodeAffectedBy(raster->style, style)) {
+        ++raster->renderGeneration;
+    }
+    raster->style = std::move(style);
+    markRasterChanged();
+    return true;
+}
+
+std::uint64_t SceneDocument::rasterRevision() const noexcept
+{
+    return rasterRevision_;
+}
+
+std::string SceneDocument::referenceSpatialReferenceWkt() const
+{
+    for (const SceneLayer &layer : sceneLayers_) {
+        if (const PointCloudLayerState *point = pointState(layer)) {
+            const std::string &wkt =
+                point->scene->metadata().spatialReferenceWkt;
+            if (!wkt.empty()) {
+                return wkt;
+            }
+        }
+    }
+    for (const SceneLayer &layer : sceneLayers_) {
+        if (const RasterLayerState *raster = rasterState(layer)) {
+            const std::string &wkt =
+                raster->data->metadata().spatialReferenceWkt;
+            if (!wkt.empty()) {
+                return wkt;
+            }
+        }
+    }
+    return {};
+}
+
 bool SceneDocument::removeLayer(const PointCloudLayerId id)
 {
     const auto found = findSceneLayer(id);
@@ -341,6 +484,8 @@ SceneLayerKind SceneDocument::layerKind(const SceneLayerId id) const noexcept
         return SceneLayerKind::PointCloud;
     if (vectorState(*found))
         return SceneLayerKind::Vector;
+    if (rasterState(*found))
+        return SceneLayerKind::Raster;
     return SceneLayerKind::None;
 }
 
@@ -365,6 +510,9 @@ std::optional<Bounds3d> SceneDocument::layerBounds(const SceneLayerId id) const
     // feature the moment a third payload exists.
     if (vectorState(*found)) {
         return vectorLayerBounds(vectorProjection(*found));
+    }
+    if (const RasterLayerState *raster = rasterState(*found)) {
+        return rasterSceneBounds(raster->data->metadata(), raster->style);
     }
     return std::nullopt;
 }
@@ -411,6 +559,12 @@ std::optional<Bounds3d> SceneDocument::visibleSceneBounds() const
             if (projected.data->bounds.valid()) {
                 add(vectorLayerBounds(projected));
             }
+        } else if (const RasterLayerState *raster = rasterState(layer)) {
+            const Bounds3d bounds =
+                rasterSceneBounds(raster->data->metadata(), raster->style);
+            if (bounds.valid()) {
+                add(bounds);
+            }
         }
     }
     return result;
@@ -443,23 +597,32 @@ bool SceneDocument::setAllLayersVisible(const bool visible)
     return changed;
 }
 
-bool SceneDocument::copyVectorLayersFrom(const SceneDocument &source)
+bool SceneDocument::copyOverlayLayersFrom(const SceneDocument &source)
 {
-    bool changed = false;
+    bool copiedVector = false;
+    bool copiedRaster = false;
     for (const SceneLayer &sourceLayer : source.sceneLayers_) {
-        if (!vectorState(sourceLayer)) {
+        const bool vector = vectorState(sourceLayer) != nullptr;
+        const bool raster = rasterState(sourceLayer) != nullptr;
+        if (!vector && !raster) {
             continue;
         }
         if (findSceneLayer(sourceLayer.id) != sceneLayers_.end())
             continue;
+        // The layer is pushed whole, keeping its id and style. Renderer caches
+        // are keyed by that id, so reassigning it would evict and re-upload
+        // every overlay on each point-cloud replacement.
         sceneLayers_.push_back(sourceLayer);
         nextLayerValue_ =
             std::max(nextLayerValue_, sourceLayer.id.value() + 1U);
-        changed = true;
+        copiedVector = copiedVector || vector;
+        copiedRaster = copiedRaster || raster;
     }
-    if (changed)
+    if (copiedVector)
         markVectorChanged();
-    return changed;
+    if (copiedRaster)
+        markRasterChanged();
+    return copiedVector || copiedRaster;
 }
 
 bool SceneDocument::setLayerColorMode(const PointCloudLayerId id,
@@ -683,6 +846,7 @@ SceneDocumentSnapshotPtr SceneDocument::snapshot() const
                 .revision = revision_,
                 .pointRevision = pointRevision_,
                 .vectorRevision = vectorRevision_,
+                .rasterRevision = rasterRevision_,
                 .layers = sceneLayers_,
                 .bounds = bounds(),
                 .visibleBounds = visibleSceneBounds(),
@@ -704,6 +868,13 @@ void SceneDocument::markVectorChanged()
 {
     ++revision_;
     ++vectorRevision_;
+    snapshotCache_.reset();
+}
+
+void SceneDocument::markRasterChanged()
+{
+    ++revision_;
+    ++rasterRevision_;
     snapshotCache_.reset();
 }
 

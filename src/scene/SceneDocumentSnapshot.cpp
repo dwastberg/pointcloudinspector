@@ -52,6 +52,53 @@ std::size_t SceneDocumentSnapshot::vectorLayerCount() const noexcept
         }));
 }
 
+std::size_t SceneDocumentSnapshot::rasterLayerCount() const noexcept
+{
+    return static_cast<std::size_t>(
+        std::ranges::count_if(layers, [](const SceneLayer &layer) {
+            return std::holds_alternative<RasterLayerState>(layer.payload);
+        }));
+}
+
+std::vector<RasterLayer> SceneDocumentSnapshot::rasterLayers() const
+{
+    std::vector<RasterLayer> result;
+    result.reserve(rasterLayerCount());
+    for (const SceneLayer &layer : layers) {
+        if (const auto *raster =
+                std::get_if<RasterLayerState>(&layer.payload)) {
+            result.push_back({
+                .id = layer.id,
+                .data = raster->data,
+                .visible = layer.visible,
+                .style = raster->style,
+                .renderGeneration = raster->renderGeneration,
+            });
+        }
+    }
+    return result;
+}
+
+std::optional<RasterLayer>
+SceneDocumentSnapshot::rasterLayer(const SceneLayerId id) const
+{
+    const auto found = std::ranges::find(layers, id, &SceneLayer::id);
+    if (found == layers.end()) {
+        return std::nullopt;
+    }
+    const auto *raster = std::get_if<RasterLayerState>(&found->payload);
+    if (!raster) {
+        return std::nullopt;
+    }
+    return RasterLayer{
+        .id = found->id,
+        .data = raster->data,
+        .visible = found->visible,
+        .style = raster->style,
+        .renderGeneration = raster->renderGeneration,
+    };
+}
+
 std::vector<PointCloudLayer> SceneDocumentSnapshot::pointLayers() const
 {
     std::vector<PointCloudLayer> result;
@@ -153,6 +200,9 @@ SceneDocumentSnapshot::layerBounds(const SceneLayerId id) const
     // feature, the moment a layer is neither a point cloud nor a vector.
     if (const auto *vector = std::get_if<VectorLayerState>(&found->payload)) {
         return vectorBounds(*vector);
+    }
+    if (const auto *raster = std::get_if<RasterLayerState>(&found->payload)) {
+        return rasterSceneBounds(raster->data->metadata(), raster->style);
     }
     return std::nullopt;
 }

@@ -62,6 +62,7 @@ pci_add_catch_test_target(pcinspector_scene_tests
         unit/PointCloudHierarchyTests.cpp
         unit/SceneDocumentTests.cpp
         unit/SceneDocumentVectorTests.cpp
+        unit/SceneDocumentRasterTests.cpp
         LIBRARIES pcinspector::scene)
 
 pci_add_catch_test_target(pcinspector_raster_tests

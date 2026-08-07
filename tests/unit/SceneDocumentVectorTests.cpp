@@ -54,7 +54,7 @@ TEST_CASE("scene document shares layer ids and copies vector records",
     CHECK(source.setVectorLayerStyle(id, style));
 
     pci::SceneDocument destination;
-    CHECK(destination.copyVectorLayersFrom(source));
+    CHECK(destination.copyOverlayLayersFrom(source));
     REQUIRE(destination.vectorLayer(id));
     CHECK(destination.vectorLayer(id)->data == source.vectorLayer(id)->data);
     CHECK(destination.vectorLayer(id)->style == style);
