@@ -44,7 +44,12 @@ std::size_t SceneDocumentSnapshot::layerCount() const noexcept
 
 std::size_t SceneDocumentSnapshot::vectorLayerCount() const noexcept
 {
-    return layers.size() - layerCount();
+    // Counted explicitly rather than derived as "everything that is not a
+    // point cloud", which silently miscounts once a third payload exists.
+    return static_cast<std::size_t>(
+        std::ranges::count_if(layers, [](const SceneLayer &layer) {
+            return std::holds_alternative<VectorLayerState>(layer.payload);
+        }));
 }
 
 std::vector<PointCloudLayer> SceneDocumentSnapshot::pointLayers() const
@@ -144,7 +149,12 @@ SceneDocumentSnapshot::layerBounds(const SceneLayerId id) const
         return source.valid() ? std::optional<Bounds3d>(source)
                               : std::optional<Bounds3d>(point->scene->bounds());
     }
-    return vectorBounds(std::get<VectorLayerState>(found->payload));
+    // An unconditional std::get here is a bad variant access, not a missing
+    // feature, the moment a layer is neither a point cloud nor a vector.
+    if (const auto *vector = std::get_if<VectorLayerState>(&found->payload)) {
+        return vectorBounds(*vector);
+    }
+    return std::nullopt;
 }
 
 } // namespace pci

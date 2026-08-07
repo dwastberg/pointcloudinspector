@@ -339,7 +339,9 @@ SceneLayerKind SceneDocument::layerKind(const SceneLayerId id) const noexcept
         return SceneLayerKind::None;
     if (pointState(*found))
         return SceneLayerKind::PointCloud;
-    return SceneLayerKind::Vector;
+    if (vectorState(*found))
+        return SceneLayerKind::Vector;
+    return SceneLayerKind::None;
 }
 
 bool SceneDocument::hasAnyLayer() const noexcept
@@ -358,7 +360,13 @@ std::optional<Bounds3d> SceneDocument::layerBounds(const SceneLayerId id) const
         return source.valid() ? std::optional<Bounds3d>(source)
                               : std::optional<Bounds3d>(point->scene->bounds());
     }
-    return vectorLayerBounds(vectorProjection(*found));
+    // Each alternative is named explicitly. Treating "not a point cloud" as
+    // "therefore a vector" is a bad variant access rather than a missing
+    // feature the moment a third payload exists.
+    if (vectorState(*found)) {
+        return vectorLayerBounds(vectorProjection(*found));
+    }
+    return std::nullopt;
 }
 
 std::optional<Bounds3d> SceneDocument::sceneBounds() const
@@ -398,7 +406,7 @@ std::optional<Bounds3d> SceneDocument::visibleSceneBounds() const
             const Bounds3d bounds = point->scene->bounds();
             if (bounds.valid())
                 add(bounds);
-        } else {
+        } else if (vectorState(layer)) {
             const VectorLayer projected = vectorProjection(layer);
             if (projected.data->bounds.valid()) {
                 add(vectorLayerBounds(projected));

@@ -161,3 +161,39 @@ TEST_CASE("document snapshots are coherent, immutable, and cached",
 }
 
 } // namespace
+TEST_CASE("scene layer queries name every payload alternative explicitly",
+          "[unit][scene][variant]")
+{
+    // Counts, kinds, and bounds are each derived by naming the alternative
+    // they mean. Deriving one as "everything that is not a point cloud" holds
+    // only while exactly two alternatives exist, and fails silently rather
+    // than loudly on the day a third is added.
+    pci::SceneDocument document;
+    const auto first = document.addVectorLayer(vectorData(0.0, 10.0), true);
+    const auto second = document.addVectorLayer(vectorData(20.0, 30.0), true);
+
+    const pci::SceneDocumentSnapshotPtr snapshot = document.snapshot();
+    REQUIRE(snapshot != nullptr);
+    CHECK(document.vectorLayerCount() == snapshot->vectorLayerCount());
+    CHECK(document.layerCount() == snapshot->layerCount());
+    CHECK(snapshot->vectorLayerCount() == 2);
+    CHECK(snapshot->layerCount() == 0);
+    CHECK(snapshot->layers.size() == 2);
+
+    // The document and its snapshot must agree on the bounds of each kind, so
+    // a projection added on one side cannot drift from the other.
+    for (const pci::SceneLayerId id : {first, second}) {
+        const auto documentBounds = document.layerBounds(id);
+        const auto snapshotBounds = snapshot->layerBounds(id);
+        REQUIRE(documentBounds.has_value());
+        REQUIRE(snapshotBounds.has_value());
+        CHECK(documentBounds->minimum == snapshotBounds->minimum);
+        CHECK(documentBounds->maximum == snapshotBounds->maximum);
+    }
+
+    // An unknown identifier is absent, not a differently shaped layer.
+    const pci::SceneLayerId unknown{9999};
+    CHECK(document.layerKind(unknown) == pci::SceneLayerKind::None);
+    CHECK_FALSE(document.layerBounds(unknown).has_value());
+    CHECK_FALSE(snapshot->layerBounds(unknown).has_value());
+}
