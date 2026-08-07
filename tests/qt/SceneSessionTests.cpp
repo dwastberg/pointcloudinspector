@@ -5,6 +5,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <QSignalSpy>
 #include <QTest>
 
 #include <array>
@@ -152,6 +153,71 @@ public:
     }
 };
 
+class UnavailableRasterLoader final : public pci::RasterLoader {
+public:
+    pci::RasterImportPreflight
+    inspect(const pci::RasterImportRequest &) const override
+    {
+        throw pci::RasterImportError("unused raster loader");
+    }
+};
+
+class StubRasterSource final : public pci::RasterTileSource {
+public:
+    explicit StubRasterSource(pci::RasterLayerMetadata metadata)
+        : metadata_(std::move(metadata))
+    {
+    }
+
+    [[nodiscard]] const pci::RasterLayerMetadata &
+    metadata() const noexcept override
+    {
+        return metadata_;
+    }
+
+    [[nodiscard]] pci::RasterTileData readTile(const pci::RasterTileRequest &,
+                                               std::stop_token) const override
+    {
+        throw pci::RasterReadError("the session fixture holds no pixels");
+    }
+
+private:
+    pci::RasterLayerMetadata metadata_;
+};
+
+class SessionRasterLoader final : public pci::RasterLoader {
+public:
+    pci::RasterImportPreflight
+    inspect(const pci::RasterImportRequest &request) const override
+    {
+        lastTargetWkt = request.targetSpatialReferenceWkt;
+        if (request.sourcePath.filename() == "broken.tif") {
+            throw pci::RasterImportError("stub raster failure");
+        }
+        pci::RasterLayerMetadata metadata;
+        metadata.sourcePath = request.sourcePath;
+        metadata.sourceDriver = "GTiff";
+        metadata.width = 64;
+        metadata.height = 32;
+        metadata.geoTransform = {0.0, 1.0, 0.0, 32.0, 0.0, -1.0};
+        metadata.bounds = *pci::rasterPixelEdgeBounds(
+            metadata.geoTransform, metadata.width, metadata.height);
+        pci::RasterLevel level;
+        level.width = metadata.width;
+        level.height = metadata.height;
+        level.channelCount = 3;
+        metadata.levels.push_back(level);
+        return {
+            .data = std::make_shared<pci::RasterLayerData>(pci::RasterLayerData{
+                .sourceId = pci::nextRasterSourceId(),
+                .source =
+                    std::make_shared<StubRasterSource>(std::move(metadata)),
+            })};
+    }
+
+    mutable std::string lastTargetWkt;
+};
+
 class UnavailableStatistics final : public pci::PointCloudStatisticsProvider {
 public:
     pci::PointCloudStatistics calculate(const pci::PointCloudMetadata &,
@@ -171,6 +237,8 @@ makeServices(const std::shared_ptr<const pci::PointCloudLoader> &loader)
         loader, *services.scheduler);
     services.vector = std::make_unique<pci::VectorLoadController>(
         std::make_shared<UnavailableVectorLoader>(), *services.scheduler);
+    services.raster = std::make_unique<pci::RasterLoadController>(
+        std::make_shared<UnavailableRasterLoader>(), *services.scheduler);
     services.statistics = std::make_shared<UnavailableStatistics>();
     return services;
 }
@@ -182,6 +250,16 @@ makeServices(const std::shared_ptr<const pci::PointCloudLoader> &pointLoader,
     pci::ImportServices services = makeServices(pointLoader);
     services.vector = std::make_unique<pci::VectorLoadController>(
         vectorLoader, *services.scheduler);
+    return services;
+}
+
+pci::ImportServices
+makeServices(const std::shared_ptr<const pci::PointCloudLoader> &pointLoader,
+             const std::shared_ptr<const pci::RasterLoader> &rasterLoader)
+{
+    pci::ImportServices services = makeServices(pointLoader);
+    services.raster = std::make_unique<pci::RasterLoadController>(
+        rasterLoader, *services.scheduler);
     return services;
 }
 
@@ -397,4 +475,104 @@ TEST_CASE("scene session publishes unified rows for partial vector success",
     CHECK(latestRows.front().capabilities.canRetry);
     CHECK(latestRows.front().detail.contains(
         QStringLiteral("Retry failed sublayers")));
+}
+
+TEST_CASE("scene session adds inspected rasters to the document",
+          "[scene-session][raster]")
+{
+    auto pointLoader = std::make_shared<SessionLoader>();
+    auto rasterLoader = std::make_shared<SessionRasterLoader>();
+    pci::SceneSession session(makeServices(pointLoader, rasterLoader),
+                              100,
+                              1024 * 1024,
+                              std::nullopt,
+                              {},
+                              pci::test::createTestPointColorMapCatalog());
+
+    QSignalSpy documentChanged(&session, &pci::SceneSession::documentChanged);
+    static_cast<void>(session.startRasterImport({.sourcePath = "ortho.tif"}));
+
+    REQUIRE(waitFor([&session] {
+        return session.document()->rasterLayerCount() == 1;
+    }));
+    CHECK(session.document()->layerCount() == 0);
+    CHECK(session.document()->vectorLayerCount() == 0);
+
+    // The first layer in an empty document frames the view.
+    REQUIRE_FALSE(documentChanged.empty());
+    CHECK(documentChanged.back().at(1).toBool());
+
+    // A second raster is additive and must not move the camera.
+    static_cast<void>(session.startRasterImport({.sourcePath = "second.tif"}));
+    REQUIRE(waitFor([&session] {
+        return session.document()->rasterLayerCount() == 2;
+    }));
+    CHECK_FALSE(documentChanged.back().at(1).toBool());
+}
+
+TEST_CASE("scene session keeps raster task rows alongside point and vector",
+          "[scene-session][raster][tasks]")
+{
+    auto pointLoader = std::make_shared<SessionLoader>();
+    auto rasterLoader = std::make_shared<SessionRasterLoader>();
+    pci::SceneSession session(makeServices(pointLoader, rasterLoader),
+                              100,
+                              1024 * 1024,
+                              std::nullopt,
+                              {},
+                              pci::test::createTestPointColorMapCatalog());
+
+    QSignalSpy rows(&session, &pci::SceneSession::taskRowsChanged);
+    const pci::LoadJobId job =
+        session.startRasterImport({.sourcePath = "ortho.tif"});
+    REQUIRE(waitFor([&session] {
+        return session.document()->rasterLayerCount() == 1;
+    }));
+
+    // Task rows are published through the session signal, so they are read
+    // back from the last emission rather than from a controller directly.
+    REQUIRE_FALSE(rows.empty());
+    const auto published = rows.back().at(0).value<pci::LoadJobRows>();
+    const auto raster = std::ranges::find(
+        published, pci::LoadJobKind::Raster, [](const pci::LoadJobRow &row) {
+            return row.key.kind;
+        });
+    REQUIRE(raster != published.end());
+    CHECK(raster->key.id == job);
+    CHECK(raster->terminal);
+
+    // A keyed dismiss must reach the raster controller rather than falling
+    // through to the vector one, where it would be silently ignored.
+    session.dismissJob(
+        pci::LoadJobKey{.kind = pci::LoadJobKind::Raster, .id = job});
+    REQUIRE(waitFor([&rows] {
+        const auto latest = rows.back().at(0).value<pci::LoadJobRows>();
+        return std::ranges::none_of(latest, [](const pci::LoadJobRow &row) {
+            return row.key.kind == pci::LoadJobKind::Raster;
+        });
+    }));
+}
+
+TEST_CASE("scene session reports a failed raster without adding a layer",
+          "[scene-session][raster]")
+{
+    auto pointLoader = std::make_shared<SessionLoader>();
+    auto rasterLoader = std::make_shared<SessionRasterLoader>();
+    pci::SceneSession session(makeServices(pointLoader, rasterLoader),
+                              100,
+                              1024 * 1024,
+                              std::nullopt,
+                              {},
+                              pci::test::createTestPointColorMapCatalog());
+
+    QSignalSpy status(&session, &pci::SceneSession::statusChanged);
+    static_cast<void>(session.startRasterImport({.sourcePath = "broken.tif"}));
+    REQUIRE(waitFor([&status] {
+        return !status.empty();
+    }));
+
+    CHECK(status.back().at(0).toString().contains(
+        QStringLiteral("stub raster failure")));
+    CHECK(session.document()->rasterLayerCount() == 0);
+    CHECK_FALSE(session.hasActiveRasterLoads());
 }

@@ -53,6 +53,7 @@ public:
     [[nodiscard]] bool loading() const noexcept;
     [[nodiscard]] bool batchLoading() const noexcept;
     [[nodiscard]] bool hasActiveVectorLoads() const noexcept;
+    [[nodiscard]] bool hasActiveRasterLoads() const noexcept;
     [[nodiscard]] SceneSessionTimings timings() const noexcept;
     [[nodiscard]] std::uint64_t maximumLoadPoints() const noexcept;
     [[nodiscard]] std::uint64_t decodedByteBudget() const noexcept;
@@ -71,6 +72,8 @@ public:
     LoadJobId startVectorImport(VectorImportRequest request);
     bool continueVectorImport(LoadJobId jobId,
                               std::vector<VectorSublayerKey> selected);
+    // One job per selected path, so a failure in one source preserves the rest.
+    LoadJobId startRasterImport(RasterImportRequest request);
     void cancelAllLoads();
     void cancelJob(LoadJobKey key);
     void retryJob(LoadJobKey key);
@@ -78,6 +81,7 @@ public:
     void dismissJob(LoadJobKey key);
     void setLayerVisible(SceneLayerId layerId, bool visible);
     void setVectorLayerStyle(SceneLayerId layerId, VectorLayerStyle style);
+    void setRasterLayerStyle(SceneLayerId layerId, RasterLayerStyle style);
     void setLayerColorMode(PointCloudLayerId layerId, PointColorMode mode);
     void setAllLayerColors(PointColorMode mode);
     void setLayerClassificationFilter(PointCloudLayerId layerId,
@@ -112,6 +116,7 @@ signals:
 private:
     [[nodiscard]] PointCloudLoadController &pointLoadController() noexcept;
     [[nodiscard]] VectorLoadController &vectorLoadController() noexcept;
+    [[nodiscard]] RasterLoadController &rasterLoadController() noexcept;
 
     struct ActiveLoad {
         LoadJobId jobId;
@@ -144,6 +149,7 @@ private:
 
     void connectController();
     void connectVectorController();
+    void connectRasterController();
     void publishTaskRows();
     void beginLoad(const std::filesystem::path &sourcePath,
                    PointCloudLoadMode mode);

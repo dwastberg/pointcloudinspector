@@ -114,6 +114,7 @@ function(pci_register_architecture_checks)
         pcinspector_app_ui
         pcinspector_development_support
         pcinspector_import_async
+        pcinspector_import_gdal
         pcinspector_import_ogr
         pcinspector_import_pdal
         pcinspector_platform

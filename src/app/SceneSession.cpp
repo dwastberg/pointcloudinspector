@@ -82,6 +82,7 @@ SceneSession::SceneSession(
     memoryBudgetRefreshTimer_.start();
     connectController();
     connectVectorController();
+    connectRasterController();
 }
 
 SceneSession::~SceneSession()
@@ -115,6 +116,11 @@ VectorLoadController &SceneSession::vectorLoadController() noexcept
     return *importServices_.vector;
 }
 
+RasterLoadController &SceneSession::rasterLoadController() noexcept
+{
+    return *importServices_.raster;
+}
+
 const std::shared_ptr<const PointCloudStatisticsProvider> &
 SceneSession::statisticsProvider() const noexcept
 {
@@ -134,6 +140,11 @@ bool SceneSession::batchLoading() const noexcept
 bool SceneSession::hasActiveVectorLoads() const noexcept
 {
     return importServices_.vector->hasActiveJobs();
+}
+
+bool SceneSession::hasActiveRasterLoads() const noexcept
+{
+    return importServices_.raster->hasActiveJobs();
 }
 
 SceneSessionTimings SceneSession::timings() const noexcept
@@ -324,6 +335,55 @@ void SceneSession::connectVectorController()
             });
 }
 
+void SceneSession::connectRasterController()
+{
+    RasterLoadController &controller = rasterLoadController();
+    connect(
+        &controller,
+        &RasterLoadController::loaded,
+        this,
+        [this](const LoadJobId,
+               RasterLayerDataPtr data,
+               const bool initiallyVisible) {
+            assertOwnerThread(*this);
+            const bool wasEmpty = !document_->hasAnyLayer();
+            try {
+                static_cast<void>(document_->addRasterLayer(std::move(data),
+                                                            initiallyVisible));
+            } catch (const std::exception &error) {
+                emit statusChanged(QStringLiteral("Raster layer rejected: %1")
+                                       .arg(QString::fromUtf8(error.what())));
+                return;
+            }
+            // Only the first layer in an empty document frames the view;
+            // an additive import must not move the camera.
+            publishDocument(wasEmpty, false);
+        });
+    connect(&controller,
+            &RasterLoadController::failed,
+            this,
+            [this](const LoadJobId, const QString &message) {
+                assertOwnerThread(*this);
+                emit statusChanged(
+                    QStringLiteral("Raster import failed: %1").arg(message));
+                publishTaskRows();
+            });
+    connect(&controller,
+            &RasterLoadController::cancelled,
+            this,
+            [this](const LoadJobId) {
+                assertOwnerThread(*this);
+                publishTaskRows();
+            });
+    connect(&controller,
+            &RasterLoadController::jobStateChanged,
+            this,
+            [this](const LoadJobId) {
+                assertOwnerThread(*this);
+                publishTaskRows();
+            });
+}
+
 void SceneSession::publishTaskRows()
 {
     LoadJobRows rows = pointLoadController().jobRows();
@@ -331,6 +391,10 @@ void SceneSession::publishTaskRows()
     rows.insert(rows.end(),
                 std::make_move_iterator(vectorRows.begin()),
                 std::make_move_iterator(vectorRows.end()));
+    LoadJobRows rasterRows = rasterLoadController().jobRows();
+    rows.insert(rows.end(),
+                std::make_move_iterator(rasterRows.begin()),
+                std::make_move_iterator(rasterRows.end()));
     emit taskRowsChanged(std::move(rows));
 }
 
@@ -601,36 +665,60 @@ bool SceneSession::continueVectorImport(const LoadJobId jobId,
     return vectorLoadController().continueLoad(jobId, std::move(selected));
 }
 
+LoadJobId SceneSession::startRasterImport(RasterImportRequest request)
+{
+    assertOwnerThread(*this);
+    return rasterLoadController().startImport(std::move(request));
+}
+
 void SceneSession::cancelAllLoads()
 {
     assertOwnerThread(*this);
     cancelAll();
     vectorLoadController().cancelAll();
+    rasterLoadController().cancelAll();
 }
 
+// Each keyed operation below names every job kind. Treating "not a point
+// cloud" as "therefore a vector" would silently route raster jobs to the wrong
+// controller, where they would be ignored rather than reported.
 void SceneSession::cancelJob(const LoadJobKey key)
 {
     assertOwnerThread(*this);
-    if (key.kind == LoadJobKind::PointCloud) {
+    switch (key.kind) {
+    case LoadJobKind::PointCloud:
         cancelJob(key.id);
-    } else {
+        break;
+    case LoadJobKind::Vector:
         vectorLoadController().cancel(key.id);
+        break;
+    case LoadJobKind::Raster:
+        rasterLoadController().cancel(key.id);
+        break;
     }
 }
 
 void SceneSession::retryJob(const LoadJobKey key)
 {
     assertOwnerThread(*this);
-    if (key.kind == LoadJobKind::PointCloud) {
+    switch (key.kind) {
+    case LoadJobKind::PointCloud:
         retryJob(key.id);
-    } else {
+        break;
+    case LoadJobKind::Vector:
         static_cast<void>(vectorLoadController().retry(key.id));
+        break;
+    case LoadJobKind::Raster:
+        static_cast<void>(rasterLoadController().retry(key.id));
+        break;
     }
 }
 
 void SceneSession::prioritizeJob(const LoadJobKey key)
 {
     assertOwnerThread(*this);
+    // Only point-cloud jobs are reprioritizable; overlay imports are short and
+    // already run at inspection priority.
     if (key.kind == LoadJobKind::PointCloud) {
         prioritizeJob(key.id);
     }
@@ -639,10 +727,20 @@ void SceneSession::prioritizeJob(const LoadJobKey key)
 void SceneSession::dismissJob(const LoadJobKey key)
 {
     assertOwnerThread(*this);
-    if (key.kind == LoadJobKind::PointCloud) {
+    switch (key.kind) {
+    case LoadJobKind::PointCloud:
         dismissJob(key.id);
-    } else if (vectorLoadController().dismiss(key.id)) {
-        publishTaskRows();
+        break;
+    case LoadJobKind::Vector:
+        if (vectorLoadController().dismiss(key.id)) {
+            publishTaskRows();
+        }
+        break;
+    case LoadJobKind::Raster:
+        if (rasterLoadController().dismiss(key.id)) {
+            publishTaskRows();
+        }
+        break;
     }
 }
 
@@ -660,6 +758,15 @@ void SceneSession::setVectorLayerStyle(const SceneLayerId layerId,
 {
     assertOwnerThread(*this);
     if (document_->setVectorLayerStyle(layerId, style)) {
+        publishDocument();
+    }
+}
+
+void SceneSession::setRasterLayerStyle(const SceneLayerId layerId,
+                                       RasterLayerStyle style)
+{
+    assertOwnerThread(*this);
+    if (document_->setRasterLayerStyle(layerId, std::move(style))) {
         publishDocument();
     }
 }

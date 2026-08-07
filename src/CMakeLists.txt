@@ -503,6 +503,7 @@ target_link_libraries(pcinspector PRIVATE
         pcinspector::app_ui
         pcinspector::development_support
         pcinspector::import_async
+        pcinspector::import_gdal
         pcinspector::import_ogr
         pcinspector::import_pdal
         pcinspector::platform

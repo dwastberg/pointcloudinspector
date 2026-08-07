@@ -3,6 +3,7 @@
 #include "app/MainWindow.h"
 #include "development/SyntheticScene.h"
 #include "import/ImportServices.h"
+#include "import/gdal/GdalRasterLoader.h"
 #include "import/ogr/OgrVectorLoader.h"
 #include "import/pdal/PdalPointCloudLoader.h"
 #include "import/pdal/PdalPointCloudStatistics.h"
@@ -180,6 +181,10 @@ ImportServices createImportServices()
         std::make_shared<PdalPointCloudLoader>(), *services.scheduler);
     services.vector = std::make_unique<VectorLoadController>(
         std::make_shared<OgrVectorLoader>(), *services.scheduler);
+    // Inspection and bounded range sampling only. Tile streaming will own its
+    // own workers so interactive imagery is not starved by point imports.
+    services.raster = std::make_unique<RasterLoadController>(
+        std::make_shared<GdalRasterLoader>(), *services.scheduler);
     services.statistics = std::make_shared<PdalPointCloudStatistics>();
     return services;
 }

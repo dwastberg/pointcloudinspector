@@ -401,11 +401,71 @@ public:
     }
 };
 
+class StubRasterSource final : public pci::RasterTileSource {
+public:
+    explicit StubRasterSource(pci::RasterLayerMetadata metadata)
+        : metadata_(std::move(metadata))
+    {
+    }
+
+    [[nodiscard]] const pci::RasterLayerMetadata &
+    metadata() const noexcept override
+    {
+        return metadata_;
+    }
+
+    [[nodiscard]] pci::RasterTileData readTile(const pci::RasterTileRequest &,
+                                               std::stop_token) const override
+    {
+        throw pci::RasterReadError("the UI fixture holds no pixels");
+    }
+
+private:
+    pci::RasterLayerMetadata metadata_;
+};
+
+// Produces a small, correctly georeferenced raster so UI rows and inspector
+// fields can be exercised without a GDAL dependency in the widget tests.
+class StubRasterLoader final : public pci::RasterLoader {
+public:
+    [[nodiscard]] pci::RasterImportPreflight
+    inspect(const pci::RasterImportRequest &request) const override
+    {
+        ++inspectCalls;
+        lastSourcePath = request.sourcePath;
+        pci::RasterLayerMetadata metadata;
+        metadata.sourcePath = request.sourcePath;
+        metadata.sourceDriver = "GTiff";
+        metadata.width = 64;
+        metadata.height = 32;
+        metadata.geoTransform = {0.0, 1.0, 0.0, 32.0, 0.0, -1.0};
+        metadata.spatialReferenceWkt = "STUBCRS";
+        metadata.bounds = *pci::rasterPixelEdgeBounds(
+            metadata.geoTransform, metadata.width, metadata.height);
+        pci::RasterLevel level;
+        level.width = metadata.width;
+        level.height = metadata.height;
+        level.channelCount = 3;
+        metadata.levels.push_back(level);
+        return {
+            .data = std::make_shared<pci::RasterLayerData>(pci::RasterLayerData{
+                .sourceId = pci::nextRasterSourceId(),
+                .source =
+                    std::make_shared<StubRasterSource>(std::move(metadata)),
+            })};
+    }
+
+    mutable std::atomic_int inspectCalls{0};
+    mutable std::filesystem::path lastSourcePath;
+};
+
 pci::ImportServices
 makeTestImportServices(std::shared_ptr<const pci::PointCloudLoader> pointLoader,
                        std::shared_ptr<const pci::VectorLoader> vectorLoader =
                            std::make_shared<DisjointVectorLoader>(),
-                       std::unique_ptr<pci::TaskScheduler> scheduler = {})
+                       std::unique_ptr<pci::TaskScheduler> scheduler = {},
+                       std::shared_ptr<const pci::RasterLoader> rasterLoader =
+                           std::make_shared<StubRasterLoader>())
 {
     if (!scheduler) {
         scheduler = std::make_unique<pci::TaskScheduler>();
@@ -416,6 +476,8 @@ makeTestImportServices(std::shared_ptr<const pci::PointCloudLoader> pointLoader,
         std::move(pointLoader), *services.scheduler);
     services.vector = std::make_unique<pci::VectorLoadController>(
         std::move(vectorLoader), *services.scheduler);
+    services.raster = std::make_unique<pci::RasterLoadController>(
+        std::move(rasterLoader), *services.scheduler);
     services.statistics = std::make_shared<UnavailableStatistics>();
     return services;
 }
