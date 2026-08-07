@@ -9,6 +9,7 @@
 #include "app/SceneLayersDock.h"
 #include "app/SettingsDialog.h"
 #include "app/TaskDock.h"
+#include "app/ToolbarIcons.h"
 #include "app/VectorSublayerDialog.h"
 #include "app/ViewportSettingsStore.h"
 #include "app/WorkspaceSettings.h"
@@ -35,6 +36,7 @@
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QSignalBlocker>
+#include <QSizePolicy>
 #include <QSpinBox>
 #include <QStackedLayout>
 #include <QStatusBar>
@@ -348,7 +350,8 @@ MainWindow::MainWindow(
     fileMenu->setObjectName(QStringLiteral("fileMenu"));
     openAction_ = fileMenu->addAction(QStringLiteral("&Open Point Clouds…"));
     openAction_->setObjectName(QStringLiteral("openPointCloudAction"));
-    openAction_->setIcon(style()->standardIcon(QStyle::SP_DialogOpenButton));
+    openAction_->setIconText(QStringLiteral("Open…"));
+    openAction_->setIcon(toolbarIcon(ToolbarIcon::Open, palette()));
     openAction_->setShortcut(QKeySequence::Open);
     openAction_->setToolTip(
         QStringLiteral("Open point-cloud files in a new scene (%1)")
@@ -359,6 +362,7 @@ MainWindow::MainWindow(
 
     addAction_ = fileMenu->addAction(QStringLiteral("&Add Point Clouds…"));
     addAction_->setObjectName(QStringLiteral("addPointCloudAction"));
+    addAction_->setIconText(QStringLiteral("Add…"));
     addAction_->setIcon(style()->standardIcon(QStyle::SP_FileDialogNewFolder));
     addAction_->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_O));
     addAction_->setToolTip(
@@ -375,7 +379,7 @@ MainWindow::MainWindow(
     importVectorAction_->setObjectName(
         QStringLiteral("importVectorLayerAction"));
     importVectorAction_->setIconText(QStringLiteral("Vector…"));
-    importVectorAction_->setIcon(style()->standardIcon(QStyle::SP_FileIcon));
+    importVectorAction_->setIcon(toolbarIcon(ToolbarIcon::Vector, palette()));
     importVectorAction_->setShortcut(
         QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_V));
     importVectorAction_->setToolTip(
@@ -431,6 +435,9 @@ MainWindow::MainWindow(
     QAction *settingsAction = editMenu->addAction(QStringLiteral("&Settings…"));
     settingsAction->setObjectName(QStringLiteral("settingsAction"));
     settingsAction->setMenuRole(QAction::PreferencesRole);
+    settingsAction->setIconText(QStringLiteral("Settings…"));
+    settingsAction->setIcon(toolbarIcon(ToolbarIcon::Settings, palette()));
+    settingsAction->setToolTip(QStringLiteral("Open application settings"));
     connect(
         settingsAction, &QAction::triggered, this, &MainWindow::showSettings);
 
@@ -439,6 +446,8 @@ MainWindow::MainWindow(
 
     fitSceneAction_ = viewMenu->addAction(QStringLiteral("&Fit Scene"));
     fitSceneAction_->setObjectName(QStringLiteral("fitSceneAction"));
+    fitSceneAction_->setIconText(QStringLiteral("Fit"));
+    fitSceneAction_->setIcon(toolbarIcon(ToolbarIcon::Fit, palette()));
     fitSceneAction_->setShortcut(QKeySequence(QStringLiteral("F")));
     fitSceneAction_->setShortcutContext(Qt::ApplicationShortcut);
     fitSceneAction_->setToolTip(
@@ -449,6 +458,8 @@ MainWindow::MainWindow(
 
     topDownSceneAction_ = viewMenu->addAction(QStringLiteral("Top Down Scene"));
     topDownSceneAction_->setObjectName(QStringLiteral("topDownSceneAction"));
+    topDownSceneAction_->setIconText(QStringLiteral("Top Down"));
+    topDownSceneAction_->setIcon(toolbarIcon(ToolbarIcon::TopDown, palette()));
     topDownSceneAction_->setShortcut(QKeySequence(QStringLiteral("7")));
     topDownSceneAction_->setShortcutContext(Qt::ApplicationShortcut);
     topDownSceneAction_->setToolTip(
@@ -461,6 +472,9 @@ MainWindow::MainWindow(
         viewMenu->addAction(QStringLiteral("Orthographic Camera"));
     orthographicAction_->setObjectName(
         QStringLiteral("orthographicCameraAction"));
+    orthographicAction_->setIconText(QStringLiteral("Orthographic"));
+    orthographicAction_->setIcon(
+        toolbarIcon(ToolbarIcon::Orthographic, palette()));
     orthographicAction_->setCheckable(true);
     orthographicAction_->setChecked(viewport_->isOrthographic());
     orthographicAction_->setToolTip(QStringLiteral(
@@ -562,6 +576,7 @@ MainWindow::MainWindow(
     toolsMenu->setObjectName(QStringLiteral("toolsMenu"));
     navigateToolAction_ = toolsMenu->addAction(QStringLiteral("&Navigate"));
     navigateToolAction_->setObjectName(QStringLiteral("navigateToolAction"));
+    navigateToolAction_->setIcon(toolbarIcon(ToolbarIcon::Navigate, palette()));
     navigateToolAction_->setCheckable(true);
     navigateToolAction_->setChecked(true);
     navigateToolAction_->setShortcut(QKeySequence(QStringLiteral("N")));
@@ -570,6 +585,7 @@ MainWindow::MainWindow(
         "Navigate the viewport with orbit, pan, zoom, and fly controls"));
     measureToolAction_ = toolsMenu->addAction(QStringLiteral("&Measure"));
     measureToolAction_->setObjectName(QStringLiteral("measureToolAction"));
+    measureToolAction_->setIcon(toolbarIcon(ToolbarIcon::Measure, palette()));
     measureToolAction_->setCheckable(true);
     measureToolAction_->setShortcut(QKeySequence(QStringLiteral("M")));
     measureToolAction_->setShortcutContext(Qt::ApplicationShortcut);
@@ -613,30 +629,14 @@ MainWindow::MainWindow(
     QToolBar *pointCloudToolBar = addToolBar(QStringLiteral("Commands"));
     pointCloudToolBar->setObjectName(QStringLiteral("pointCloudToolBar"));
     pointCloudToolBar->setMovable(false);
+    pointCloudToolBar->setIconSize(QSize(20, 20));
     pointCloudToolBar->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     pointCloudToolBar->addAction(openAction_);
-    pointCloudToolBar->addAction(addAction_);
     pointCloudToolBar->addAction(importVectorAction_);
     pointCloudToolBar->addSeparator();
     pointCloudToolBar->addAction(fitSceneAction_);
     pointCloudToolBar->addAction(topDownSceneAction_);
     pointCloudToolBar->addAction(orthographicAction_);
-    pointCloudToolBar->addSeparator();
-    auto *eyeDomeLightingCheckBox =
-        new QCheckBox(QStringLiteral("Depth enhancement"), pointCloudToolBar);
-    eyeDomeLightingCheckBox->setObjectName(
-        QStringLiteral("eyeDomeLightingCheckBox"));
-    eyeDomeLightingCheckBox->setChecked(eyeDomeLightingAction_->isChecked());
-    eyeDomeLightingCheckBox->setToolTip(eyeDomeLightingAction_->toolTip());
-    pointCloudToolBar->addWidget(eyeDomeLightingCheckBox);
-    connect(eyeDomeLightingCheckBox,
-            &QCheckBox::toggled,
-            eyeDomeLightingAction_,
-            &QAction::setChecked);
-    connect(eyeDomeLightingAction_,
-            &QAction::toggled,
-            eyeDomeLightingCheckBox,
-            &QCheckBox::setChecked);
     pointCloudToolBar->addSeparator();
     auto *pointSizeSpinBox = new QSpinBox(pointCloudToolBar);
     pointSizeSpinBox->setObjectName(QStringLiteral("pointSizeSpinBox"));
@@ -653,11 +653,34 @@ MainWindow::MainWindow(
             [this](const int pointSize) {
                 viewport_->setPointSizePixels(pointSize);
             });
+    auto *eyeDomeLightingCheckBox =
+        new QCheckBox(QStringLiteral("Depth enhancement"), pointCloudToolBar);
+    eyeDomeLightingCheckBox->setObjectName(
+        QStringLiteral("eyeDomeLightingCheckBox"));
+    eyeDomeLightingCheckBox->setChecked(eyeDomeLightingAction_->isChecked());
+    eyeDomeLightingCheckBox->setToolTip(eyeDomeLightingAction_->toolTip());
+    pointCloudToolBar->addWidget(eyeDomeLightingCheckBox);
+    connect(eyeDomeLightingCheckBox,
+            &QCheckBox::toggled,
+            eyeDomeLightingAction_,
+            &QAction::setChecked);
+    connect(eyeDomeLightingAction_,
+            &QAction::toggled,
+            eyeDomeLightingCheckBox,
+            &QCheckBox::setChecked);
+
+    auto *toolbarSpacer = new QWidget(pointCloudToolBar);
+    toolbarSpacer->setObjectName(QStringLiteral("commandToolbarSpacer"));
+    toolbarSpacer->setSizePolicy(QSizePolicy::Expanding,
+                                 QSizePolicy::Preferred);
+    pointCloudToolBar->addWidget(toolbarSpacer);
+    pointCloudToolBar->addAction(settingsAction);
 
     auto *toolRail = new QToolBar(QStringLiteral("Viewport tools"), this);
     toolRail->setObjectName(QStringLiteral("viewportToolRail"));
     toolRail->setOrientation(Qt::Vertical);
     toolRail->setMovable(false);
+    toolRail->setIconSize(QSize(20, 20));
     toolRail->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
     toolRail->addAction(navigateToolAction_);
     toolRail->addAction(measureToolAction_);

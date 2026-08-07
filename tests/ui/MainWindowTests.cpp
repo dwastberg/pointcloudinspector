@@ -34,6 +34,7 @@
 #include <QMenu>
 #include <QProgressBar>
 #include <QPushButton>
+#include <QSizePolicy>
 #include <QSpinBox>
 #include <QStatusBar>
 #include <QTest>
@@ -42,6 +43,7 @@
 #include <QTemporaryDir>
 #endif
 #include <QToolBar>
+#include <QToolButton>
 
 #include <algorithm>
 #include <array>
@@ -808,6 +810,90 @@ TEST_CASE("main window shares its open action between menu and toolbar",
 #endif
 }
 
+TEST_CASE("main toolbar follows data, camera, display, settings order",
+          "[ui][mainwindow][toolbar]")
+{
+    auto services = makeTestImportServices(std::make_shared<ImmediateLoader>());
+    pci::MainWindow window(
+        std::make_unique<FakeViewport>(), std::move(services), 100);
+
+    auto *toolBar =
+        window.findChild<QToolBar *>(QStringLiteral("pointCloudToolBar"));
+    auto *fileMenu = window.findChild<QMenu *>(QStringLiteral("fileMenu"));
+    auto *open =
+        window.findChild<QAction *>(QStringLiteral("openPointCloudAction"));
+    auto *add =
+        window.findChild<QAction *>(QStringLiteral("addPointCloudAction"));
+    auto *vector =
+        window.findChild<QAction *>(QStringLiteral("importVectorLayerAction"));
+    auto *fit = window.findChild<QAction *>(QStringLiteral("fitSceneAction"));
+    auto *topDown =
+        window.findChild<QAction *>(QStringLiteral("topDownSceneAction"));
+    auto *orthographic =
+        window.findChild<QAction *>(QStringLiteral("orthographicCameraAction"));
+    auto *settings =
+        window.findChild<QAction *>(QStringLiteral("settingsAction"));
+    auto *pointSize =
+        window.findChild<QSpinBox *>(QStringLiteral("pointSizeSpinBox"));
+    auto *depth = window.findChild<QCheckBox *>(
+        QStringLiteral("eyeDomeLightingCheckBox"));
+    auto *spacer =
+        window.findChild<QWidget *>(QStringLiteral("commandToolbarSpacer"));
+    REQUIRE(toolBar != nullptr);
+    REQUIRE(fileMenu != nullptr);
+    REQUIRE(open != nullptr);
+    REQUIRE(add != nullptr);
+    REQUIRE(vector != nullptr);
+    REQUIRE(fit != nullptr);
+    REQUIRE(topDown != nullptr);
+    REQUIRE(orthographic != nullptr);
+    REQUIRE(settings != nullptr);
+    REQUIRE(pointSize != nullptr);
+    REQUIRE(depth != nullptr);
+    REQUIRE(spacer != nullptr);
+
+    const QList<QAction *> actions = toolBar->actions();
+    const auto actionForWidget = [toolBar, &actions](QWidget *widget) {
+        const auto found =
+            std::ranges::find_if(actions, [toolBar, widget](QAction *action) {
+                return toolBar->widgetForAction(action) == widget;
+            });
+        return found == actions.end() ? nullptr : *found;
+    };
+    const auto ordered = [&actions](QAction *left, QAction *right) {
+        return actions.indexOf(left) < actions.indexOf(right);
+    };
+
+    QAction *pointSizeAction = actionForWidget(pointSize);
+    QAction *depthAction = actionForWidget(depth);
+    QAction *spacerAction = actionForWidget(spacer);
+    REQUIRE(pointSizeAction != nullptr);
+    REQUIRE(depthAction != nullptr);
+    REQUIRE(spacerAction != nullptr);
+    CHECK_FALSE(actions.contains(add));
+    CHECK(fileMenu->actions().contains(add));
+    CHECK(ordered(open, vector));
+    CHECK(ordered(vector, fit));
+    CHECK(ordered(fit, topDown));
+    CHECK(ordered(topDown, orthographic));
+    CHECK(ordered(orthographic, pointSizeAction));
+    CHECK(ordered(pointSizeAction, depthAction));
+    CHECK(ordered(depthAction, spacerAction));
+    CHECK(ordered(spacerAction, settings));
+    CHECK(spacer->sizePolicy().horizontalPolicy() == QSizePolicy::Expanding);
+    CHECK(open->iconText() == QStringLiteral("Open…"));
+    CHECK(fit->iconText() == QStringLiteral("Fit"));
+    CHECK(topDown->iconText() == QStringLiteral("Top Down"));
+    CHECK(orthographic->iconText() == QStringLiteral("Orthographic"));
+    CHECK_FALSE(open->icon().isNull());
+    CHECK_FALSE(vector->icon().isNull());
+    CHECK_FALSE(fit->icon().isNull());
+    CHECK_FALSE(topDown->icon().isNull());
+    CHECK_FALSE(orthographic->icon().isNull());
+    CHECK_FALSE(settings->icon().isNull());
+    CHECK(toolBar->iconSize() == QSize(20, 20));
+}
+
 TEST_CASE("vector import remains disabled until renderer capability is known",
           "[ui][mainwindow][vector]")
 {
@@ -967,6 +1053,9 @@ TEST_CASE("main window exposes exclusive viewport tools",
     CHECK_FALSE(measure->isEnabled());
     CHECK(rail->actions().contains(navigate));
     CHECK(rail->actions().contains(measure));
+    CHECK_FALSE(navigate->icon().isNull());
+    CHECK_FALSE(measure->icon().isNull());
+    CHECK(rail->iconSize() == QSize(20, 20));
 
     window.loadPointCloud("measure.las");
     REQUIRE(waitFor([&] {
@@ -1071,11 +1160,19 @@ TEST_CASE("settings dialog applies viewport appearance and depth enhancement",
         window.findChild<QAction *>(QStringLiteral("eyeDomeLightingAction"));
     QCheckBox *depthCheckBox = window.findChild<QCheckBox *>(
         QStringLiteral("eyeDomeLightingCheckBox"));
+    QToolBar *toolBar =
+        window.findChild<QToolBar *>(QStringLiteral("pointCloudToolBar"));
     REQUIRE(settingsAction != nullptr);
     REQUIRE(depthAction != nullptr);
     REQUIRE(depthCheckBox != nullptr);
+    REQUIRE(toolBar != nullptr);
+    CHECK(toolBar->actions().contains(settingsAction));
+    auto *settingsButton =
+        qobject_cast<QToolButton *>(toolBar->widgetForAction(settingsAction));
+    REQUIRE(settingsButton != nullptr);
+    CHECK(settingsButton->text() == QStringLiteral("Settings…"));
 
-    settingsAction->trigger();
+    settingsButton->click();
     auto *dialog = window.findChild<pci::SettingsDialog *>(
         QStringLiteral("settingsDialog"));
     REQUIRE(dialog != nullptr);

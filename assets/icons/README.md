@@ -2,7 +2,8 @@
 
 Survey Lens is the production icon for Point Cloud Inspector. It combines a literal
 magnifying glass with a simplified point-cloud terrain sample and uses the
-application's Strata palette.
+application's Strata palette. Every raster representation uses an alpha channel;
+pixels outside the rounded icon tile are transparent.
 
 ## Layout
 
@@ -38,13 +39,13 @@ The 128 pixel and larger assets retain the full-detail master artwork.
 
 ## Regeneration
 
-Render an optical master directly to its target dimensions with librsvg. For
-example:
+Regenerate every platform asset from the alpha-preserving source artwork with:
 
 ```sh
-rsvg-convert -w 24 -h 24 source/survey-lens-24.svg -o pcinspector-24.png
+./generate-icons.sh
 ```
 
-Compile the macOS iconset with `iconutil -c icns`. Build the Windows ICO from
-the exact-size PNGs, preserving each image as a separate representation; do
-not resize the large master to recreate the small assets.
+The script requires `rsvg-convert`, ImageMagick's `magick`, and Perl. It renders
+the optical masters at their assigned sizes, compiles the macOS ICNS container,
+and builds the Windows ICO from exact-size PNG representations. Do not resize
+the large master to recreate the small assets.

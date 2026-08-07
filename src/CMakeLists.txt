@@ -357,6 +357,8 @@ add_library(pcinspector_app_ui STATIC
         app/TaskDock.h
         app/TaskListModel.cpp
         app/TaskListModel.h
+        app/ToolbarIcons.cpp
+        app/ToolbarIcons.h
         app/VectorColorButton.cpp
         app/VectorColorButton.h
         app/VectorSublayerDialog.cpp

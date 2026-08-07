@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
-  <rect width="16" height="16" fill="#11161d"/>
+  <rect width="16" height="16" rx="4" fill="#11161d"/>
   <defs>
     <clipPath id="lens16">
       <circle cx="6.8" cy="6.7" r="3.65"/>
