@@ -306,6 +306,24 @@ target_link_libraries(pcinspector_gdal_runtime PUBLIC
         GDAL::GDAL)
 pci_configure_target(pcinspector_gdal_runtime)
 
+add_library(pcinspector_import_gdal STATIC
+        import/RasterImport.h
+        import/gdal/GdalRasterDataset.cpp
+        import/gdal/GdalRasterDataset.h
+        import/gdal/GdalRasterLoader.cpp
+        import/gdal/GdalRasterLoader.h
+        import/gdal/GdalRasterSource.cpp
+        import/gdal/GdalRasterSource.h)
+add_library(pcinspector::import_gdal ALIAS pcinspector_import_gdal)
+target_include_directories(pcinspector_import_gdal PUBLIC
+        "${pcinspector_source_include_dir}")
+target_link_libraries(pcinspector_import_gdal
+        PUBLIC
+        pcinspector::raster
+        PRIVATE
+        pcinspector::gdal_runtime)
+pci_configure_target(pcinspector_import_gdal)
+
 add_library(pcinspector_import_ogr STATIC
         import/ogr/OgrVectorLoader.cpp
         import/ogr/OgrVectorLoader.h)

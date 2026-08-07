@@ -13,6 +13,7 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -42,6 +43,16 @@ inline constexpr double maximumRasterZOffsetMagnitude = 1.0e6;
 inline constexpr std::string_view defaultRasterScalarColorRampKey = "viridis";
 
 using RasterSourceId = StrongId<struct RasterSourceIdTag>;
+
+class RasterImportError : public std::runtime_error {
+public:
+    using std::runtime_error::runtime_error;
+};
+
+class RasterImportCancelled final : public RasterImportError {
+public:
+    using RasterImportError::RasterImportError;
+};
 
 enum class RasterSampleKind : std::uint8_t {
     ContinuousColor,
@@ -128,6 +139,13 @@ struct RasterLayerStyle {
     std::string colorRampKey; // empty for RGB; stable CPT key for scalar data
     bool operator==(const RasterLayerStyle &) const = default;
 };
+
+// True when no backed level fits the static texture cap and the base image is
+// too large to decimate in one bounded read. Such a source is admitted as
+// metadata and reports "tiled rendering required" rather than scanning its
+// base band.
+[[nodiscard]] bool
+rasterRequiresTiledRendering(const RasterLayerMetadata &metadata) noexcept;
 
 [[nodiscard]] RasterLayerStyle
 defaultRasterLayerStyle(const RasterLayerMetadata &metadata);

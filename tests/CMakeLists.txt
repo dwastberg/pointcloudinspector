@@ -117,6 +117,17 @@ pci_add_catch_test_target(pcinspector_gdal_runtime_tests
         SOURCES component/GdalRuntimeTests.cpp
         LIBRARIES pcinspector::gdal_runtime)
 
+pci_add_catch_test_target(pcinspector_import_gdal_tests
+        WITH_MAIN
+        SOURCES
+        fixtures/GdalRasterFixtureFactory.cpp
+        component/GdalRasterImportTests.cpp
+        INCLUDE_DIRECTORIES
+        "${CMAKE_CURRENT_SOURCE_DIR}"
+        LIBRARIES
+        pcinspector::import_gdal
+        GDAL::GDAL)
+
 pci_add_catch_test_target(pcinspector_import_ogr_tests
         WITH_MAIN
         SOURCES

@@ -33,6 +33,7 @@ function(pci_register_architecture_checks)
         pcinspector_app_session
         pcinspector_import_pdal
         pcinspector_gdal_runtime
+        pcinspector_import_gdal
         pcinspector_import_ogr
         pcinspector_import_async
         pcinspector_app_ui
@@ -75,6 +76,8 @@ function(pci_register_architecture_checks)
     set(allowed_pcinspector_import_pdal
         pcinspector_import_api PDAL::pdalcpp Qt6::Core)
     set(allowed_pcinspector_gdal_runtime GDAL::GDAL)
+    set(allowed_pcinspector_import_gdal
+        pcinspector_gdal_runtime pcinspector_raster)
     set(allowed_pcinspector_import_ogr
         pcinspector_gdal_runtime pcinspector_vector)
     set(allowed_pcinspector_import_async

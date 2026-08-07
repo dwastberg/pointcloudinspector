@@ -244,6 +244,23 @@ rasterTileBasePixelRect(const RasterLevel &level,
     return rect;
 }
 
+bool rasterRequiresTiledRendering(const RasterLayerMetadata &metadata) noexcept
+{
+    if (metadata.levels.empty()) {
+        return true;
+    }
+    const RasterLevel &coarsest = metadata.levels.back();
+    if (coarsest.width <= rasterStaticTextureLimitPixels &&
+        coarsest.height <= rasterStaticTextureLimitPixels) {
+        return false;
+    }
+    // No backed level fits, so the only remaining option is a decimating read
+    // of the base band. That is bounded exactly when the base is bounded.
+    const auto basePixels =
+        static_cast<std::uint64_t>(metadata.width) * metadata.height;
+    return basePixels > rasterBoundedBaseReadPixels;
+}
+
 RasterLayerStyle defaultRasterLayerStyle(const RasterLayerMetadata &metadata)
 {
     RasterLayerStyle style;
