@@ -73,7 +73,7 @@ unset(pcinspector_valid_gpu_test_apis)
 
 find_package(PDAL 2.10 REQUIRED CONFIG)
 # Use GDAL's config package where available and CMake's FindGDAL fallback elsewhere.
-find_package(GDAL 3.4 REQUIRED)
+find_package(GDAL 3.9 REQUIRED)
 
 # QRhi is provided through Qt's GuiPrivate target. The dependency is deliberate
 # and means the application must run with the same Qt build it was compiled

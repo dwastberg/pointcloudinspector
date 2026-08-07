@@ -25,7 +25,7 @@ It is built with C++23, Qt 6, PDAL, and GDAL.
 - A C++23 compiler: GCC 12+, Clang 16+, AppleClang 15+, or MSVC 19.33+
 - Qt 6.7 or newer, including its private GUI headers and ShaderTools
 - PDAL 2.10 or newer
-- GDAL 3.4 or newer
+- GDAL 3.9 or newer, built with the GTI raster tile-index driver
 
 Clone the repository and initialize its submodules:
 

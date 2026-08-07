@@ -9,7 +9,7 @@ dependencies:
   # Use the native ARM64 Clang 22 toolchain, whose libc++ implements all of
   # the C++20/C++23 library features used by the application.
   - clangxx_osx-arm64=22.*
-  - libgdal-core>=3.4
+  - libgdal-core>=3.9
   - libpdal>=2.10
   - ninja
   - qt6-main>=6.10

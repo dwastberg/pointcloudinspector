@@ -6,7 +6,7 @@ channels:
 dependencies:
   - cmake>=3.30
   - cxx-compiler
-  - libgdal-core>=3.4
+  - libgdal-core>=3.9
   - libpdal>=2.10
   - ninja
   - qt6-main>=6.10
