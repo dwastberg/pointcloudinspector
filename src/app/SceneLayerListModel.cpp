@@ -35,6 +35,28 @@ QString pointName(const PointCloudLayer &layer)
                         : displayPathName(path);
 }
 
+QString rasterName(const RasterLayer &layer)
+{
+    if (!layer.data) {
+        return QStringLiteral("Raster layer %1").arg(layer.id.value());
+    }
+    const std::filesystem::path &path = layer.data->metadata().sourcePath;
+    return path.empty()
+               ? QStringLiteral("Raster layer %1").arg(layer.id.value())
+               : displayPathName(path);
+}
+
+// Dimensions are the summary a raster user recognizes; a pixel count is not
+// how imagery is described.
+QString rasterSummary(const RasterLayer &layer)
+{
+    if (!layer.data) {
+        return {};
+    }
+    const RasterLayerMetadata &metadata = layer.data->metadata();
+    return QStringLiteral("%1 x %2").arg(metadata.width).arg(metadata.height);
+}
+
 QString vectorName(const VectorLayer &layer)
 {
     if (!layer.data) {
@@ -204,6 +226,33 @@ SceneLayerListModel::project(const SceneDocumentSnapshot &snapshot)
                 .warning = layer.data && (layer.data->extentDisjointXY ||
                                           layer.data->crsMismatch),
                 .allowShowAnyway = layer.data && layer.data->extentDisjointXY,
+            });
+        } else if (const auto *raster =
+                       std::get_if<RasterLayerState>(&sceneLayer.payload)) {
+            const RasterLayer layer{.id = sceneLayer.id,
+                                    .data = raster->data,
+                                    .visible = sceneLayer.visible,
+                                    .style = raster->style,
+                                    .renderGeneration =
+                                        raster->renderGeneration};
+            const RasterLayerMetadata *metadata =
+                layer.data ? &layer.data->metadata() : nullptr;
+            result.push_back({
+                .id = sceneLayer.id,
+                .kind = SceneLayerKind::Raster,
+                .name = rasterName(layer),
+                .summary = rasterSummary(layer),
+                .toolTip =
+                    metadata ? pathToQString(metadata->sourcePath) : QString{},
+                .visible = sceneLayer.visible,
+                // A source without adequate overviews is reported rather than
+                // compensated for; generating them is the user's job.
+                .warning =
+                    metadata != nullptr &&
+                    (metadata->extentDisjointXY || metadata->crsMismatch ||
+                     metadata->crsMissing || metadata->insufficientOverviews),
+                .allowShowAnyway =
+                    metadata != nullptr && metadata->extentDisjointXY,
             });
         }
     }

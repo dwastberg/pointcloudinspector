@@ -2878,3 +2878,99 @@ TEST_CASE("main window archives native Release H metrics",
 #endif
 
 } // namespace
+
+TEST_CASE("main window exposes a raster import action",
+          "[ui][mainwindow][raster]")
+{
+    auto services = makeTestImportServices(std::make_shared<ImmediateLoader>());
+    pci::MainWindow window(
+        std::make_unique<FakeViewport>(), std::move(services), 100);
+
+    auto *raster =
+        window.findChild<QAction *>(QStringLiteral("importRasterLayerAction"));
+    auto *fileMenu = window.findChild<QMenu *>(QStringLiteral("fileMenu"));
+    auto *toolBar =
+        window.findChild<QToolBar *>(QStringLiteral("pointCloudToolBar"));
+
+    REQUIRE(raster != nullptr);
+    REQUIRE(fileMenu != nullptr);
+    REQUIRE(toolBar != nullptr);
+    CHECK(fileMenu->actions().contains(raster));
+    CHECK(toolBar->actions().contains(raster));
+    CHECK(raster->shortcut() == QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_R));
+    CHECK_FALSE(raster->icon().isNull());
+
+    // Raster import is a menu and toolbar action only; unlike point clouds it
+    // takes no positional command-line input, and unlike vector overlays it
+    // does not depend on a renderer capability probe.
+    CHECK(raster->isEnabled());
+}
+
+TEST_CASE("main window publishes imported rasters to the viewport",
+          "[ui][mainwindow][raster]")
+{
+    auto rasterLoader = std::make_shared<StubRasterLoader>();
+    auto viewport = std::make_unique<FakeViewport>();
+    auto *viewportPointer = viewport.get();
+    auto services =
+        makeTestImportServices(std::make_shared<ImmediateLoader>(),
+                               std::make_shared<DisjointVectorLoader>(),
+                               {},
+                               rasterLoader);
+    pci::MainWindow window(std::move(viewport), std::move(services), 100);
+
+    pci::RasterImportRequest request;
+    request.sourcePath = "ortho.tif";
+    static_cast<void>(window.importRasterLayer(std::move(request)));
+
+    REQUIRE(waitFor([&] {
+        return viewportPointer->document() &&
+               viewportPointer->document()->rasterLayerCount() == 1;
+    }));
+    CHECK(rasterLoader->inspectCalls.load() == 1);
+    CHECK(rasterLoader->lastSourcePath.filename() == "ortho.tif");
+
+    const pci::SceneDocumentSnapshotPtr document = viewportPointer->document();
+    const pci::RasterLayer layer = document->rasterLayers().front();
+    CHECK(layer.visible);
+    CHECK(layer.data->metadata().width == 64);
+    // Point and vector counts stay in their own domains.
+    CHECK(document->layerCount() == 0);
+    CHECK(document->vectorLayerCount() == 0);
+
+    // The first layer in an empty document frames the view.
+    auto *fit = window.findChild<QAction *>(QStringLiteral("fitSceneAction"));
+    REQUIRE(fit != nullptr);
+    fit->trigger();
+    CHECK(viewportPointer->frameVisibleLayersCount() >= 1);
+}
+
+TEST_CASE("main window keeps rasters when point clouds are replaced",
+          "[ui][mainwindow][raster]")
+{
+    auto viewport = std::make_unique<FakeViewport>();
+    auto *viewportPointer = viewport.get();
+    auto services = makeTestImportServices(std::make_shared<ImmediateLoader>());
+    pci::MainWindow window(std::move(viewport), std::move(services), 100);
+
+    static_cast<void>(window.importRasterLayer({.sourcePath = "ortho.tif"}));
+    REQUIRE(waitFor([&] {
+        return viewportPointer->document() &&
+               viewportPointer->document()->rasterLayerCount() == 1;
+    }));
+    const pci::SceneLayerId rasterId =
+        viewportPointer->document()->rasterLayers().front().id;
+
+    window.loadPointCloud("first.las", pci::PointCloudLoadMode::Replace);
+    REQUIRE(waitFor([&] {
+        return viewportPointer->document() &&
+               viewportPointer->document()->layerCount() == 1;
+    }));
+
+    // Replacing point clouds copies overlays across, and the copy preserves
+    // the layer id: renderer caches are keyed by it, so a fresh id would evict
+    // and re-upload every overlay.
+    const pci::SceneDocumentSnapshotPtr document = viewportPointer->document();
+    REQUIRE(document->rasterLayerCount() == 1);
+    CHECK(document->rasterLayers().front().id == rasterId);
+}

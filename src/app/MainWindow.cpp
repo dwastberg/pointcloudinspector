@@ -389,6 +389,22 @@ MainWindow::MainWindow(
     connect(importVectorAction_, &QAction::triggered, this, [this] {
         chooseVectorLayers();
     });
+    importRasterAction_ =
+        fileMenu->addAction(QStringLiteral("Import &Raster Layer…"));
+    importRasterAction_->setObjectName(
+        QStringLiteral("importRasterLayerAction"));
+    importRasterAction_->setIconText(QStringLiteral("Raster…"));
+    importRasterAction_->setIcon(toolbarIcon(ToolbarIcon::Raster, palette()));
+    importRasterAction_->setShortcut(
+        QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_R));
+    importRasterAction_->setToolTip(
+        QStringLiteral("Import local GDAL-readable raster files (%1)")
+            .arg(importRasterAction_->shortcut().toString(
+                QKeySequence::NativeText)));
+    connect(importRasterAction_, &QAction::triggered, this, [this] {
+        chooseRasterLayers();
+    });
+
     const auto updateVectorImportCapability =
         [this](const VectorOverlayCapability capability,
                const QString &reason) {
@@ -633,6 +649,7 @@ MainWindow::MainWindow(
     pointCloudToolBar->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     pointCloudToolBar->addAction(openAction_);
     pointCloudToolBar->addAction(importVectorAction_);
+    pointCloudToolBar->addAction(importRasterAction_);
     pointCloudToolBar->addSeparator();
     pointCloudToolBar->addAction(fitSceneAction_);
     pointCloudToolBar->addAction(topDownSceneAction_);
@@ -836,6 +853,13 @@ LoadJobId MainWindow::loadVectorLayers(VectorImportRequest request)
     return session_->loadVectorLayers(std::move(request));
 }
 
+LoadJobId MainWindow::importRasterLayer(RasterImportRequest request)
+{
+    // Rasters draw through the same renderer path as points, so unlike vector
+    // overlays there is no separate capability to probe here.
+    return session_->startRasterImport(std::move(request));
+}
+
 void MainWindow::closeEvent(QCloseEvent *event)
 {
     if (SettingsDialog *dialog = findChild<SettingsDialog *>();
@@ -953,6 +977,37 @@ void MainWindow::showControlsReference()
     dialog->show();
 }
 
+void MainWindow::chooseRasterLayers()
+{
+    // The offered extensions are advisory. GDAL decides what it can actually
+    // open, so "All files" must remain available.
+    const QStringList selected = QFileDialog::getOpenFileNames(
+        this,
+        QStringLiteral("Import raster layers"),
+        {},
+        QStringLiteral("Raster files (*.tif *.tiff *.cog *.vrt *.gti *.gpkg "
+                       "*.img *.jp2 *.png *.jpg *.jpeg);;All files (*)"));
+    if (selected.isEmpty())
+        return;
+    try {
+        const std::string targetCrs =
+            session_->document()->referenceSpatialReferenceWkt();
+        // One independent job per path, so a failure in one source preserves
+        // the others.
+        for (const QString &path : selected) {
+            RasterImportRequest request;
+            request.sourcePath = qStringToPath(path);
+            request.targetSpatialReferenceWkt = targetCrs;
+            request.targetExtent = session_->document()->visibleSceneBounds();
+            static_cast<void>(session_->startRasterImport(std::move(request)));
+        }
+    } catch (const std::exception &error) {
+        QMessageBox::warning(this,
+                             QStringLiteral("Raster import"),
+                             QString::fromUtf8(error.what()));
+    }
+}
+
 void MainWindow::chooseVectorLayers()
 {
     const QStringList selected = QFileDialog::getOpenFileNames(
@@ -965,13 +1020,9 @@ void MainWindow::chooseVectorLayers()
     if (selected.isEmpty())
         return;
     try {
-        std::string targetCrs;
-        for (const PointCloudLayer &layer : session_->document()->layers()) {
-            if (!layer.scene->metadata().spatialReferenceWkt.empty()) {
-                targetCrs = layer.scene->metadata().spatialReferenceWkt;
-                break;
-            }
-        }
+        // Shared with raster import so the precedence rule has one home.
+        const std::string targetCrs =
+            session_->document()->referenceSpatialReferenceWkt();
         if (viewport_->vectorOverlayCapability() !=
             VectorOverlayCapability::Supported) {
             throw std::runtime_error(

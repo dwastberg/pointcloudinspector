@@ -55,6 +55,17 @@ void drawGlyph(QPainter &painter,
         }
         break;
     }
+    case ToolbarIcon::Raster: {
+        // A framed grid: imagery is a pixel field, not a feature set.
+        painter.drawRect(QRectF(3.0, 4.0, 14.0, 12.0));
+        painter.drawLine(QPointF(7.7, 4.0), QPointF(7.7, 16.0));
+        painter.drawLine(QPointF(12.3, 4.0), QPointF(12.3, 16.0));
+        painter.drawLine(QPointF(3.0, 8.0), QPointF(17.0, 8.0));
+        painter.drawLine(QPointF(3.0, 12.0), QPointF(17.0, 12.0));
+        drawNode(painter, QPointF(5.35, 10.0), accent);
+        drawNode(painter, QPointF(14.65, 14.0), accent);
+        break;
+    }
     case ToolbarIcon::Fit:
         painter.drawLine(QPointF(3.0, 7.0), QPointF(3.0, 3.0));
         painter.drawLine(QPointF(3.0, 3.0), QPointF(7.0, 3.0));

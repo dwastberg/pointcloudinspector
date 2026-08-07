@@ -52,6 +52,7 @@ public:
     void loadPointClouds(std::vector<std::filesystem::path> sourcePaths,
                          PointCloudLoadMode firstMode);
     LoadJobId loadVectorLayers(VectorImportRequest request);
+    LoadJobId importRasterLayer(RasterImportRequest request);
 #ifdef PCINSPECTOR_ENABLE_DIAGNOSTIC_UI
     void configureQualificationReport(std::filesystem::path outputPath,
                                       bool exitAfterWrite = false);
@@ -64,6 +65,7 @@ private:
     void choosePointCloud(
         std::optional<PointCloudLoadMode> requestedMode = std::nullopt);
     void chooseVectorLayers();
+    void chooseRasterLayers();
     void showSettings();
     [[nodiscard]] bool
     applyPerformanceSettings(const PerformanceSettings &settings);
@@ -88,6 +90,7 @@ private:
     QAction *openAction_ = nullptr;
     QAction *addAction_ = nullptr;
     QAction *importVectorAction_ = nullptr;
+    QAction *importRasterAction_ = nullptr;
     QAction *fitSceneAction_ = nullptr;
     QAction *topDownSceneAction_ = nullptr;
     QAction *orthographicAction_ = nullptr;

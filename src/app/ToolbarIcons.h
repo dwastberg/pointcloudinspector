@@ -9,6 +9,7 @@ namespace pci {
 enum class ToolbarIcon {
     Open,
     Vector,
+    Raster,
     Fit,
     TopDown,
     Orthographic,
