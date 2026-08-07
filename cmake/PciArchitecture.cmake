@@ -20,6 +20,7 @@ function(pci_register_architecture_checks)
         pcinspector_platform
         pcinspector_navigation
         pcinspector_pointcloud
+        pcinspector_raster
         pcinspector_vector
         pcinspector_tasking
         pcinspector_scene
@@ -41,6 +42,8 @@ function(pci_register_architecture_checks)
     set(allowed_pcinspector_platform pcinspector_foundation Psapi)
     set(allowed_pcinspector_navigation pcinspector_foundation)
     set(allowed_pcinspector_pointcloud pcinspector_foundation)
+    set(allowed_pcinspector_raster
+        pcinspector_foundation pcinspector_pointcloud)
     set(allowed_pcinspector_vector
         pcinspector_earcut pcinspector_foundation)
     set(allowed_pcinspector_tasking pcinspector_foundation)

@@ -91,6 +91,20 @@ pci_configure_target(pcinspector_pointcloud)
 target_link_libraries(pcinspector_pointcloud PUBLIC
         pcinspector::foundation)
 
+# Portable raster domain. It reaches pointcloud for CPT stop tables only, and
+# must never depend on scene, renderer, Qt, or GDAL.
+add_library(pcinspector_raster STATIC
+        raster/RasterLayer.cpp
+        raster/RasterLayer.h
+        raster/RasterTileSource.h)
+add_library(pcinspector::raster ALIAS pcinspector_raster)
+target_include_directories(pcinspector_raster PUBLIC
+        "${pcinspector_source_include_dir}")
+target_link_libraries(pcinspector_raster PUBLIC
+        pcinspector::foundation
+        pcinspector::pointcloud)
+pci_configure_target(pcinspector_raster)
+
 add_library(pcinspector_earcut INTERFACE)
 add_library(pcinspector::earcut ALIAS pcinspector_earcut)
 target_include_directories(pcinspector_earcut SYSTEM INTERFACE

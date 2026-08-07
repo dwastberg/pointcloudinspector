@@ -1,0 +1,232 @@
+#pragma once
+
+#include "foundation/Bounds3d.h"
+#include "foundation/StrongId.h"
+#include "foundation/Vec3d.h"
+#include "pointcloud/PointColorMapCatalog.h"
+
+#include <array>
+#include <cstddef>
+#include <cstdint>
+#include <filesystem>
+#include <functional>
+#include <memory>
+#include <optional>
+#include <span>
+#include <string>
+#include <string_view>
+#include <vector>
+
+namespace pci {
+
+inline constexpr std::uint32_t rasterTilePixels = 256;
+inline constexpr std::uint32_t rasterTileGutter = 1;
+inline constexpr std::uint32_t rasterStoredTilePixels =
+    rasterTilePixels + 2 * rasterTileGutter;
+static_assert(rasterStoredTilePixels == 258);
+
+// Above this base-image size, a decimating read of the base band is no longer
+// bounded and only an explicitly backed overview may be used. Phase 1's
+// one-shot static texture and inspection-time sampling may decimate the base
+// band below this threshold; runtime tile reads never do, at any size.
+inline constexpr std::uint64_t rasterBoundedBaseReadPixels = 64ULL << 20;
+
+// Hard ceiling for phase 1's single static texture, additionally clamped to
+// the QRhi-reported maximum texture size at upload time.
+inline constexpr std::uint32_t rasterStaticTextureLimitPixels = 4096;
+
+inline constexpr double maximumRasterZOffsetMagnitude = 1.0e6;
+
+// A single continuous scalar band is colorized rather than presented as if it
+// were photographic grayscale.
+inline constexpr std::string_view defaultRasterScalarColorRampKey = "viridis";
+
+using RasterSourceId = StrongId<struct RasterSourceIdTag>;
+
+enum class RasterSampleKind : std::uint8_t {
+    ContinuousColor,
+    ContinuousScalar,
+    Categorical,
+};
+
+struct RasterBandRef {
+    int band = 0;      // GDAL's one-based band number
+    int overview = -1; // -1 means base band
+    bool operator==(const RasterBandRef &) const = default;
+};
+
+// One entry of the inspected level table. Entry 0 is the full-resolution band;
+// later entries are ordered from finer to coarser resolution. A level index
+// never implies a power-of-two reduction: the measured base-pixels-per-texel
+// ratios are the only reduction the rest of the system may use.
+struct RasterLevel {
+    std::uint32_t width = 0;
+    std::uint32_t height = 0;
+    double basePixelsPerTexelX = 1.0;
+    double basePixelsPerTexelY = 1.0;
+    std::uint8_t channelCount = 0;
+    std::array<RasterBandRef, 4> rgbaBands{};
+    std::optional<RasterBandRef> maskBand;
+    bool operator==(const RasterLevel &) const = default;
+};
+
+struct RasterDisplayRange {
+    double minimum = 0.0;
+    double maximum = 1.0;
+    enum class Origin : std::uint8_t {
+        Metadata,
+        CachedStatistics,
+        Sampled
+    };
+    Origin origin = Origin::Metadata;
+    bool operator==(const RasterDisplayRange &) const = default;
+};
+
+// Immutable and shared by every request in one render generation, so a ramp is
+// not copied per tile and stays alive until active workers finish. A palette
+// color table is deliberately absent: it is a fixed property of the source
+// rather than of the user-adjustable display transform, and expansion happens
+// inside the GDAL adapter before portable code sees a tile.
+struct RasterDecodeParameters {
+    RasterSampleKind sampleKind = RasterSampleKind::ContinuousColor;
+    std::optional<RasterDisplayRange> displayRange;
+    std::shared_ptr<const std::vector<PointColorStop>> colorRamp;
+};
+
+struct RasterBandInfo {
+    int band = 0;
+    std::string name;
+    std::string dataType;
+    std::string colorInterpretation;
+    std::optional<double> nodata;
+    bool operator==(const RasterBandInfo &) const = default;
+};
+
+struct RasterLayerMetadata {
+    std::filesystem::path sourcePath;
+    std::string sourceDriver;
+    std::uint32_t width = 0;
+    std::uint32_t height = 0;
+    std::array<double, 6> geoTransform{};
+    Bounds3d bounds;
+    std::string spatialReferenceWkt;
+    std::vector<RasterBandInfo> bands;
+    std::vector<RasterLevel> levels;
+    RasterDecodeParameters defaultDisplay;
+    bool geographicCrs = false;
+    bool crsMissing = false;
+    bool crsMismatch = false;
+    bool extentDisjointXY = false;
+    bool insufficientOverviews = false;
+    bool crossesAntimeridian = false;
+};
+
+struct RasterLayerStyle {
+    float opacity = 1.0F;
+    double zOffset = 0.0;
+    std::optional<RasterDisplayRange> displayRange;
+    std::string colorRampKey; // empty for RGB; stable CPT key for scalar data
+    bool operator==(const RasterLayerStyle &) const = default;
+};
+
+[[nodiscard]] RasterLayerStyle
+defaultRasterLayerStyle(const RasterLayerMetadata &metadata);
+[[nodiscard]] RasterLayerStyle clampRasterLayerStyle(RasterLayerStyle style);
+
+// Affine transform. Coefficients follow GDAL exactly:
+//   worldX = gt[0] + pixel * gt[1] + line * gt[2]
+//   worldY = gt[3] + pixel * gt[4] + line * gt[5]
+// Geometry always uses pixel *edges*, never centers.
+[[nodiscard]] bool
+rasterAffineInvertible(const std::array<double, 6> &geoTransform) noexcept;
+
+[[nodiscard]] Vec3d
+rasterPixelToWorld(const std::array<double, 6> &geoTransform,
+                   double pixel,
+                   double line) noexcept;
+
+struct RasterPixelCoordinate {
+    double pixel = 0.0;
+    double line = 0.0;
+    bool operator==(const RasterPixelCoordinate &) const = default;
+};
+
+[[nodiscard]] std::optional<RasterPixelCoordinate>
+rasterWorldToPixel(const std::array<double, 6> &geoTransform,
+                   double worldX,
+                   double worldY) noexcept;
+
+// The four pixel-edge corners in (0,0), (W,0), (W,H), (0,H) order.
+[[nodiscard]] std::array<Vec3d, 4>
+rasterCornerPoints(const std::array<double, 6> &geoTransform,
+                   std::uint32_t width,
+                   std::uint32_t height) noexcept;
+
+[[nodiscard]] std::optional<Bounds3d>
+rasterPixelEdgeBounds(const std::array<double, 6> &geoTransform,
+                      std::uint32_t width,
+                      std::uint32_t height) noexcept;
+
+// A non-reprojected geographic raster whose transformed X extent exceeds 180
+// degrees has wrapped: its min/max box spans the wrong side of the globe and
+// would corrupt scene fitting for every other layer.
+[[nodiscard]] bool rasterCrossesAntimeridian(const Bounds3d &bounds,
+                                             bool geographicCrs) noexcept;
+
+// Level-table validity. Entry 0 must be the base dimensions; every later entry
+// must be non-increasing in both dimensions and strictly smaller in at least
+// one, so duplicates and non-decreasing entries are rejected.
+[[nodiscard]] bool rasterLevelTableValid(std::span<const RasterLevel> levels,
+                                         std::uint32_t baseWidth,
+                                         std::uint32_t baseHeight) noexcept;
+
+[[nodiscard]] std::uint32_t rasterLevelTileCountX(const RasterLevel &) noexcept;
+[[nodiscard]] std::uint32_t rasterLevelTileCountY(const RasterLevel &) noexcept;
+
+// levelIndex indexes the inspected RasterLevel table. It never implies a
+// power-of-two reduction, so ancestry and child enumeration are geometric.
+struct RasterTileKey {
+    std::uint32_t levelIndex = 0;
+    std::uint32_t x = 0;
+    std::uint32_t y = 0;
+    bool operator==(const RasterTileKey &) const = default;
+    auto operator<=>(const RasterTileKey &) const = default;
+};
+
+// Inner (non-gutter) valid extent of one tile, which is shorter than
+// rasterTilePixels for the level's last row and column. Zero when the key
+// falls outside the level.
+struct RasterTileExtent {
+    std::uint32_t width = 0;
+    std::uint32_t height = 0;
+    bool operator==(const RasterTileExtent &) const = default;
+};
+
+[[nodiscard]] RasterTileExtent rasterTileValidExtent(const RasterLevel &,
+                                                     RasterTileKey) noexcept;
+
+struct RasterBasePixelRect {
+    double minimumPixel = 0.0;
+    double minimumLine = 0.0;
+    double maximumPixel = 0.0;
+    double maximumLine = 0.0;
+    bool operator==(const RasterBasePixelRect &) const = default;
+    [[nodiscard]] bool overlaps(const RasterBasePixelRect &) const noexcept;
+};
+
+// A tile's extent in base-pixel coordinates, which is the common frame in
+// which levels with arbitrary reduction ratios are compared. The level's last
+// row and column are snapped to the base dimensions so adjacent tiles share an
+// identical edge and the outer boundary has no floating-point gap.
+[[nodiscard]] RasterBasePixelRect
+rasterTileBasePixelRect(const RasterLevel &level,
+                        RasterTileKey key,
+                        std::uint32_t baseWidth,
+                        std::uint32_t baseHeight) noexcept;
+
+} // namespace pci
+
+template <> struct std::hash<pci::RasterTileKey> {
+    [[nodiscard]] std::size_t
+    operator()(const pci::RasterTileKey &key) const noexcept;
+};

@@ -67,7 +67,7 @@ foreach(source IN LISTS project_sources)
         endif()
 
         if(relative MATCHES
-                "^src/(foundation|pointcloud|vector|tasking)/" OR
+                "^src/(foundation|pointcloud|raster|vector|tasking)/" OR
            relative MATCHES "^src/renderer/planning/")
             if(include MATCHES "[<\"](Q[A-Z][^>\"]*|Qt[^>\"]*)[>\"]")
                 list(APPEND violations
