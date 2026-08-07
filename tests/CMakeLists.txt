@@ -112,6 +112,11 @@ pci_add_catch_test_target(pcinspector_import_pdal_tests
         Qt6::Core
         PDAL::pdalcpp)
 
+pci_add_catch_test_target(pcinspector_gdal_runtime_tests
+        WITH_MAIN
+        SOURCES component/GdalRuntimeTests.cpp
+        LIBRARIES pcinspector::gdal_runtime)
+
 pci_add_catch_test_target(pcinspector_import_ogr_tests
         WITH_MAIN
         SOURCES

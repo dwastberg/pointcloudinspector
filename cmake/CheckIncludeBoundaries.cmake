@@ -37,10 +37,13 @@ foreach(source IN LISTS project_sources)
         if(include MATCHES
                 "[<\"](gdal[^/]*|ogr[^/]*|cpl_[^/]*)\\.h[>\"]")
             set(allowed FALSE)
-            if(relative MATCHES "^src/import/ogr/" OR
-               relative MATCHES "^tests/fixtures/Ogr" OR
+            if(relative MATCHES "^src/import/gdal/" OR
+               relative MATCHES "^src/import/ogr/" OR
+               relative MATCHES "^tests/fixtures/(Gdal|Ogr)" OR
                relative STREQUAL
-                   "tests/component/OgrVectorImportTests.cpp")
+                   "tests/component/OgrVectorImportTests.cpp" OR
+               relative STREQUAL
+                   "tests/component/GdalRasterImportTests.cpp")
                 set(allowed TRUE)
             endif()
             if(NOT allowed)

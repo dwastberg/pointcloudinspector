@@ -293,9 +293,20 @@ target_link_libraries(pcinspector_import_pdal
         PDAL::pdalcpp)
 pci_configure_target(pcinspector_import_pdal)
 
+# The single owner of the GDAL::GDAL edge. Both the raster and OGR adapters
+# reach GDAL through this target so driver registration, error capture, and the
+# process-global block cache have exactly one home.
+add_library(pcinspector_gdal_runtime STATIC
+        import/gdal/GdalRuntime.cpp
+        import/gdal/GdalRuntime.h)
+add_library(pcinspector::gdal_runtime ALIAS pcinspector_gdal_runtime)
+target_include_directories(pcinspector_gdal_runtime PUBLIC
+        "${pcinspector_source_include_dir}")
+target_link_libraries(pcinspector_gdal_runtime PUBLIC
+        GDAL::GDAL)
+pci_configure_target(pcinspector_gdal_runtime)
+
 add_library(pcinspector_import_ogr STATIC
-        import/ogr/OgrRuntime.cpp
-        import/ogr/OgrRuntime.h
         import/ogr/OgrVectorLoader.cpp
         import/ogr/OgrVectorLoader.h)
 add_library(pcinspector::import_ogr ALIAS pcinspector_import_ogr)
@@ -305,7 +316,7 @@ target_link_libraries(pcinspector_import_ogr
         PUBLIC
         pcinspector::vector
         PRIVATE
-        GDAL::GDAL)
+        pcinspector::gdal_runtime)
 pci_configure_target(pcinspector_import_ogr)
 
 add_library(pcinspector_import_async STATIC

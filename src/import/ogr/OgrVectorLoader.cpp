@@ -1,6 +1,6 @@
 #include "import/ogr/OgrVectorLoader.h"
 
-#include "import/ogr/OgrRuntime.h"
+#include "import/gdal/GdalRuntime.h"
 
 #include <cpl_conv.h>
 #include <gdal_priv.h>
@@ -24,8 +24,8 @@ using GeometryPtr =
 
 [[nodiscard]] DatasetPtr openDataset(const std::filesystem::path &path)
 {
-    ensureOgrRegistered();
-    OgrErrorScope errors;
+    ensureGdalRegistered();
+    GdalErrorScope errors;
     GDALDataset *dataset = static_cast<GDALDataset *>(
         GDALOpenEx(path.string().c_str(),
                    GDAL_OF_VECTOR | GDAL_OF_READONLY | GDAL_OF_VERBOSE_ERROR,
