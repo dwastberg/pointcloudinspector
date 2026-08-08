@@ -57,6 +57,50 @@ FrustumCuller FrustumCuller::fromOrthographic(const Vec3d position,
     return culler;
 }
 
+std::vector<Vec3d>
+FrustumCuller::clipConvexPolygon(const std::span<const Vec3d> polygon) const
+{
+    std::vector<Vec3d> current(polygon.begin(), polygon.end());
+    std::vector<Vec3d> clipped;
+    clipped.reserve(polygon.size() + planes_.size());
+
+    for (const Plane &plane : planes_) {
+        if (current.size() < 3) {
+            return {};
+        }
+        clipped.clear();
+        // The Plane convention already fixes the sign: normal points into the
+        // visible half-space, so a vertex is inside when the signed distance
+        // is at or above zero.
+        const auto signedDistance = [&plane](const Vec3d point) {
+            return dot(plane.normal, point) + plane.distance;
+        };
+        for (std::size_t index = 0; index < current.size(); ++index) {
+            const Vec3d start = current[index];
+            const Vec3d end = current[(index + 1) % current.size()];
+            const double startDistance = signedDistance(start);
+            const double endDistance = signedDistance(end);
+            const bool startInside = startDistance >= 0.0;
+            const bool endInside = endDistance >= 0.0;
+
+            if (startInside) {
+                clipped.push_back(start);
+            }
+            if (startInside == endInside) {
+                continue;
+            }
+            const double span = startDistance - endDistance;
+            if (std::abs(span) <= 0.0 || !std::isfinite(span)) {
+                continue;
+            }
+            const double blend = startDistance / span;
+            clipped.push_back(start + (end - start) * blend);
+        }
+        current.swap(clipped);
+    }
+    return current.size() < 3 ? std::vector<Vec3d>{} : current;
+}
+
 bool FrustumCuller::intersects(const Bounds3d &bounds) const noexcept
 {
     const Vec3d center{
