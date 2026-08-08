@@ -16,6 +16,10 @@ It is built with C++23, Qt 6, PDAL, and GDAL.
 - Measure 3D, horizontal, and vertical distances between rendered points.
 - Import GDAL/OGR-readable point, line, and polygon layers as styled planar
   overlays. Vector data is not reprojected or draped over the point cloud.
+- Import GDAL-readable raster imagery and terrain as georeferenced planar
+  layers with adjustable opacity and elevation. Rasters are not reprojected,
+  not draped, not lit by eye-dome lighting, and not pickable. Display quality
+  depends on the overviews the dataset provides; add them with `gdaladdo`.
 
 ## Building
 

@@ -5,15 +5,20 @@
 #include "app/WorkspaceSettings.h"
 #include "support/TestPointColorMaps.h"
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include <QApplication>
 #include <QComboBox>
 #include <QDockWidget>
+#include <QDoubleSpinBox>
+#include <QLabel>
 #include <QListView>
 #include <QMainWindow>
 #include <QMenu>
+#include <QPushButton>
 #include <QSettings>
+#include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTimer>
@@ -345,4 +350,192 @@ TEST_CASE("layer panel sibling docks preserve names defaults and layout",
     pci::WorkspaceSettings::restore(window, settings);
     CHECK(window.dockWidgetArea(inspector) == Qt::RightDockWidgetArea);
     CHECK(tasks->isHidden());
+}
+
+namespace {
+
+class InspectorRasterSource final : public pci::RasterTileSource {
+public:
+    explicit InspectorRasterSource(pci::RasterLayerMetadata metadata)
+        : metadata_(std::move(metadata))
+    {
+    }
+
+    [[nodiscard]] const pci::RasterLayerMetadata &
+    metadata() const noexcept override
+    {
+        return metadata_;
+    }
+
+    [[nodiscard]] pci::RasterTileData readTile(const pci::RasterTileRequest &,
+                                               std::stop_token) const override
+    {
+        throw pci::RasterReadError("the inspector fixture holds no pixels");
+    }
+
+private:
+    pci::RasterLayerMetadata metadata_;
+};
+
+[[nodiscard]] pci::SceneDocumentSnapshotPtr
+rasterInspectorSnapshot(const pci::RasterSampleKind kind,
+                        const bool visible = true)
+{
+    pci::RasterLayerMetadata metadata;
+    metadata.sourcePath = "/data/terrain.tif";
+    metadata.sourceDriver = "GTiff";
+    metadata.width = 2048;
+    metadata.height = 1024;
+    metadata.geoTransform = {674000.0, 0.5, 0.0, 6580000.0, 0.0, -0.5};
+    metadata.spatialReferenceWkt = "STUBCRS";
+    metadata.bounds = *pci::rasterPixelEdgeBounds(
+        metadata.geoTransform, metadata.width, metadata.height);
+    metadata.bands.push_back({.band = 1});
+    metadata.defaultDisplay.sampleKind = kind;
+    metadata.defaultDisplay.displayRange = pci::RasterDisplayRange{
+        .minimum = 12.5,
+        .maximum = 340.0,
+        .origin = pci::RasterDisplayRange::Origin::Sampled};
+    pci::RasterLevel base;
+    base.width = metadata.width;
+    base.height = metadata.height;
+    base.channelCount = 1;
+    metadata.levels.push_back(base);
+
+    auto data = std::make_shared<pci::RasterLayerData>(pci::RasterLayerData{
+        .sourceId = pci::nextRasterSourceId(),
+        .source = std::make_shared<InspectorRasterSource>(std::move(metadata)),
+    });
+    auto snapshot = std::make_shared<pci::SceneDocumentSnapshot>();
+    snapshot->layers.push_back(
+        {.id = pci::SceneLayerId{1},
+         .visible = visible,
+         .payload = pci::RasterLayerState{
+             .data = std::move(data),
+             .style = pci::RasterLayerStyle{.opacity = 0.6F, .zOffset = 7.5}}});
+    return snapshot;
+}
+
+} // namespace
+
+TEST_CASE("layer inspector shows raster placement and metadata",
+          "[ui][inspector][raster]")
+{
+    pci::LayerInspectorDock inspector(
+        nullptr, pci::test::createTestPointColorMapCatalog());
+    inspector.setDocumentSnapshot(
+        rasterInspectorSnapshot(pci::RasterSampleKind::ContinuousScalar),
+        pci::SceneLayerId{1});
+
+    auto *panel =
+        inspector.findChild<QWidget *>(QStringLiteral("rasterLayerProperties"));
+    REQUIRE(panel != nullptr);
+    CHECK(panel->isVisibleTo(&inspector));
+    auto *vectorPanel =
+        inspector.findChild<QWidget *>(QStringLiteral("vectorLayerProperties"));
+    REQUIRE(vectorPanel != nullptr);
+    CHECK_FALSE(vectorPanel->isVisibleTo(&inspector));
+
+    auto *opacity = inspector.findChild<QDoubleSpinBox *>(
+        QStringLiteral("rasterOpacitySpinBox"));
+    auto *offset = inspector.findChild<QDoubleSpinBox *>(
+        QStringLiteral("rasterZOffsetSpinBox"));
+    REQUIRE(opacity != nullptr);
+    REQUIRE(offset != nullptr);
+    CHECK(opacity->value() == Catch::Approx(60.0));
+    CHECK(offset->value() == Catch::Approx(7.5));
+
+    auto *dimensions =
+        inspector.findChild<QLabel *>(QStringLiteral("rasterDimensionsValue"));
+    auto *overviews =
+        inspector.findChild<QLabel *>(QStringLiteral("rasterOverviewsValue"));
+    auto *range =
+        inspector.findChild<QLabel *>(QStringLiteral("rasterRangeValue"));
+    REQUIRE(dimensions != nullptr);
+    CHECK(dimensions->text() == QStringLiteral("2048 x 1024"));
+    // A base-only level table has no overviews to report.
+    CHECK(overviews->text() == QStringLiteral("None"));
+    // Provenance is shown because a sampled range is an estimate, not the
+    // dataset's declared extremes.
+    CHECK(range->text().contains(QStringLiteral("bounded sample")));
+}
+
+TEST_CASE("layer inspector offers range and ramp only for scalar rasters",
+          "[ui][inspector][raster]")
+{
+    pci::LayerInspectorDock inspector(
+        nullptr, pci::test::createTestPointColorMapCatalog());
+
+    auto *rangeWidget =
+        inspector.findChild<QWidget *>(QStringLiteral("rasterRangeWidget"));
+    auto *ramp = inspector.findChild<QComboBox *>(
+        QStringLiteral("rasterColorRampCombo"));
+    REQUIRE(rangeWidget != nullptr);
+    REQUIRE(ramp != nullptr);
+
+    inspector.setDocumentSnapshot(
+        rasterInspectorSnapshot(pci::RasterSampleKind::ContinuousScalar),
+        pci::SceneLayerId{1});
+    CHECK(rangeWidget->isVisibleTo(inspector.widget()));
+    CHECK(ramp->isVisibleTo(inspector.widget()));
+
+    // An RGB source has no single meaningful range, so the controls are not
+    // offered rather than shown inert.
+    inspector.setDocumentSnapshot(
+        rasterInspectorSnapshot(pci::RasterSampleKind::ContinuousColor),
+        pci::SceneLayerId{1});
+    CHECK_FALSE(rangeWidget->isVisibleTo(inspector.widget()));
+    CHECK_FALSE(ramp->isVisibleTo(inspector.widget()));
+}
+
+TEST_CASE("layer inspector edits raster opacity and elevation",
+          "[ui][inspector][raster]")
+{
+    pci::LayerInspectorDock inspector(
+        nullptr, pci::test::createTestPointColorMapCatalog());
+    inspector.setDocumentSnapshot(
+        rasterInspectorSnapshot(pci::RasterSampleKind::ContinuousColor),
+        pci::SceneLayerId{1});
+
+    QSignalSpy styleChanged(&inspector,
+                            &pci::LayerInspectorDock::rasterStyleChanged);
+    auto *opacity = inspector.findChild<QDoubleSpinBox *>(
+        QStringLiteral("rasterOpacitySpinBox"));
+    opacity->setValue(25.0);
+    REQUIRE_FALSE(styleChanged.empty());
+    CHECK(styleChanged.back().at(1).value<pci::RasterLayerStyle>().opacity ==
+          Catch::Approx(0.25F));
+
+    // Reset returns the layer to the documented default of z = 0.
+    auto *reset = inspector.findChild<QPushButton *>(
+        QStringLiteral("rasterResetElevationButton"));
+    REQUIRE(reset != nullptr);
+    reset->click();
+    CHECK(styleChanged.back().at(1).value<pci::RasterLayerStyle>().zOffset ==
+          Catch::Approx(0.0));
+}
+
+TEST_CASE("layer inspector warns when a raster needs tiled rendering",
+          "[ui][inspector][raster]")
+{
+    pci::LayerInspectorDock inspector(
+        nullptr, pci::test::createTestPointColorMapCatalog());
+    pci::SceneDocumentSnapshotPtr snapshot =
+        rasterInspectorSnapshot(pci::RasterSampleKind::ContinuousColor);
+    auto &state = std::get<pci::RasterLayerState>(snapshot->layers[0].payload);
+    const_cast<pci::RasterLayerMetadata &>(state.data->metadata())
+        .insufficientOverviews = true;
+    inspector.setDocumentSnapshot(snapshot, pci::SceneLayerId{1});
+
+    auto *warning = inspector.findChild<QWidget *>(
+        QStringLiteral("rasterVisibilityWarning"));
+    auto *label = inspector.findChild<QLabel *>(
+        QStringLiteral("rasterVisibilityWarningLabel"));
+    auto *showAnyway = inspector.findChild<QPushButton *>(
+        QStringLiteral("rasterShowAnywayButton"));
+    REQUIRE(warning != nullptr);
+    CHECK(warning->isVisibleTo(inspector.widget()));
+    CHECK(label->text().contains(QStringLiteral("gdaladdo")));
+    // Overviews are a data problem, not a visibility one, so no Show anyway.
+    CHECK_FALSE(showAnyway->isVisibleTo(warning));
 }

@@ -559,6 +559,165 @@ LayerInspectorDock::LayerInspectorDock(
     vectorLayout->addWidget(vectorInformation);
 
     inspectorLayout->addWidget(vectorPropertiesWidget_);
+    rasterPropertiesWidget_ = new QWidget(inspectorContent);
+    rasterPropertiesWidget_->setObjectName(
+        QStringLiteral("rasterLayerProperties"));
+    auto *rasterLayout = new QVBoxLayout(rasterPropertiesWidget_);
+    rasterLayout->setContentsMargins(0, 0, 0, 0);
+    rasterLayout->setSpacing(12);
+
+    rasterVisibilityWarning_ = new QWidget(rasterPropertiesWidget_);
+    rasterVisibilityWarning_->setObjectName(
+        QStringLiteral("rasterVisibilityWarning"));
+    auto *rasterWarningLayout = new QVBoxLayout(rasterVisibilityWarning_);
+    rasterWarningLayout->setContentsMargins(0, 0, 0, 0);
+    rasterVisibilityWarningLabel_ = new QLabel(rasterVisibilityWarning_);
+    rasterVisibilityWarningLabel_->setObjectName(
+        QStringLiteral("rasterVisibilityWarningLabel"));
+    rasterVisibilityWarningLabel_->setWordWrap(true);
+    rasterShowAnywayButton_ = new QPushButton(QStringLiteral("Show anyway"),
+                                              rasterVisibilityWarning_);
+    rasterShowAnywayButton_->setObjectName(
+        QStringLiteral("rasterShowAnywayButton"));
+    rasterWarningLayout->addWidget(rasterVisibilityWarningLabel_);
+    rasterWarningLayout->addWidget(rasterShowAnywayButton_);
+    rasterVisibilityWarning_->setVisible(false);
+    rasterLayout->addWidget(rasterVisibilityWarning_);
+
+    auto *rasterAppearance =
+        new QGroupBox(QStringLiteral("Appearance"), rasterPropertiesWidget_);
+    rasterAppearance->setObjectName(QStringLiteral("rasterAppearanceSection"));
+    auto *rasterAppearanceForm = new QFormLayout(rasterAppearance);
+    rasterAppearanceForm->setFieldGrowthPolicy(
+        QFormLayout::ExpandingFieldsGrow);
+    rasterOpacity_ = new QDoubleSpinBox(rasterAppearance);
+    rasterOpacity_->setObjectName(QStringLiteral("rasterOpacitySpinBox"));
+    rasterOpacity_->setRange(0.0, 100.0);
+    rasterOpacity_->setDecimals(0);
+    rasterOpacity_->setSuffix(QStringLiteral(" %"));
+    rasterOpacity_->setKeyboardTracking(false);
+    rasterAppearanceForm->addRow(QStringLiteral("Opacity"), rasterOpacity_);
+
+    // Display range and ramp apply to single-band continuous sources only.
+    // Changing either alters decoded pixels, unlike opacity and elevation.
+    rasterRangeWidget_ = new QWidget(rasterAppearance);
+    rasterRangeWidget_->setObjectName(QStringLiteral("rasterRangeWidget"));
+    auto *rasterRangeLayout = new QHBoxLayout(rasterRangeWidget_);
+    rasterRangeLayout->setContentsMargins(0, 0, 0, 0);
+    rasterRangeMinimum_ = new QDoubleSpinBox(rasterRangeWidget_);
+    rasterRangeMinimum_->setObjectName(
+        QStringLiteral("rasterRangeMinimumSpinBox"));
+    rasterRangeMinimum_->setRange(-1.0e12, 1.0e12);
+    rasterRangeMinimum_->setDecimals(3);
+    rasterRangeMinimum_->setKeyboardTracking(false);
+    rasterRangeMaximum_ = new QDoubleSpinBox(rasterRangeWidget_);
+    rasterRangeMaximum_->setObjectName(
+        QStringLiteral("rasterRangeMaximumSpinBox"));
+    rasterRangeMaximum_->setRange(-1.0e12, 1.0e12);
+    rasterRangeMaximum_->setDecimals(3);
+    rasterRangeMaximum_->setKeyboardTracking(false);
+    rasterRangeLayout->addWidget(rasterRangeMinimum_);
+    rasterRangeLayout->addWidget(rasterRangeMaximum_);
+    rasterAppearanceForm->addRow(QStringLiteral("Display range"),
+                                 rasterRangeWidget_);
+
+    rasterColorRamp_ = new QComboBox(rasterAppearance);
+    rasterColorRamp_->setObjectName(QStringLiteral("rasterColorRampCombo"));
+    if (colorMaps_) {
+        for (const PointColorMapDefinition &definition :
+             colorMaps_->definitions()) {
+            if (definition.kind != PointColorMapKind::Continuous ||
+                definition.stops.empty()) {
+                continue;
+            }
+            rasterColorRamp_->addItem(
+                QString::fromUtf8(definition.name.data(),
+                                  static_cast<int>(definition.name.size())),
+                QString::fromUtf8(definition.key.data(),
+                                  static_cast<int>(definition.key.size())));
+        }
+    }
+    rasterAppearanceForm->addRow(QStringLiteral("Color ramp"),
+                                 rasterColorRamp_);
+    rasterLayout->addWidget(rasterAppearance);
+
+    auto *rasterPlacement =
+        new QGroupBox(QStringLiteral("Placement"), rasterPropertiesWidget_);
+    rasterPlacement->setObjectName(QStringLiteral("rasterPlacementSection"));
+    auto *rasterPlacementForm = new QFormLayout(rasterPlacement);
+    rasterPlacementForm->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
+    rasterZOffset_ = new QDoubleSpinBox(rasterPlacement);
+    rasterZOffset_->setObjectName(QStringLiteral("rasterZOffsetSpinBox"));
+    rasterZOffset_->setRange(-maximumRasterZOffsetMagnitude,
+                             maximumRasterZOffsetMagnitude);
+    rasterZOffset_->setDecimals(3);
+    rasterZOffset_->setKeyboardTracking(false);
+    rasterPlaceAboveScene_ =
+        new QPushButton(QStringLiteral("Place above scene"), rasterPlacement);
+    rasterPlaceAboveScene_->setObjectName(
+        QStringLiteral("rasterPlaceAboveSceneButton"));
+    rasterPlaceAboveScene_->setProperty("primary", true);
+    rasterMatchSceneFloor_ =
+        new QPushButton(QStringLiteral("Match scene floor"), rasterPlacement);
+    rasterMatchSceneFloor_->setObjectName(
+        QStringLiteral("rasterMatchFloorButton"));
+    rasterResetElevation_ =
+        new QPushButton(QStringLiteral("Reset to z = 0"), rasterPlacement);
+    rasterResetElevation_->setObjectName(
+        QStringLiteral("rasterResetElevationButton"));
+    rasterPlacementForm->addRow(QStringLiteral("Elevation offset"),
+                                rasterZOffset_);
+    rasterPlacementForm->addRow(rasterPlaceAboveScene_);
+    rasterPlacementForm->addRow(rasterMatchSceneFloor_);
+    rasterPlacementForm->addRow(rasterResetElevation_);
+    rasterLayout->addWidget(rasterPlacement);
+
+    auto *rasterInformation =
+        new QGroupBox(QStringLiteral("Information"), rasterPropertiesWidget_);
+    rasterInformation->setObjectName(
+        QStringLiteral("rasterInformationSection"));
+    auto *rasterInformationForm = new QFormLayout(rasterInformation);
+    rasterInformationForm->setFieldGrowthPolicy(
+        QFormLayout::ExpandingFieldsGrow);
+    rasterDimensionsValue_ = makeValueLabel();
+    rasterDimensionsValue_->setObjectName(
+        QStringLiteral("rasterDimensionsValue"));
+    rasterBandsValue_ = makeValueLabel();
+    rasterBandsValue_->setObjectName(QStringLiteral("rasterBandsValue"));
+    rasterPixelSizeValue_ = makeValueLabel();
+    rasterPixelSizeValue_->setObjectName(
+        QStringLiteral("rasterPixelSizeValue"));
+    rasterOverviewsValue_ = makeValueLabel();
+    rasterOverviewsValue_->setObjectName(
+        QStringLiteral("rasterOverviewsValue"));
+    rasterRangeValue_ = makeValueLabel();
+    rasterRangeValue_->setObjectName(QStringLiteral("rasterRangeValue"));
+    rasterDriverValue_ = makeValueLabel();
+    rasterDriverValue_->setObjectName(QStringLiteral("rasterDriverValue"));
+    rasterCrsValue_ = makeValueLabel();
+    rasterCrsValue_->setObjectName(QStringLiteral("rasterCrsValue"));
+    rasterBoundsValue_ = makeValueLabel();
+    rasterBoundsValue_->setObjectName(QStringLiteral("rasterBoundsValue"));
+    rasterSourceValue_ = makeValueLabel();
+    rasterSourceValue_->setObjectName(QStringLiteral("rasterSourceValue"));
+    rasterInformationForm->addRow(QStringLiteral("Dimensions"),
+                                  rasterDimensionsValue_);
+    rasterInformationForm->addRow(QStringLiteral("Bands"), rasterBandsValue_);
+    rasterInformationForm->addRow(QStringLiteral("Native pixel size"),
+                                  rasterPixelSizeValue_);
+    rasterInformationForm->addRow(QStringLiteral("Overviews"),
+                                  rasterOverviewsValue_);
+    rasterInformationForm->addRow(QStringLiteral("Applied range"),
+                                  rasterRangeValue_);
+    rasterInformationForm->addRow(QStringLiteral("Driver"), rasterDriverValue_);
+    rasterInformationForm->addRow(QStringLiteral("Reported CRS"),
+                                  rasterCrsValue_);
+    rasterInformationForm->addRow(QStringLiteral("Size (X×Y)"),
+                                  rasterBoundsValue_);
+    rasterInformationForm->addRow(QStringLiteral("Source"), rasterSourceValue_);
+    rasterLayout->addWidget(rasterInformation);
+
+    inspectorLayout->addWidget(rasterPropertiesWidget_);
     inspectorLayout->addStretch(1);
     inspectorScroll->setWidget(inspectorContent);
     setWidget(inspectorScroll);
@@ -690,6 +849,40 @@ LayerInspectorDock::LayerInspectorDock(
                 applyColorRange();
             });
 
+    for (QDoubleSpinBox *spin : {rasterOpacity_,
+                                 rasterZOffset_,
+                                 rasterRangeMinimum_,
+                                 rasterRangeMaximum_}) {
+        connect(spin, &QDoubleSpinBox::valueChanged, this, [this] {
+            applyRasterStyle();
+        });
+    }
+    connect(rasterColorRamp_, &QComboBox::currentIndexChanged, this, [this] {
+        applyRasterStyle();
+    });
+    // Elevation presets resolve against scene bounds at the moment they are
+    // applied; they do not track later scene changes.
+    connect(rasterPlaceAboveScene_, &QPushButton::clicked, this, [this] {
+        const Bounds3d bounds = documentColorBounds(layers_);
+        if (bounds.valid()) {
+            rasterZOffset_->setValue(bounds.maximum[2] +
+                                     0.01 * bounds.maximumExtent());
+        }
+    });
+    connect(rasterMatchSceneFloor_, &QPushButton::clicked, this, [this] {
+        const Bounds3d bounds = documentColorBounds(layers_);
+        if (bounds.valid()) {
+            rasterZOffset_->setValue(bounds.minimum[2]);
+        }
+    });
+    connect(rasterResetElevation_, &QPushButton::clicked, this, [this] {
+        rasterZOffset_->setValue(0.0);
+    });
+    connect(rasterShowAnywayButton_, &QPushButton::clicked, this, [this] {
+        if (const auto id = selectedLayerId()) {
+            emit showRasterAnywayRequested(*id);
+        }
+    });
     updateProperties();
 }
 
@@ -701,11 +894,157 @@ void LayerInspectorDock::setDocumentSnapshot(SceneDocumentSnapshotPtr snapshot,
     }
     layers_ = snapshot->pointLayers();
     vectorLayers_ = snapshot->vectorLayers();
+    rasterLayers_ = snapshot->rasterLayers();
     selectedLayerId_ = selectedLayerId;
-    if (!layerById(selectedLayerId_) && !vectorLayerById(selectedLayerId_)) {
+    if (!layerById(selectedLayerId_) && !vectorLayerById(selectedLayerId_) &&
+        !rasterLayerById(selectedLayerId_)) {
         selectedLayerId_ = SceneLayerId{};
     }
     updateProperties();
+}
+
+const RasterLayer *
+LayerInspectorDock::rasterLayerById(const SceneLayerId id) const
+{
+    const auto found = std::ranges::find(rasterLayers_, id, &RasterLayer::id);
+    return found == rasterLayers_.end() ? nullptr : &*found;
+}
+
+void LayerInspectorDock::updateRasterProperties(const RasterLayer &raster)
+{
+    const RasterLayerMetadata &metadata = raster.data->metadata();
+    const bool scalar = metadata.defaultDisplay.sampleKind ==
+                        RasterSampleKind::ContinuousScalar;
+
+    const QSignalBlocker opacityBlock(rasterOpacity_);
+    const QSignalBlocker offsetBlock(rasterZOffset_);
+    const QSignalBlocker minimumBlock(rasterRangeMinimum_);
+    const QSignalBlocker maximumBlock(rasterRangeMaximum_);
+    const QSignalBlocker rampBlock(rasterColorRamp_);
+
+    rasterOpacity_->setValue(raster.style.opacity * 100.0F);
+    rasterZOffset_->setValue(raster.style.zOffset);
+
+    // Range and ramp exist only for a single continuous scalar; an RGB source
+    // has no meaningful single range and a palette is looked up, not stretched.
+    rasterRangeWidget_->setVisible(scalar);
+    rasterColorRamp_->setVisible(scalar);
+    const std::optional<RasterDisplayRange> range =
+        raster.style.displayRange ? raster.style.displayRange
+                                  : metadata.defaultDisplay.displayRange;
+    if (range) {
+        rasterRangeMinimum_->setValue(range->minimum);
+        rasterRangeMaximum_->setValue(range->maximum);
+    }
+    if (const int index = rasterColorRamp_->findData(
+            QString::fromStdString(raster.style.colorRampKey));
+        index >= 0) {
+        rasterColorRamp_->setCurrentIndex(index);
+    }
+
+    const bool hiddenDisjoint = metadata.extentDisjointXY && !raster.visible;
+    QStringList warnings;
+    if (hiddenDisjoint) {
+        warnings << QStringLiteral(
+            "This layer does not overlap the scene in X/Y, so it was added "
+            "hidden. Fit Scene stays unchanged until you show it.");
+    }
+    if (metadata.crsMismatch) {
+        warnings << QStringLiteral(
+            "The CRS reported by GDAL differs from the scene CRS. "
+            "Coordinates were not reprojected.");
+    }
+    if (metadata.crsMissing) {
+        warnings << QStringLiteral(
+            "This raster reports no CRS, so it cannot be compared with the "
+            "scene.");
+    }
+    if (metadata.insufficientOverviews) {
+        // Reported rather than compensated for: generating overviews is the
+        // user's job, via gdaladdo or an equivalent.
+        warnings << QStringLiteral(
+            "This raster is too large to display without overviews. Tiled "
+            "rendering is required; run gdaladdo to add them.");
+    }
+    rasterVisibilityWarning_->setVisible(!warnings.isEmpty());
+    rasterVisibilityWarningLabel_->setText(warnings.join(QChar::LineFeed));
+    rasterShowAnywayButton_->setVisible(hiddenDisjoint);
+
+    const Bounds3d sceneBounds = documentColorBounds(layers_);
+    rasterPlaceAboveScene_->setEnabled(sceneBounds.valid());
+    rasterMatchSceneFloor_->setEnabled(sceneBounds.valid());
+
+    rasterDimensionsValue_->setText(
+        QStringLiteral("%1 x %2").arg(metadata.width).arg(metadata.height));
+    rasterBandsValue_->setText(QString::number(metadata.bands.size()));
+    rasterPixelSizeValue_->setText(
+        QStringLiteral("%1 x %2")
+            .arg(std::abs(metadata.geoTransform[1]), 0, 'g', 4)
+            .arg(std::abs(metadata.geoTransform[5]), 0, 'g', 4));
+    if (metadata.levels.size() <= 1) {
+        rasterOverviewsValue_->setText(QStringLiteral("None"));
+    } else {
+        const RasterLevel &coarsest = metadata.levels.back();
+        rasterOverviewsValue_->setText(QStringLiteral("%1 · coarsest %2 x %3")
+                                           .arg(metadata.levels.size() - 1)
+                                           .arg(coarsest.width)
+                                           .arg(coarsest.height));
+    }
+    if (range) {
+        // The provenance matters: a sampled range is an estimate, not the
+        // dataset's declared extremes.
+        QString origin = QStringLiteral("metadata");
+        if (range->origin == RasterDisplayRange::Origin::CachedStatistics) {
+            origin = QStringLiteral("cached statistics");
+        } else if (range->origin == RasterDisplayRange::Origin::Sampled) {
+            origin = QStringLiteral("bounded sample");
+        }
+        rasterRangeValue_->setText(QStringLiteral("%1 to %2 (%3)")
+                                       .arg(range->minimum, 0, 'g', 6)
+                                       .arg(range->maximum, 0, 'g', 6)
+                                       .arg(origin));
+    } else {
+        rasterRangeValue_->setText(QStringLiteral("—"));
+    }
+    rasterDriverValue_->setText(QString::fromStdString(metadata.sourceDriver));
+    rasterCrsValue_->setText(metadata.spatialReferenceWkt.empty()
+                                 ? QStringLiteral("Not reported")
+                                 : QStringLiteral("Reported"));
+    rasterBoundsValue_->setText(
+        QStringLiteral("%1 x %2")
+            .arg(metadata.bounds.maximum[0] - metadata.bounds.minimum[0],
+                 0,
+                 'f',
+                 2)
+            .arg(metadata.bounds.maximum[1] - metadata.bounds.minimum[1],
+                 0,
+                 'f',
+                 2));
+    rasterSourceValue_->setText(pathToQString(metadata.sourcePath));
+}
+
+void LayerInspectorDock::applyRasterStyle()
+{
+    const auto layerId = selectedLayerId();
+    const RasterLayer *raster = layerId ? rasterLayerById(*layerId) : nullptr;
+    if (!raster || !raster->data) {
+        return;
+    }
+    RasterLayerStyle style = raster->style;
+    style.opacity = static_cast<float>(rasterOpacity_->value() / 100.0);
+    style.zOffset = rasterZOffset_->value();
+    if (raster->data->metadata().defaultDisplay.sampleKind ==
+        RasterSampleKind::ContinuousScalar) {
+        style.displayRange =
+            RasterDisplayRange{.minimum = rasterRangeMinimum_->value(),
+                               .maximum = rasterRangeMaximum_->value(),
+                               .origin = RasterDisplayRange::Origin::Metadata};
+        const QVariant rampKey = rasterColorRamp_->currentData();
+        if (rampKey.isValid()) {
+            style.colorRampKey = rampKey.toString().toStdString();
+        }
+    }
+    emit rasterStyleChanged(*layerId, clampRasterLayerStyle(std::move(style)));
 }
 
 void LayerInspectorDock::applyColorSource(const int index)
@@ -881,14 +1220,21 @@ void LayerInspectorDock::applyAutomaticColorRange(const bool automatic)
 
 void LayerInspectorDock::updateProperties()
 {
-    const bool hasLayers = !layers_.empty() || !vectorLayers_.empty();
+    const bool hasLayers =
+        !layers_.empty() || !vectorLayers_.empty() || !rasterLayers_.empty();
 
     const auto layerId = selectedLayerId();
     const PointCloudLayer *layer = layerId ? layerById(*layerId) : nullptr;
     const VectorLayer *vector = layerId ? vectorLayerById(*layerId) : nullptr;
+    const RasterLayer *raster = layerId ? rasterLayerById(*layerId) : nullptr;
     propertiesWidget_->setVisible(layer != nullptr);
     vectorPropertiesWidget_->setVisible(vector != nullptr);
-    inspectorEmptyLabel_->setVisible(layer == nullptr && vector == nullptr);
+    rasterPropertiesWidget_->setVisible(raster != nullptr);
+    inspectorEmptyLabel_->setVisible(layer == nullptr && vector == nullptr &&
+                                     raster == nullptr);
+    if (raster != nullptr && raster->data) {
+        updateRasterProperties(*raster);
+    }
     if (!layer) {
         if (vector) {
             const QSignalBlocker fillBlock(vectorFillColor_);

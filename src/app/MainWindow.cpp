@@ -278,6 +278,19 @@ MainWindow::MainWindow(
             &LayerInspectorDock::vectorStyleChanged,
             session_.get(),
             &SceneSession::setVectorLayerStyle);
+    connect(layerInspectorDock_,
+            &LayerInspectorDock::showRasterAnywayRequested,
+            this,
+            [this](const SceneLayerId layerId) {
+                session_->setLayerVisible(layerId, true);
+                statusBar()->showMessage(QStringLiteral(
+                    "Showing XY-disjoint raster layer; Fit Scene now includes "
+                    "it."));
+            });
+    connect(layerInspectorDock_,
+            &LayerInspectorDock::rasterStyleChanged,
+            session_.get(),
+            &SceneSession::setRasterLayerStyle);
     connect(taskDock_,
             &TaskDock::jobActionRequested,
             this,

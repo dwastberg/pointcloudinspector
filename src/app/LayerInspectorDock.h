@@ -41,6 +41,9 @@ signals:
     void vectorStyleChanged(pci::SceneLayerId layerId,
                             pci::VectorLayerStyle style);
     void showVectorAnywayRequested(pci::SceneLayerId layerId);
+    void rasterStyleChanged(pci::SceneLayerId layerId,
+                            pci::RasterLayerStyle style);
+    void showRasterAnywayRequested(pci::SceneLayerId layerId);
 
 private:
     void applyColorSource(int index);
@@ -50,14 +53,18 @@ private:
     void applyColorRange();
     void applyAutomaticColorRange(bool automatic);
     void applyVectorStyle();
+    void applyRasterStyle();
+    void updateRasterProperties(const RasterLayer &raster);
     void updateProperties();
     [[nodiscard]] std::vector<PointCloudLayerId> selectedLayerIds() const;
     [[nodiscard]] std::optional<PointCloudLayerId> selectedLayerId() const;
     [[nodiscard]] const PointCloudLayer *layerById(PointCloudLayerId id) const;
     [[nodiscard]] const VectorLayer *vectorLayerById(SceneLayerId id) const;
+    [[nodiscard]] const RasterLayer *rasterLayerById(SceneLayerId id) const;
 
     QWidget *propertiesWidget_ = nullptr;
     QWidget *vectorPropertiesWidget_ = nullptr;
+    QWidget *rasterPropertiesWidget_ = nullptr;
     QLabel *inspectorTitleLabel_ = nullptr;
     QLabel *inspectorTypeLabel_ = nullptr;
     QLabel *inspectorEmptyLabel_ = nullptr;
@@ -100,9 +107,31 @@ private:
     QLabel *vectorDriverValue_ = nullptr;
     QLabel *vectorCrsValue_ = nullptr;
     QLabel *vectorBoundsValue_ = nullptr;
+    QDoubleSpinBox *rasterOpacity_ = nullptr;
+    QDoubleSpinBox *rasterZOffset_ = nullptr;
+    QPushButton *rasterPlaceAboveScene_ = nullptr;
+    QPushButton *rasterMatchSceneFloor_ = nullptr;
+    QPushButton *rasterResetElevation_ = nullptr;
+    QWidget *rasterRangeWidget_ = nullptr;
+    QDoubleSpinBox *rasterRangeMinimum_ = nullptr;
+    QDoubleSpinBox *rasterRangeMaximum_ = nullptr;
+    QComboBox *rasterColorRamp_ = nullptr;
+    QWidget *rasterVisibilityWarning_ = nullptr;
+    QLabel *rasterVisibilityWarningLabel_ = nullptr;
+    QPushButton *rasterShowAnywayButton_ = nullptr;
+    QLabel *rasterDimensionsValue_ = nullptr;
+    QLabel *rasterBandsValue_ = nullptr;
+    QLabel *rasterPixelSizeValue_ = nullptr;
+    QLabel *rasterOverviewsValue_ = nullptr;
+    QLabel *rasterRangeValue_ = nullptr;
+    QLabel *rasterDriverValue_ = nullptr;
+    QLabel *rasterCrsValue_ = nullptr;
+    QLabel *rasterBoundsValue_ = nullptr;
+    QLabel *rasterSourceValue_ = nullptr;
 
     std::vector<PointCloudLayer> layers_;
     std::vector<VectorLayer> vectorLayers_;
+    std::vector<RasterLayer> rasterLayers_;
     SceneLayerId selectedLayerId_;
     PointColorMapCatalogSnapshotPtr colorMaps_;
 };
