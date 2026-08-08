@@ -676,6 +676,7 @@ bool RenderViewportWidget::ensureRenderResources()
         // descriptor. Destroy that pipeline before replacing the target.
         pointCloudRenderer_.releaseResources();
         vectorLayerRenderer_.releaseResources();
+        rasterLayerRenderer_.releaseResources();
         eyeDomeLightingPass_.releaseResources();
         eyeDomeLightingActive_ = false;
     }
@@ -700,6 +701,8 @@ bool RenderViewportWidget::ensureRenderResources()
     pointCloudRenderer_.ensureResources(rhi(), pointRenderPass);
     // Overlays always record into the widget target: when EDL is active this
     // is the post-composite pass, where republished point depth remains usable.
+    rasterLayerRenderer_.ensureResources(
+        rhi(), renderTarget()->renderPassDescriptor());
     vectorLayerRenderer_.ensureResources(
         rhi(), renderTarget()->renderPassDescriptor());
     pointPicker_.ensureResources(rhi(), pointCloudRenderer_.shaderBindings());
@@ -727,10 +730,70 @@ RenderViewportWidget::frameDuration(QRhiCommandBuffer *commandBuffer)
     return elapsed;
 }
 
+std::vector<RasterLayerDraw> RenderViewportWidget::buildRasterDrawList() const
+{
+    const SceneDocumentSnapshotPtr &document = sceneSnapshotCache_.document();
+    if (!document || document->rasterLayerCount() == 0) {
+        return {};
+    }
+    const FrameCamera frame = currentFrameCamera();
+    const QMatrix4x4 viewProjection = frameViewProjection(frame);
+
+    std::vector<RasterLayerDraw> result;
+    result.reserve(document->rasterLayerCount());
+    // Document order is painter order: a later raster layer covers an earlier
+    // one because raster draws do not write depth.
+    for (const SceneLayer &sceneLayer : document->layers) {
+        const auto *raster = std::get_if<RasterLayerState>(&sceneLayer.payload);
+        if (raster == nullptr || !sceneLayer.visible || !raster->data) {
+            continue;
+        }
+        const RasterLayerMetadata &metadata = raster->data->metadata();
+        if (!rasterLayerCullBounds(metadata, raster->style, frame)) {
+            continue;
+        }
+
+        // Eye-relative in double precision, then narrowed, so placement stays
+        // stable at large projected coordinates.
+        const RasterQuadTransform quad =
+            rasterLayerQuadTransform(metadata, raster->style, frame.eye);
+        QMatrix4x4 model;
+        model.setColumn(0,
+                        QVector4D(static_cast<float>(quad.edgeU.x),
+                                  static_cast<float>(quad.edgeU.y),
+                                  0.0F,
+                                  0.0F));
+        model.setColumn(1,
+                        QVector4D(static_cast<float>(quad.edgeV.x),
+                                  static_cast<float>(quad.edgeV.y),
+                                  0.0F,
+                                  0.0F));
+        model.setColumn(2, QVector4D(0.0F, 0.0F, 1.0F, 0.0F));
+        model.setColumn(3,
+                        QVector4D(static_cast<float>(quad.origin.x),
+                                  static_cast<float>(quad.origin.y),
+                                  static_cast<float>(quad.origin.z),
+                                  1.0F));
+
+        RasterLayerDraw draw;
+        draw.layerId = sceneLayer.id;
+        const QMatrix4x4 mvp = viewProjection * model;
+        std::memcpy(
+            draw.uniform.mvp.data(), mvp.constData(), sizeof(draw.uniform.mvp));
+        // Phase 1 uploads the whole image with no gutter, so the inner extent
+        // is the full texture.
+        draw.uniform.uvRect = {0.0F, 0.0F, 1.0F, 1.0F};
+        draw.uniform.opacity = raster->style.opacity;
+        result.push_back(draw);
+    }
+    return result;
+}
+
 void RenderViewportWidget::recordScene(
     QRhiCommandBuffer *commandBuffer,
     const std::vector<BlockDraw> &draws,
-    const std::span<const VectorLayerDraw> vectorDraws)
+    const std::span<const VectorLayerDraw> vectorDraws,
+    const std::span<const RasterLayerDraw> rasterDraws)
 {
     const QColor clear =
         QColor::fromRgbF(viewportSettings_.backgroundColor.red,
@@ -742,9 +805,17 @@ void RenderViewportWidget::recordScene(
         eyeDomeLightingActive_ ? eyeDomeLightingPass_.pointRenderTarget()
                                : renderTarget();
 
+    // Overlays record into whichever target holds the published depth:
+    //   EDL off: begin widget pass -> points -> rasters -> vectors -> end
+    //   EDL on:  begin EDL pass    -> points -> end
+    //            begin widget pass -> composite -> rasters -> vectors -> end
+    // Rasters receive no eye-dome lighting, which is why they draw after the
+    // composite rather than alongside the points.
     commandBuffer->beginPass(pointTarget, clear, depthClear);
     pointCloudRenderer_.recordDraws(commandBuffer, pointTarget, draws);
     if (!eyeDomeLightingActive_) {
+        rasterLayerRenderer_.recordDraws(
+            commandBuffer, pointTarget, rasterDraws);
         vectorLayerRenderer_.recordDraws(
             commandBuffer, pointTarget, vectorDraws);
     }
@@ -753,6 +824,8 @@ void RenderViewportWidget::recordScene(
     if (eyeDomeLightingActive_) {
         commandBuffer->beginPass(renderTarget(), clear, depthClear);
         eyeDomeLightingPass_.recordComposite(commandBuffer, renderTarget());
+        rasterLayerRenderer_.recordDraws(
+            commandBuffer, renderTarget(), rasterDraws);
         vectorLayerRenderer_.recordDraws(
             commandBuffer, renderTarget(), vectorDraws);
         commandBuffer->endPass();
@@ -771,7 +844,8 @@ void RenderViewportWidget::render(QRhiCommandBuffer *commandBuffer)
         fail(QString::fromUtf8(error.what()));
         return;
     }
-    if (!pointCloudRenderer_.ready() || !vectorLayerRenderer_.ready()) {
+    if (!pointCloudRenderer_.ready() || !vectorLayerRenderer_.ready() ||
+        !rasterLayerRenderer_.ready()) {
         return;
     }
 
@@ -796,6 +870,7 @@ void RenderViewportWidget::render(QRhiCommandBuffer *commandBuffer)
 
     std::vector<BlockDraw> draws;
     std::vector<VectorLayerDraw> vectorDraws;
+    std::vector<RasterLayerDraw> rasterDraws;
     std::uint64_t selectedPoints = 0;
     std::uint64_t visibleBlocks = 0;
     std::uint64_t culledBlocks = 0;
@@ -966,10 +1041,15 @@ void RenderViewportWidget::render(QRhiCommandBuffer *commandBuffer)
                     vectorDrawCalls,
                     std::uint64_t{draw.layer.data->markers.empty() ? 0U : 1U});
             }
+            rasterDraws = buildRasterDrawList();
             updateSelectionGeneration(draws);
             pointCloudRenderer_.updateUniforms(commandBuffer, draws);
             vectorLayerRenderer_.syncLayers(commandBuffer, document->layers);
             vectorLayerRenderer_.updateUniforms(commandBuffer, vectorDraws);
+            // Texture creation and uploads must complete before beginPass().
+            rasterLayerRenderer_.syncLayers(
+                commandBuffer, document->layers, colorMaps_);
+            rasterLayerRenderer_.updateUniforms(commandBuffer, rasterDraws);
             submitPendingPick(commandBuffer, draws);
             if (eyeDomeLightingActive_) {
                 const auto clip = camera_.clipPlanes();
@@ -980,7 +1060,7 @@ void RenderViewportWidget::render(QRhiCommandBuffer *commandBuffer)
                     viewportSettings_.depthEnhancement.radius,
                     viewportSettings_.depthEnhancement.strength);
             }
-            recordScene(commandBuffer, draws, vectorDraws);
+            recordScene(commandBuffer, draws, vectorDraws, rasterDraws);
             commandTime = elapsedSince(commandStart);
         } else {
             outOfFrustumLayerIds_.clear();
@@ -995,7 +1075,7 @@ void RenderViewportWidget::render(QRhiCommandBuffer *commandBuffer)
                     viewportSettings_.depthEnhancement.radius,
                     viewportSettings_.depthEnhancement.strength);
             }
-            recordScene(commandBuffer, draws, vectorDraws);
+            recordScene(commandBuffer, draws, vectorDraws, rasterDraws);
             commandTime = elapsedSince(commandStart);
         }
     } catch (const std::exception &error) {
@@ -1480,13 +1560,9 @@ RenderViewportWidget::buildDrawList(const PointFramePlan &plan)
     return draws;
 }
 
-std::vector<VectorLayerDraw> RenderViewportWidget::buildVectorDrawList() const
+QMatrix4x4
+RenderViewportWidget::frameViewProjection(const FrameCamera &frame) const
 {
-    const SceneDocumentSnapshotPtr &document = sceneSnapshotCache_.document();
-    if (!document) {
-        return {};
-    }
-    const FrameCamera frame = currentFrameCamera();
     const float aspect = static_cast<float>(frame.outputWidth) /
                          static_cast<float>(frame.outputHeight);
     QMatrix4x4 projection;
@@ -1514,8 +1590,17 @@ std::vector<VectorLayerDraw> RenderViewportWidget::buildVectorDrawList() const
                 QVector3D(static_cast<float>(frame.up.x),
                           static_cast<float>(frame.up.y),
                           static_cast<float>(frame.up.z)));
-    const QMatrix4x4 viewProjection =
-        rhi()->clipSpaceCorrMatrix() * projection * view;
+    return rhi()->clipSpaceCorrMatrix() * projection * view;
+}
+
+std::vector<VectorLayerDraw> RenderViewportWidget::buildVectorDrawList() const
+{
+    const SceneDocumentSnapshotPtr &document = sceneSnapshotCache_.document();
+    if (!document) {
+        return {};
+    }
+    const FrameCamera frame = currentFrameCamera();
+    const QMatrix4x4 viewProjection = frameViewProjection(frame);
     const Vec3d eye = frame.eye;
     std::vector<VectorLayerDraw> tested;
     std::vector<VectorLayerDraw> alwaysOnTop;

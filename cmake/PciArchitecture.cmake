@@ -103,6 +103,7 @@ function(pci_register_architecture_checks)
         pcinspector_navigation
         pcinspector_platform
         pcinspector_pointcloud
+        pcinspector_raster
         pcinspector_renderer_api
         pcinspector_renderer_planning
         pcinspector_scene

@@ -350,6 +350,7 @@ pci_add_catch_test_target(pcinspector_qt_renderer_tests
     qt/PointCloudRendererTests.cpp
         qt/RenderTelemetryAccumulatorTests.cpp
     qt/VectorLayerRendererTests.cpp
+        qt/RasterLayerRendererTests.cpp
         qt/UploadSchedulerTests.cpp
         qt/PointPickResultTests.cpp
         LIBRARIES

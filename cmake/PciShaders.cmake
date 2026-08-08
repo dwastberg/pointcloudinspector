@@ -16,6 +16,8 @@ function(pci_add_point_shaders target resource_name)
             "${PROJECT_SOURCE_DIR}/shaders/pick.frag"
             "${PROJECT_SOURCE_DIR}/shaders/points.vert"
             "${PROJECT_SOURCE_DIR}/shaders/points.frag"
+            "${PROJECT_SOURCE_DIR}/shaders/raster.vert"
+            "${PROJECT_SOURCE_DIR}/shaders/raster.frag"
             "${PROJECT_SOURCE_DIR}/shaders/vector_fill.vert"
             "${PROJECT_SOURCE_DIR}/shaders/vector_fill.frag"
             "${PROJECT_SOURCE_DIR}/shaders/vector_line.vert"

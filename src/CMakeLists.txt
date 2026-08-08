@@ -447,6 +447,8 @@ add_library(pcinspector_renderer STATIC
         renderer/rhi/PointCloudRenderer.h
         renderer/rhi/PointPicker.cpp
         renderer/rhi/PointPicker.h
+        renderer/rhi/RasterLayerRenderer.cpp
+        renderer/rhi/RasterLayerRenderer.h
         renderer/rhi/RenderViewportWidget.cpp
         renderer/rhi/RenderViewportWidget_p.h
         renderer/rhi/RhiResource.h
@@ -469,6 +471,7 @@ target_link_libraries(pcinspector_renderer
         pcinspector::navigation
         pcinspector::platform
         pcinspector::pointcloud
+        pcinspector::raster
         pcinspector::renderer_planning
         pcinspector::scene
         pcinspector::vector

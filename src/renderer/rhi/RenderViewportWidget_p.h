@@ -10,6 +10,7 @@
 #include "renderer/rhi/EyeDomeLightingPass.h"
 #include "renderer/rhi/PointCloudRenderer.h"
 #include "renderer/rhi/PointPicker.h"
+#include "renderer/rhi/RasterLayerRenderer.h"
 #include "renderer/rhi/SceneSnapshotCache.h"
 #include "renderer/rhi/UploadScheduler.h"
 #include "renderer/rhi/VectorLayerRenderer.h"
@@ -124,10 +125,14 @@ private:
     [[nodiscard]] std::vector<BlockDraw>
     buildDrawList(const PointFramePlan &plan);
     [[nodiscard]] std::vector<VectorLayerDraw> buildVectorDrawList() const;
+    [[nodiscard]] std::vector<RasterLayerDraw> buildRasterDrawList() const;
+    [[nodiscard]] QMatrix4x4
+    frameViewProjection(const FrameCamera &frame) const;
     void updateSelectionGeneration(const std::vector<BlockDraw> &draws);
     void recordScene(QRhiCommandBuffer *commandBuffer,
                      const std::vector<BlockDraw> &draws,
-                     std::span<const VectorLayerDraw> vectorDraws);
+                     std::span<const VectorLayerDraw> vectorDraws,
+                     std::span<const RasterLayerDraw> rasterDraws);
     [[nodiscard]] std::vector<BlockDraw>
     pickCandidates(const std::vector<BlockDraw> &draws,
                    PixelPosition position,
@@ -192,6 +197,7 @@ private:
     PointColorMapCatalogSnapshotPtr colorMaps_;
     PointCloudRenderer pointCloudRenderer_;
     VectorLayerRenderer vectorLayerRenderer_;
+    RasterLayerRenderer rasterLayerRenderer_;
     EyeDomeLightingPass eyeDomeLightingPass_;
     PointPicker pointPicker_;
     MeasurementOverlay *measurementOverlay_ = nullptr;
