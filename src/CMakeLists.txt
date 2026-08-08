@@ -98,6 +98,8 @@ target_link_libraries(pcinspector_pointcloud PUBLIC
 add_library(pcinspector_raster STATIC
         raster/RasterLayer.cpp
         raster/RasterLayer.h
+        raster/RasterTileCache.cpp
+        raster/RasterTileCache.h
         raster/RasterTileSource.h)
 add_library(pcinspector::raster ALIAS pcinspector_raster)
 target_include_directories(pcinspector_raster PUBLIC

@@ -67,7 +67,9 @@ pci_add_catch_test_target(pcinspector_scene_tests
 
 pci_add_catch_test_target(pcinspector_raster_tests
         WITH_MAIN
-        SOURCES unit/RasterLayerTests.cpp
+        SOURCES
+        unit/RasterLayerTests.cpp
+        unit/RasterTileCacheTests.cpp
         LIBRARIES pcinspector::raster)
 
 pci_add_catch_test_target(pcinspector_foundation_tests
