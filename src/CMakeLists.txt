@@ -453,6 +453,8 @@ add_library(pcinspector_renderer STATIC
         renderer/rhi/PointPicker.h
         renderer/rhi/RasterLayerRenderer.cpp
         renderer/rhi/RasterLayerRenderer.h
+        renderer/rhi/RasterTileStreamer.cpp
+        renderer/rhi/RasterTileStreamer.h
         renderer/rhi/RenderViewportWidget.cpp
         renderer/rhi/RenderViewportWidget_p.h
         renderer/rhi/RhiResource.h

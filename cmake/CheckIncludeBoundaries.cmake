@@ -58,7 +58,7 @@ foreach(source IN LISTS project_sources)
             if(relative MATCHES "^src/renderer/rhi/" OR
                relative MATCHES "^tests/(gpu|renderer_internal)/" OR
                relative MATCHES
-                   "^tests/qt/(BackendPolicy|PointCloudRenderer|VectorLayerRenderer|RasterLayerRenderer|UploadScheduler|PointPickResult)Tests.cpp$" OR
+                   "^tests/qt/(BackendPolicy|PointCloudRenderer|VectorLayerRenderer|RasterLayerRenderer|RasterTileStreamer|UploadScheduler|PointPickResult)Tests.cpp$" OR
                relative STREQUAL
                    "tests/support/RenderViewportTestAccess.h")
                 set(allowed TRUE)
