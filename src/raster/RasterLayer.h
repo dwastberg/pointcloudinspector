@@ -147,6 +147,25 @@ struct RasterLayerStyle {
 [[nodiscard]] bool
 rasterRequiresTiledRendering(const RasterLayerMetadata &metadata) noexcept;
 
+// How phase 1 should fill its single static texture.
+struct RasterStaticReadPlan {
+    std::uint32_t levelIndex = 0;
+    std::uint32_t width = 0;
+    std::uint32_t height = 0;
+    // True when no backed level fits and the base band is decimated instead.
+    // Permitted only below rasterBoundedBaseReadPixels, because a decimating
+    // read is bounded exactly when the base is bounded.
+    bool decimatedBase = false;
+    bool operator==(const RasterStaticReadPlan &) const = default;
+};
+
+// Chooses the finest backed level that fits the texture cap, falling back to
+// one bounded decimating base read. Empty when the source requires tiled
+// rendering.
+[[nodiscard]] std::optional<RasterStaticReadPlan>
+planRasterStaticRead(const RasterLayerMetadata &metadata,
+                     std::uint32_t maximumTexturePixels) noexcept;
+
 [[nodiscard]] RasterLayerStyle
 defaultRasterLayerStyle(const RasterLayerMetadata &metadata);
 [[nodiscard]] RasterLayerStyle clampRasterLayerStyle(RasterLayerStyle style);

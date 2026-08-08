@@ -127,6 +127,24 @@ expandColorTable(const GDALColorTable &table)
     return expanded;
 }
 
+// Full-scale value of an integer band's type. Float alpha is already
+// normalized to [0,1] by convention, so it scales by one.
+[[nodiscard]] double dataTypeMaximum(const GDALDataType type)
+{
+    switch (type) {
+    case GDT_Byte:
+        return 255.0;
+    case GDT_UInt16:
+    case GDT_Int16:
+        return 65535.0;
+    case GDT_UInt32:
+    case GDT_Int32:
+        return 4294967295.0;
+    default:
+        return 1.0;
+    }
+}
+
 void recordBandTransforms(const std::vector<BandDescriptor> &bands,
                           const std::vector<int> &selected,
                           RasterBandSelection &selection)
@@ -194,6 +212,21 @@ void recordBandTransforms(const std::vector<BandDescriptor> &bands,
         selection.alphaBand = alpha->number;
     }
     recordBandTransforms(bands, selection.colorBands, selection);
+
+    selection.byteColorBands =
+        std::ranges::all_of(selection.colorBands, [&bands](const int number) {
+            return bands[static_cast<std::size_t>(number - 1)].type == GDT_Byte;
+        });
+    if (selection.alphaBand != 0) {
+        const BandDescriptor &alphaBand =
+            bands[static_cast<std::size_t>(selection.alphaBand - 1)];
+        selection.byteAlphaBand = alphaBand.type == GDT_Byte;
+        // A 16-bit alpha read as Byte would clamp almost every sample to fully
+        // opaque, so its full-scale value is recorded instead.
+        selection.alphaMaximum = alphaBand.type == GDT_Byte
+                                     ? 255.0
+                                     : dataTypeMaximum(alphaBand.type);
+    }
 
     // A mask derived from nodata or from the alpha band adds nothing: both are
     // already composed explicitly during decode.

@@ -322,6 +322,24 @@ writeAntimeridianFixture(const std::filesystem::path &path)
     return path;
 }
 
+// An ordinary un-overviewed mid-size orthophoto: the most common thing a user
+// drags in first. Written sparsely so the fixture costs nothing on disk while
+// its logical size still exercises the bounded base-band path.
+std::filesystem::path writeMidSizeFixture(const std::filesystem::path &path)
+{
+    constexpr int extent = 5000;
+    const std::array<const char *, 4> options{
+        "TILED=YES", "SPARSE_OK=TRUE", "COMPRESS=DEFLATE", nullptr};
+    DatasetPtr dataset =
+        create(path, extent, extent, 3, GDT_Byte, options.data());
+    applyProjectedReference(*dataset);
+    applyTransform(*dataset, {674000.0, 0.2, 0.0, 6580000.0, 0.0, -0.2});
+    dataset->GetRasterBand(1)->SetColorInterpretation(GCI_RedBand);
+    dataset->GetRasterBand(2)->SetColorInterpretation(GCI_GreenBand);
+    dataset->GetRasterBand(3)->SetColorInterpretation(GCI_BlueBand);
+    return path;
+}
+
 std::filesystem::path writeSparseHugeFixture(const std::filesystem::path &path)
 {
     // Enormous logically, empty physically. Inspecting it must cost the sample
@@ -423,6 +441,7 @@ writeGdalRasterFixtures(const std::filesystem::path &directory)
     paths.rotated = writeRotatedFixture(directory / "rotated.tif");
     paths.antimeridian =
         writeAntimeridianFixture(directory / "antimeridian.tif");
+    paths.midSizeNoOverviews = writeMidSizeFixture(directory / "mid-size.tif");
     paths.sparseHuge = writeSparseHugeFixture(directory / "sparse-huge.tif");
 
     paths.mismatchedOverviews = writeMismatchedOverviewFixture(

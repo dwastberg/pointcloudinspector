@@ -21,6 +21,9 @@ struct GdalRasterFixturePaths {
     std::filesystem::path rotated;
     // Geographic, with an X extent wider than 180 degrees.
     std::filesystem::path antimeridian;
+    // About 5000x5000 with no overviews: below rasterBoundedBaseReadPixels,
+    // so it must render through the bounded base-band path.
+    std::filesystem::path midSizeNoOverviews;
     // Enormous logical size, sparse on disk, no overviews.
     std::filesystem::path sparseHuge;
     // Bands drawn from two sources with different overview availability.

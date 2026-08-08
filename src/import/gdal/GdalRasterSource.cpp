@@ -80,10 +80,52 @@ struct TileWindow {
     return window;
 }
 
+// Samples are held as bytes when every selected band is Byte, and as doubles
+// otherwise. A 4096x4096 static read of three Byte bands is 50 MB this way and
+// 400 MB if everything were widened to double.
 struct ChannelPlanes {
-    std::vector<std::vector<double>> color;
-    std::vector<double> alpha;
-    std::vector<double> mask;
+    bool byteSamples = false;
+    std::size_t pixelCount = 0;
+    std::vector<std::vector<unsigned char>> colorBytes;
+    std::vector<std::vector<double>> colorDoubles;
+    std::vector<unsigned char> alphaBytes;
+    std::vector<double> alphaDoubles;
+    std::vector<unsigned char> mask;
+
+    [[nodiscard]] std::size_t channelCount() const noexcept
+    {
+        return byteSamples ? colorBytes.size() : colorDoubles.size();
+    }
+
+    [[nodiscard]] double color(const std::size_t channel,
+                               const std::size_t index) const noexcept
+    {
+        return byteSamples ? static_cast<double>(colorBytes[channel][index])
+                           : colorDoubles[channel][index];
+    }
+
+    [[nodiscard]] bool hasAlpha() const noexcept
+    {
+        return !alphaBytes.empty() || !alphaDoubles.empty();
+    }
+
+    [[nodiscard]] double alpha(const std::size_t index) const noexcept
+    {
+        return alphaBytes.empty() ? alphaDoubles[index]
+                                  : static_cast<double>(alphaBytes[index]);
+    }
+};
+
+// A rectangular read: window dimensions in the source band, buffer dimensions
+// in the destination. They are equal for a 1:1 tile read and differ only for
+// phase 1's single bounded decimating read.
+struct ReadExtent {
+    int sourceX = 0;
+    int sourceY = 0;
+    int sourceWidth = 0;
+    int sourceHeight = 0;
+    int bufferWidth = 0;
+    int bufferHeight = 0;
 };
 
 [[nodiscard]] GDALRasterBand *levelBand(GDALDataset &dataset,
@@ -103,14 +145,17 @@ struct ChannelPlanes {
     return overview;
 }
 
-void readWindow(GDALRasterBand &band,
-                const TileWindow &window,
-                std::vector<double> &destination,
+template <typename Sample>
+void readExtent(GDALRasterBand &band,
+                const ReadExtent &extent,
+                const GDALDataType type,
+                std::vector<Sample> &destination,
                 const std::stop_token &stop,
                 std::atomic<std::uint64_t> &readCount)
 {
-    destination.assign(
-        static_cast<std::size_t>(window.readWidth) * window.readHeight, 0.0);
+    destination.assign(static_cast<std::size_t>(extent.bufferWidth) *
+                           extent.bufferHeight,
+                       Sample{});
 
     GDALRasterIOExtraArg extra;
     INIT_RASTERIO_EXTRA_ARG(extra);
@@ -118,17 +163,15 @@ void readWindow(GDALRasterBand &band,
     extra.pProgressData = const_cast<std::stop_token *>(&stop);
 
     readCount.fetch_add(1, std::memory_order_relaxed);
-    // A 1:1 window: buffer dimensions equal window dimensions, so GDAL never
-    // decimates and never falls back to scanning the base image.
     const CPLErr status = band.RasterIO(GF_Read,
-                                        window.readX,
-                                        window.readY,
-                                        window.readWidth,
-                                        window.readHeight,
+                                        extent.sourceX,
+                                        extent.sourceY,
+                                        extent.sourceWidth,
+                                        extent.sourceHeight,
                                         destination.data(),
-                                        window.readWidth,
-                                        window.readHeight,
-                                        GDT_Float64,
+                                        extent.bufferWidth,
+                                        extent.bufferHeight,
+                                        type,
                                         0,
                                         0,
                                         &extra);
@@ -136,6 +179,76 @@ void readWindow(GDALRasterBand &band,
     if (status != CE_None) {
         throw RasterReadError("Raster window read failed");
     }
+}
+
+// Reads every required band of one level into typed planes.
+ChannelPlanes readPlanes(GDALDataset &dataset,
+                         const RasterLevel &level,
+                         const RasterBandSelection &selection,
+                         const ReadExtent &extent,
+                         const std::stop_token &stop,
+                         std::atomic<std::uint64_t> &readCount)
+{
+    ChannelPlanes planes;
+    planes.byteSamples = selection.byteColorBands;
+    planes.pixelCount =
+        static_cast<std::size_t>(extent.bufferWidth) * extent.bufferHeight;
+
+    const std::size_t channels = selection.colorBands.size();
+    if (planes.byteSamples) {
+        planes.colorBytes.resize(channels);
+    } else {
+        planes.colorDoubles.resize(channels);
+    }
+    for (std::size_t channel = 0; channel < channels; ++channel) {
+        checkCancelled(stop);
+        GDALRasterBand &band = *levelBand(dataset, level.rgbaBands[channel]);
+        if (planes.byteSamples) {
+            readExtent(band,
+                       extent,
+                       GDT_Byte,
+                       planes.colorBytes[channel],
+                       stop,
+                       readCount);
+        } else {
+            readExtent(band,
+                       extent,
+                       GDT_Float64,
+                       planes.colorDoubles[channel],
+                       stop,
+                       readCount);
+        }
+    }
+
+    if (selection.alphaBand != 0) {
+        checkCancelled(stop);
+        GDALRasterBand &band = *levelBand(dataset, level.rgbaBands[3]);
+        if (selection.byteAlphaBand) {
+            readExtent(
+                band, extent, GDT_Byte, planes.alphaBytes, stop, readCount);
+        } else {
+            readExtent(band,
+                       extent,
+                       GDT_Float64,
+                       planes.alphaDoubles,
+                       stop,
+                       readCount);
+        }
+    }
+
+    if (level.maskBand) {
+        checkCancelled(stop);
+        // The mask comes from the same overview band as the color, so its
+        // dimensions match by construction rather than by a separate
+        // intersection a driver could violate.
+        GDALRasterBand *mask =
+            levelBand(dataset, *level.maskBand)->GetMaskBand();
+        if (mask == nullptr) {
+            throw RasterReadError("Raster mask band is unavailable");
+        }
+        readExtent(*mask, extent, GDT_Byte, planes.mask, stop, readCount);
+    }
+    return planes;
 }
 
 [[nodiscard]] std::array<float, 4> toRgba(const PointRgba &color) noexcept
@@ -189,18 +302,25 @@ sampleRamp(const std::vector<PointColorStop> &stops, const double position)
     return std::isfinite(nodata) && sample == nodata;
 }
 
-RasterTileData expandPremultipliedRgba(const RasterTileRequest &request,
-                                       const TileWindow &window,
-                                       const ChannelPlanes &planes,
-                                       const RasterBandSelection &selection,
-                                       const RasterDecodeParameters &decode)
+// Destination geometry for one decode: where the read buffer lands inside the
+// output image, and how large that output is.
+struct DecodeTarget {
+    int width = 0;
+    int height = 0;
+    int offsetX = 0;
+    int offsetY = 0;
+};
+
+std::vector<std::byte>
+expandPremultipliedRgba(const ChannelPlanes &planes,
+                        const ReadExtent &extent,
+                        const DecodeTarget &target,
+                        const RasterBandSelection &selection,
+                        const RasterDecodeParameters &decode)
 {
-    RasterTileData tile;
-    tile.key = request.key;
-    tile.renderGeneration = request.renderGeneration;
-    tile.validWidth = static_cast<std::uint16_t>(window.validWidth);
-    tile.validHeight = static_cast<std::uint16_t>(window.validHeight);
-    tile.rgba.assign(rasterStoredTileBytes, std::byte{});
+    std::vector<std::byte> rgba(static_cast<std::size_t>(target.width) *
+                                    target.height * 4,
+                                std::byte{});
 
     double low = 0.0;
     double high = 255.0;
@@ -216,25 +336,27 @@ RasterTileData expandPremultipliedRgba(const RasterTileRequest &request,
 
     const std::vector<PointColorStop> *ramp =
         decode.colorRamp ? decode.colorRamp.get() : nullptr;
+    const std::size_t channels = planes.channelCount();
+    const double alphaScale =
+        selection.alphaMaximum > 0.0 ? 1.0 / selection.alphaMaximum : 0.0;
 
-    const auto stored = static_cast<int>(rasterStoredTilePixels);
-    for (int y = 0; y < stored; ++y) {
+    for (int y = 0; y < target.height; ++y) {
         // Clamping the source coordinate replicates the edge texel into any
         // gutter that fell outside the level, in the same pass as the expand.
         const int sourceY =
-            std::clamp(y - window.destY, 0, window.readHeight - 1);
-        for (int x = 0; x < stored; ++x) {
+            std::clamp(y - target.offsetY, 0, extent.bufferHeight - 1);
+        for (int x = 0; x < target.width; ++x) {
             const int sourceX =
-                std::clamp(x - window.destX, 0, window.readWidth - 1);
+                std::clamp(x - target.offsetX, 0, extent.bufferWidth - 1);
             const auto sourceIndex =
-                static_cast<std::size_t>(sourceY) * window.readWidth + sourceX;
+                static_cast<std::size_t>(sourceY) * extent.bufferWidth +
+                sourceX;
 
             bool valid = true;
             std::array<float, 4> color{0.0F, 0.0F, 0.0F, 1.0F};
             std::array<double, 3> scaled{};
-            for (std::size_t channel = 0; channel < planes.color.size();
-                 ++channel) {
-                const double sample = planes.color[channel][sourceIndex];
+            for (std::size_t channel = 0; channel < channels; ++channel) {
+                const double sample = planes.color(channel, sourceIndex);
                 // Nodata is declared in raw units, so it is compared before
                 // scale and offset move the sample into the display domain.
                 if (!std::isfinite(sample) ||
@@ -250,7 +372,7 @@ RasterTileData expandPremultipliedRgba(const RasterTileRequest &request,
             const double first = scaled[0];
             switch (selection.sampleKind) {
             case RasterSampleKind::ContinuousColor:
-                if (planes.color.size() >= 3) {
+                if (channels >= 3) {
                     for (std::size_t channel = 0; channel < 3; ++channel) {
                         color[channel] =
                             static_cast<float>(normalize(scaled[channel]));
@@ -260,17 +382,15 @@ RasterTileData expandPremultipliedRgba(const RasterTileRequest &request,
                     color = {gray, gray, gray, 1.0F};
                 }
                 break;
-            case RasterSampleKind::ContinuousScalar:
-                color = ramp == nullptr
-                            ? std::array<float, 4>{static_cast<float>(
-                                                       normalize(first)),
-                                                   static_cast<float>(
-                                                       normalize(first)),
-                                                   static_cast<float>(
-                                                       normalize(first)),
-                                                   1.0F}
-                            : sampleRamp(*ramp, normalize(first));
+            case RasterSampleKind::ContinuousScalar: {
+                const auto position = static_cast<float>(normalize(first));
+                color = ramp == nullptr ? std::array<float, 4>{position,
+                                                               position,
+                                                               position,
+                                                               1.0F}
+                                        : sampleRamp(*ramp, normalize(first));
                 break;
+            }
             case RasterSampleKind::Categorical: {
                 const auto entry = static_cast<std::size_t>(
                     std::max<double>(0.0, std::lround(first)));
@@ -285,26 +405,26 @@ RasterTileData expandPremultipliedRgba(const RasterTileRequest &request,
             // premultiplication so the GPU's linear filter never blends an
             // invalid source color into a valid neighbour.
             double alpha = color[3];
-            if (!planes.alpha.empty()) {
-                alpha *=
-                    std::clamp(planes.alpha[sourceIndex] / 255.0, 0.0, 1.0);
+            if (planes.hasAlpha()) {
+                alpha *= std::clamp(
+                    planes.alpha(sourceIndex) * alphaScale, 0.0, 1.0);
             }
             if (!planes.mask.empty()) {
-                alpha *= planes.mask[sourceIndex] > 0.0 ? 1.0 : 0.0;
+                alpha *= planes.mask[sourceIndex] > 0 ? 1.0 : 0.0;
             }
             if (!valid) {
                 alpha = 0.0;
             }
 
             const auto destination =
-                (static_cast<std::size_t>(y) * rasterStoredTilePixels + x) * 4;
-            tile.rgba[destination] = quantize(color[0] * alpha);
-            tile.rgba[destination + 1] = quantize(color[1] * alpha);
-            tile.rgba[destination + 2] = quantize(color[2] * alpha);
-            tile.rgba[destination + 3] = quantize(alpha);
+                (static_cast<std::size_t>(y) * target.width + x) * 4;
+            rgba[destination] = quantize(color[0] * alpha);
+            rgba[destination + 1] = quantize(color[1] * alpha);
+            rgba[destination + 2] = quantize(color[2] * alpha);
+            rgba[destination + 3] = quantize(alpha);
         }
     }
-    return tile;
+    return rgba;
 }
 
 } // namespace
@@ -447,45 +567,95 @@ RasterTileData GdalRasterSource::readTile(const RasterTileRequest &request,
         const RasterLevel &level = metadata_.levels[request.key.levelIndex];
         const TileWindow window = tileWindow(level, request.key);
 
-        const HandleLease lease(*handles_, acquireHandle(*handles_, stop));
+        // A 1:1 window: buffer dimensions equal window dimensions, so GDAL
+        // never decimates and never falls back to scanning the base image.
+        const ReadExtent extent{
+            .sourceX = window.readX,
+            .sourceY = window.readY,
+            .sourceWidth = window.readWidth,
+            .sourceHeight = window.readHeight,
+            .bufferWidth = window.readWidth,
+            .bufferHeight = window.readHeight,
+        };
 
-        ChannelPlanes planes;
-        planes.color.resize(selection_.colorBands.size());
-        for (std::size_t channel = 0; channel < selection_.colorBands.size();
-             ++channel) {
-            checkCancelled(stop);
-            readWindow(*levelBand(lease.dataset(), level.rgbaBands[channel]),
-                       window,
-                       planes.color[channel],
-                       stop,
-                       readCount_);
-        }
-        if (selection_.alphaBand != 0) {
-            checkCancelled(stop);
-            readWindow(*levelBand(lease.dataset(), level.rgbaBands[3]),
-                       window,
-                       planes.alpha,
-                       stop,
-                       readCount_);
-        }
-        if (level.maskBand) {
-            checkCancelled(stop);
-            // The mask is taken from the same overview band as the color, so
-            // its dimensions match by construction rather than by a separate
-            // intersection that a driver could violate.
-            GDALRasterBand *mask =
-                levelBand(lease.dataset(), *level.maskBand)->GetMaskBand();
-            if (mask == nullptr) {
-                throw RasterReadError("Raster mask band is unavailable");
-            }
-            readWindow(*mask, window, planes.mask, stop, readCount_);
-        }
+        const HandleLease lease(*handles_, acquireHandle(*handles_, stop));
+        const ChannelPlanes planes = readPlanes(
+            lease.dataset(), level, selection_, extent, stop, readCount_);
 
         checkCancelled(stop);
         const RasterDecodeParameters &decode =
             request.decode ? *request.decode : metadata_.defaultDisplay;
-        return expandPremultipliedRgba(
-            request, window, planes, selection_, decode);
+        const DecodeTarget target{
+            .width = static_cast<int>(rasterStoredTilePixels),
+            .height = static_cast<int>(rasterStoredTilePixels),
+            .offsetX = window.destX,
+            .offsetY = window.destY,
+        };
+
+        RasterTileData tile;
+        tile.key = request.key;
+        tile.renderGeneration = request.renderGeneration;
+        tile.validWidth = static_cast<std::uint16_t>(window.validWidth);
+        tile.validHeight = static_cast<std::uint16_t>(window.validHeight);
+        tile.rgba =
+            expandPremultipliedRgba(planes, extent, target, selection_, decode);
+        return tile;
+    } catch (const RasterReadCancelled &) {
+        throw;
+    } catch (const RasterReadError &) {
+        throw;
+    } catch (const std::exception &error) {
+        throw RasterReadError(error.what());
+    }
+}
+
+RasterStaticImage
+GdalRasterSource::readStaticImage(const std::uint32_t maximumTexturePixels,
+                                  const RasterDecodeParameters &decode,
+                                  std::stop_token stop) const
+{
+    try {
+        checkCancelled(stop);
+        const std::optional<RasterStaticReadPlan> plan =
+            planRasterStaticRead(metadata_, maximumTexturePixels);
+        if (!plan) {
+            // No backed level fits and the base is too large to decimate in
+            // one bounded read, so the source is admitted as metadata and
+            // reports this rather than scanning its base image.
+            throw RasterReadError(
+                "Raster is too large for a static texture; tiled rendering "
+                "required");
+        }
+        const RasterLevel &level = metadata_.levels.at(plan->levelIndex);
+
+        // The only decimating read in the system: source dimensions are the
+        // whole level, buffer dimensions are the capped output.
+        const ReadExtent extent{
+            .sourceX = 0,
+            .sourceY = 0,
+            .sourceWidth = static_cast<int>(level.width),
+            .sourceHeight = static_cast<int>(level.height),
+            .bufferWidth = static_cast<int>(plan->width),
+            .bufferHeight = static_cast<int>(plan->height),
+        };
+
+        const HandleLease lease(*handles_, acquireHandle(*handles_, stop));
+        const ChannelPlanes planes = readPlanes(
+            lease.dataset(), level, selection_, extent, stop, readCount_);
+
+        checkCancelled(stop);
+        const DecodeTarget target{
+            .width = extent.bufferWidth,
+            .height = extent.bufferHeight,
+        };
+        return RasterStaticImage{
+            .width = plan->width,
+            .height = plan->height,
+            .levelIndex = plan->levelIndex,
+            .decimatedBase = plan->decimatedBase,
+            .rgba = expandPremultipliedRgba(
+                planes, extent, target, selection_, decode),
+        };
     } catch (const RasterReadCancelled &) {
         throw;
     } catch (const RasterReadError &) {

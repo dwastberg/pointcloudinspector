@@ -29,6 +29,13 @@ struct RasterBandSelection {
     // range is derived so that range and pixels agree on one domain.
     std::vector<double> scale;
     std::vector<double> offset;
+    // Byte reads halve memory traffic and quarter scratch size against a
+    // widened double read, which matters for the one bounded static read.
+    bool byteColorBands = false;
+    bool byteAlphaBand = true;
+    // Full-scale value of the alpha band's type, so a 16-bit alpha is not
+    // read as if every sample above 255 were fully opaque.
+    double alphaMaximum = 255.0;
     // Expanded once at inspection time. A palette never reaches portable code:
     // neither channelCount nor rgbaBands can express "one index band plus a
     // lookup table", and the table belongs to the source rather than to the
@@ -53,6 +60,11 @@ public:
 
     [[nodiscard]] RasterTileData readTile(const RasterTileRequest &request,
                                           std::stop_token stop) const override;
+
+    [[nodiscard]] RasterStaticImage
+    readStaticImage(std::uint32_t maximumTexturePixels,
+                    const RasterDecodeParameters &decode,
+                    std::stop_token stop) const override;
 
     // Number of GDAL RasterIO calls this source has issued. The bounded-read
     // acceptance tests assert against it, so a regression that starts scanning
