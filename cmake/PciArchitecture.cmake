@@ -61,6 +61,9 @@ function(pci_register_architecture_checks)
     set(allowed_pcinspector_renderer_api pcinspector_scene Qt6::Core)
     set(allowed_pcinspector_renderer_planning
         pcinspector_foundation pcinspector_pointcloud pcinspector_scene)
+    # renderer_planning reaches raster transitively through scene; the raster
+    # LOD planner lives here because pcinspector_raster cannot depend back on
+    # scene or renderer types.
     set(allowed_pcinspector_app_config
         pcinspector_foundation
         pcinspector_platform

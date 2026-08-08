@@ -58,6 +58,8 @@ add_library(pcinspector_renderer_planning STATIC
         renderer/planning/PointCloudSourceBoundsIndex.h
         renderer/planning/PointFrameCoordinator.cpp
         renderer/planning/PointFrameCoordinator.h
+        renderer/planning/RasterLodPlanner.cpp
+        renderer/planning/RasterLodPlanner.h
         renderer/planning/RenderActivity.h
         renderer/planning/RenderSelection.cpp
         renderer/planning/RenderSelection.h

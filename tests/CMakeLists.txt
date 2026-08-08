@@ -90,6 +90,7 @@ pci_add_catch_test_target(pcinspector_renderer_planning_tests
         renderer/RenderActivityTests.cpp
         renderer/RenderSelectionTests.cpp
         renderer/RendererPlanningTests.cpp
+        renderer/RasterLodPlannerTests.cpp
         renderer/SceneVisibilityIndexTests.cpp
         LIBRARIES pcinspector::renderer_planning)
 
