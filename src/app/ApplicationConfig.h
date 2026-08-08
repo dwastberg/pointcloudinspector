@@ -2,6 +2,7 @@
 
 #include "app/ApplicationOptions.h"
 #include "app/MemoryBudgetPolicy.h"
+#include "app/PerformanceSettings.h"
 #include "platform/SystemMemoryInfo.h"
 #include "renderer/GraphicsApi.h"
 
@@ -29,6 +30,9 @@ struct ApplicationConfig {
     std::uint64_t maximumLoadPoints = 10'000'000;
     MemoryBudgetOption cpuBudget{.automatic = true};
     std::uint64_t gpuByteBudget = std::uint64_t{512} * 1024 * 1024;
+    // Separate from the point budgets above, because raster pixels live in
+    // three allocators the point path does not touch.
+    RasterPerformanceSettings raster;
     GraphicsApi graphicsApi = GraphicsApi::Auto;
     bool smokeTest = false;
     bool gpuValidation = false;

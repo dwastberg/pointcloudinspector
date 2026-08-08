@@ -26,6 +26,24 @@ struct RenderMetrics {
     std::uint64_t vectorLayersDrawn = 0;
     std::uint64_t vectorDrawCalls = 0;
     std::uint64_t gpuVectorBytes = 0;
+    // Raster streaming. The GDAL block cache is the third allocator holding
+    // raster pixels, but it is a process-global figure the application owns:
+    // the renderer must not reach GDAL, so it reports only what it allocates.
+    std::uint64_t rasterCpuBytes = 0;
+    std::uint64_t rasterCpuPeakBytes = 0;
+    std::uint64_t rasterGpuBytes = 0;
+    std::uint64_t rasterTilesRequested = 0;
+    std::uint64_t rasterTilesCompleted = 0;
+    std::uint64_t rasterTilesCancelled = 0;
+    std::uint64_t rasterTilesFailed = 0;
+    std::uint64_t rasterCacheEvictions = 0;
+    std::uint64_t rasterUploadedTiles = 0;
+    std::size_t rasterResidentTiles = 0;
+    std::size_t rasterSelectedTiles = 0;
+    std::size_t rasterDrawnTiles = 0;
+    std::size_t rasterPendingReads = 0;
+    std::uint32_t rasterFinestLevel = 0;
+    std::uint32_t rasterCoarsestLevel = 0;
     std::uint64_t submittedFrameCount = 0;
     std::uint64_t sourcePoints = 0;
     std::uint64_t retainedFlatPoints = 0;

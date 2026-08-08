@@ -4,6 +4,7 @@
 #include "development/SyntheticScene.h"
 #include "import/ImportServices.h"
 #include "import/gdal/GdalRasterLoader.h"
+#include "import/gdal/GdalRuntime.h"
 #include "import/ogr/OgrVectorLoader.h"
 #include "import/pdal/PdalPointCloudLoader.h"
 #include "import/pdal/PdalPointCloudStatistics.h"
@@ -200,6 +201,12 @@ bootstrapApplication(const ApplicationConfig &config,
         throw std::invalid_argument(
             "application bootstrap requires a color-map catalog");
     }
+    // GDAL's block cache defaults to 5% of physical RAM, is process-global,
+    // and is invisible to the application's own byte accounting. Setting it
+    // explicitly is what makes the documented memory envelope true rather than
+    // aspirational.
+    setGdalBlockCacheBytes(mebibytesToBytes(config.raster.gdalCacheMebibytes));
+
     const ResolvedMemoryBudget memoryBudget =
         resolveMemoryBudget(config, systemMemoryInfo());
     reportMemoryBudget(config, memoryBudget);

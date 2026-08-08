@@ -388,3 +388,70 @@ TEST_CASE("path arguments expand wildcards to sorted matches",
 }
 
 } // namespace
+
+TEST_CASE("raster budgets parse and validate from the command line",
+          "[unit][app-config][raster]")
+{
+    const auto parse = [](const QStringList &extra) {
+        QStringList arguments{QStringLiteral("pcinspector")};
+        arguments += extra;
+        return pci::parseApplicationInvocation(arguments);
+    };
+
+    const auto defaults = parse({});
+    REQUIRE(std::holds_alternative<pci::ApplicationConfig>(defaults));
+    const pci::RasterPerformanceSettings &standard =
+        std::get<pci::ApplicationConfig>(defaults).raster;
+    CHECK(standard.cpuCacheMebibytes == pci::defaultRasterCpuCacheMebibytes);
+    CHECK(standard.gpuCacheMebibytes == pci::defaultRasterGpuCacheMebibytes);
+    CHECK(standard.gdalCacheMebibytes == pci::defaultGdalCacheMebibytes);
+    CHECK(standard.readWorkers == pci::defaultRasterReadWorkers);
+
+    const auto explicitly = parse({QStringLiteral("--raster-cpu-cache-mb=64"),
+                                   QStringLiteral("--raster-gpu-cache-mb=32"),
+                                   QStringLiteral("--gdal-cache-mb=16"),
+                                   QStringLiteral("--raster-workers=4")});
+    REQUIRE(std::holds_alternative<pci::ApplicationConfig>(explicitly));
+    const pci::RasterPerformanceSettings &chosen =
+        std::get<pci::ApplicationConfig>(explicitly).raster;
+    CHECK(chosen.cpuCacheMebibytes == 64);
+    CHECK(chosen.gpuCacheMebibytes == 32);
+    CHECK(chosen.gdalCacheMebibytes == 16);
+    CHECK(chosen.readWorkers == 4);
+
+    // Below the working minima, and above the worker ceiling, are rejected
+    // rather than silently clamped: a command line is an explicit request.
+    for (const QString &bad : {QStringLiteral("--raster-cpu-cache-mb=1"),
+                               QStringLiteral("--raster-gpu-cache-mb=0"),
+                               QStringLiteral("--gdal-cache-mb=0"),
+                               QStringLiteral("--raster-workers=99")}) {
+        CHECK(std::holds_alternative<pci::ConfigEarlyExit>(parse({bad})));
+    }
+}
+
+TEST_CASE("raster budget clamping keeps every value usable",
+          "[unit][app-config][raster]")
+{
+    const pci::RasterPerformanceSettings tiny =
+        pci::clampRasterPerformanceSettings({.cpuCacheMebibytes = 0,
+                                             .gpuCacheMebibytes = 0,
+                                             .gdalCacheMebibytes = 0,
+                                             .readWorkers = 0});
+    CHECK(tiny.cpuCacheMebibytes == pci::minimumRasterCpuCacheMebibytes);
+    // Sixteen guttered RGBA tiles plus conservative binding accounting.
+    CHECK(tiny.gpuCacheMebibytes == pci::minimumRasterGpuCacheMebibytes);
+    CHECK(tiny.gdalCacheMebibytes == pci::minimumGdalCacheMebibytes);
+    CHECK(tiny.readWorkers == pci::minimumRasterReadWorkers);
+
+    // Each additional handle to a VRT or GTI dataset opens its own member
+    // datasets, so the worker ceiling stays low on purpose.
+    const pci::RasterPerformanceSettings huge =
+        pci::clampRasterPerformanceSettings(
+            {.cpuCacheMebibytes = 1ULL << 60, .readWorkers = 1000});
+    CHECK(huge.readWorkers == pci::maximumRasterReadWorkers);
+    // Byte conversion is saturating, so a nonsense value cannot wrap the
+    // multiplication.
+    CHECK(pci::mebibytesToBytes(huge.cpuCacheMebibytes) > 0);
+    CHECK(pci::mebibytesToBytes(1ULL << 62) ==
+          static_cast<std::uint64_t>(pci::maximumCacheMebibytes) * 1024 * 1024);
+}

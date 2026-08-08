@@ -6,6 +6,7 @@
 #include <QCommandLineParser>
 #include <QCoreApplication>
 
+#include <array>
 #include <limits>
 #include <utility>
 
@@ -62,6 +63,29 @@ ApplicationInvocation parseApplicationInvocation(const QStringList &arguments)
         QStringLiteral("GPU point-buffer residency budget, in MiB."),
         QStringLiteral("MiB"),
         QStringLiteral("512"));
+    const QCommandLineOption rasterCpuCacheOption(
+        QStringLiteral("raster-cpu-cache-mb"),
+        QStringLiteral("Decoded raster tile budget, in MiB. Separate from the "
+                       "point caches."),
+        QStringLiteral("MiB"),
+        QString::number(defaultRasterCpuCacheMebibytes));
+    const QCommandLineOption rasterGpuCacheOption(
+        QStringLiteral("raster-gpu-cache-mb"),
+        QStringLiteral("Raster tile texture budget, in MiB. Separate from the "
+                       "point caches."),
+        QStringLiteral("MiB"),
+        QString::number(defaultRasterGpuCacheMebibytes));
+    const QCommandLineOption gdalCacheOption(
+        QStringLiteral("gdal-cache-mb"),
+        QStringLiteral("GDAL block cache, in MiB. Process-global and invisible "
+                       "to the application's own accounting."),
+        QStringLiteral("MiB"),
+        QString::number(defaultGdalCacheMebibytes));
+    const QCommandLineOption rasterWorkersOption(
+        QStringLiteral("raster-workers"),
+        QStringLiteral("Raster tile read workers. Applies after restart."),
+        QStringLiteral("count"),
+        QString::number(defaultRasterReadWorkers));
     const QCommandLineOption graphicsApiOption(
         QStringLiteral("graphics-api"),
         QStringLiteral(
@@ -86,6 +110,10 @@ ApplicationInvocation parseApplicationInvocation(const QStringList &arguments)
     parser.addOption(maximumPointsOption);
     parser.addOption(cpuCacheOption);
     parser.addOption(gpuCacheOption);
+    parser.addOption(rasterCpuCacheOption);
+    parser.addOption(rasterGpuCacheOption);
+    parser.addOption(gdalCacheOption);
+    parser.addOption(rasterWorkersOption);
     parser.addOption(graphicsApiOption);
 #ifdef PCINSPECTOR_ENABLE_DIAGNOSTIC_UI
     parser.addOption(gpuValidationOption);
@@ -143,6 +171,49 @@ ApplicationInvocation parseApplicationInvocation(const QStringList &arguments)
             "--gpu-cache-mb must be a positive byte-representable integer"));
     }
     config.gpuByteBudget = *gpuCache * bytesPerMiB;
+
+    // Every raster budget is validated before any byte conversion, so a value
+    // that would overflow the multiplication is rejected rather than wrapped.
+    struct RasterOption {
+        const QCommandLineOption &option;
+        const char *name;
+        std::uint64_t minimum;
+        std::uint64_t *target;
+    };
+    std::uint64_t rasterWorkers = config.raster.readWorkers;
+    const std::array<RasterOption, 4> rasterOptions{
+        RasterOption{rasterCpuCacheOption,
+                     "--raster-cpu-cache-mb",
+                     minimumRasterCpuCacheMebibytes,
+                     &config.raster.cpuCacheMebibytes},
+        RasterOption{rasterGpuCacheOption,
+                     "--raster-gpu-cache-mb",
+                     minimumRasterGpuCacheMebibytes,
+                     &config.raster.gpuCacheMebibytes},
+        RasterOption{gdalCacheOption,
+                     "--gdal-cache-mb",
+                     minimumGdalCacheMebibytes,
+                     &config.raster.gdalCacheMebibytes},
+        RasterOption{rasterWorkersOption,
+                     "--raster-workers",
+                     minimumRasterReadWorkers,
+                     &rasterWorkers},
+    };
+    for (const RasterOption &entry : rasterOptions) {
+        const bool workers = entry.target == &rasterWorkers;
+        const std::uint64_t ceiling =
+            workers ? maximumRasterReadWorkers : maximumMiB;
+        const auto parsed =
+            parsePointCount(parser.value(entry.option).toStdString());
+        if (!parsed || *parsed < entry.minimum || *parsed > ceiling) {
+            return error(QStringLiteral("%1 must be between %2 and %3")
+                             .arg(QString::fromLatin1(entry.name))
+                             .arg(entry.minimum)
+                             .arg(ceiling));
+        }
+        *entry.target = *parsed;
+    }
+    config.raster.readWorkers = static_cast<std::uint32_t>(rasterWorkers);
 
     const auto graphicsApi =
         parseGraphicsApi(parser.value(graphicsApiOption).toStdString());

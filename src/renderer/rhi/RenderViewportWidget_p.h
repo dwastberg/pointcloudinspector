@@ -203,6 +203,11 @@ private:
     RasterTileStreamer rasterTileStreamer_{rasterDefaultCpuCacheBytes};
     std::unordered_map<SceneLayerId, std::vector<RasterTileKey>>
         previousRasterSelection_;
+    std::size_t rasterSelectedTiles_ = 0;
+    std::size_t rasterDrawnTiles_ = 0;
+    std::uint64_t rasterUploadedTiles_ = 0;
+    std::uint32_t rasterFinestLevel_ = 0;
+    std::uint32_t rasterCoarsestLevel_ = 0;
     EyeDomeLightingPass eyeDomeLightingPass_;
     PointPicker pointPicker_;
     MeasurementOverlay *measurementOverlay_ = nullptr;

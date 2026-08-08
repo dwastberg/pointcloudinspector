@@ -230,11 +230,15 @@ PerformanceSettings SettingsDialog::performanceSettings() const noexcept
             static_cast<std::uint64_t>(gpuCacheMebibytes_->value()),
         .maximumLoadPoints =
             static_cast<std::uint64_t>(maximumLoadPoints_->value()),
+        // The dialog does not edit the raster budgets yet, so it carries the
+        // current ones through rather than resetting them to defaults.
+        .raster = raster_,
     };
 }
 
 void SettingsDialog::setPerformanceSettings(const PerformanceSettings &settings)
 {
+    raster_ = settings.raster;
     const QSignalBlocker automaticBlocker(automaticCpuCache_);
     const QSignalBlocker cpuBlocker(cpuCacheMebibytes_);
     const QSignalBlocker gpuBlocker(gpuCacheMebibytes_);

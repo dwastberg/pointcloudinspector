@@ -172,6 +172,7 @@ MainWindow::MainWindow(
         .gpuCacheMebibytes = std::max<std::uint64_t>(
             viewport_->gpuByteBudget() / bytesPerMebibyte, 1),
         .maximumLoadPoints = maximumLoadPoints,
+        .raster = performanceSettings_.raster,
     });
     static_cast<void>(applyPerformanceSettings(performanceSettings_));
     viewport_->setViewportSettings(

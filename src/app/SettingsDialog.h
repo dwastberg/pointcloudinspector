@@ -30,6 +30,9 @@ signals:
                          pci::PerformanceSettings performanceSettings);
 
 private:
+    // Retained so an apply cannot silently discard budgets the dialog does
+    // not present.
+    RasterPerformanceSettings raster_;
     void chooseBackgroundColor();
     void refreshBackgroundButton();
     void publishSettings();

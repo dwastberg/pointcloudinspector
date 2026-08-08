@@ -737,6 +737,12 @@ std::vector<RasterLayerDraw>
 RenderViewportWidget::streamRasterTiles(QRhiCommandBuffer *commandBuffer)
 {
     const SceneDocumentSnapshotPtr &document = sceneSnapshotCache_.document();
+    rasterSelectedTiles_ = 0;
+    rasterDrawnTiles_ = 0;
+    // Finest starts above every valid level so the first selection sets it;
+    // starting at zero would make the reported minimum permanently zero.
+    rasterFinestLevel_ = std::numeric_limits<std::uint32_t>::max();
+    rasterCoarsestLevel_ = 0;
     if (!document || document->rasterLayerCount() == 0) {
         rasterLayerRenderer_.retainLayers({});
         return {};
@@ -779,6 +785,12 @@ RenderViewportWidget::streamRasterTiles(QRhiCommandBuffer *commandBuffer)
 
         const RasterLodPlan plan = planRasterTiles(input);
         previousRasterSelection_[layer.id] = plan.selected;
+        rasterSelectedTiles_ += plan.selected.size();
+        for (const RasterTileKey key : plan.selected) {
+            rasterFinestLevel_ = std::min(rasterFinestLevel_, key.levelIndex);
+            rasterCoarsestLevel_ =
+                std::max(rasterCoarsestLevel_, key.levelIndex);
+        }
 
         for (const RasterTileKey key : plan.draw) {
             protectedTiles.push_back({sourceId, generation, key});
@@ -848,10 +860,14 @@ RenderViewportWidget::streamRasterTiles(QRhiCommandBuffer *commandBuffer)
             return left.tileKey.tile.levelIndex > right.tileKey.tile.levelIndex;
         });
 
+    if (rasterFinestLevel_ == std::numeric_limits<std::uint32_t>::max()) {
+        rasterFinestLevel_ = 0;
+    }
     static_cast<void>(rasterTileStreamer_.drainCompletions(protectedTiles));
     rasterLayerRenderer_.retainLayers(retained);
-    static_cast<void>(rasterLayerRenderer_.uploadPending(
-        commandBuffer, pending, protectedTiles, rasterFrameUploadBytes));
+    rasterUploadedTiles_ += rasterLayerRenderer_.uploadPending(
+        commandBuffer, pending, protectedTiles, rasterFrameUploadBytes);
+    rasterDrawnTiles_ = draws.size();
     std::erase_if(previousRasterSelection_, [&retained](const auto &entry) {
         return std::ranges::find(retained, entry.first) == retained.end();
     });
@@ -2045,6 +2061,8 @@ void RenderViewportWidget::publishMetrics(const bool force)
         const ProcessMemoryMetrics memory = processMemoryMetrics();
         const FullDetailStatus fullDetail =
             pointFrameCoordinator_.fullDetailStatus();
+        const RasterStreamerMetrics rasterStreamerMetrics =
+            rasterTileStreamer_.metrics();
         telemetry->backend = {
             .deviceName = deviceName_,
             .requestedBackend = QString::fromUtf8(
@@ -2061,6 +2079,22 @@ void RenderViewportWidget::publishMetrics(const bool force)
             pointCloudRenderer_.uniformCapacityGrowthCount();
         telemetry->residency = {
             .gpuVectorBytes = vectorLayerRenderer_.gpuBytes(),
+            .rasterCpuBytes = rasterStreamerMetrics.cpuBytes,
+            .rasterCpuPeakBytes = rasterStreamerMetrics.cpuPeakBytes,
+            .rasterGpuBytes = rasterLayerRenderer_.gpuBytes(),
+            .rasterTilesRequested = rasterStreamerMetrics.requested,
+            .rasterTilesCompleted = rasterStreamerMetrics.completed,
+            .rasterTilesCancelled = rasterStreamerMetrics.cancelled,
+            .rasterTilesFailed = rasterStreamerMetrics.failed,
+            .rasterCacheEvictions = rasterStreamerMetrics.cacheEvictions,
+            .rasterUploadedTiles = rasterUploadedTiles_,
+            .rasterResidentTiles = rasterLayerRenderer_.residentTileCount(),
+            .rasterSelectedTiles = rasterSelectedTiles_,
+            .rasterDrawnTiles = rasterDrawnTiles_,
+            .rasterPendingReads =
+                rasterStreamerMetrics.queued + rasterStreamerMetrics.inFlight,
+            .rasterFinestLevel = rasterFinestLevel_,
+            .rasterCoarsestLevel = rasterCoarsestLevel_,
             .gpuResidentPoints = uploadScheduler_.residentPointCount(),
             .gpuPointBudgetBytes = uploadScheduler_.residencyByteBudget(),
             .gpuPointBytes = uploadScheduler_.residentBytes(),

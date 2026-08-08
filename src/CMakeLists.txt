@@ -220,6 +220,8 @@ target_link_libraries(pcinspector_renderer_api INTERFACE
 add_library(pcinspector_app_config STATIC
         app/ApplicationConfig.cpp
         app/ApplicationConfig.h
+        app/PerformanceSettings.cpp
+        app/PerformanceSettings.h
         app/ApplicationOptions.cpp
         app/ApplicationOptions.h
         app/MemoryBudgetPolicy.cpp
@@ -389,7 +391,6 @@ add_library(pcinspector_app_ui STATIC
         app/PointCloudLoadMode.h
         app/PointCloudStatisticsDialog.cpp
         app/PointCloudStatisticsDialog.h
-        app/PerformanceSettings.h
         app/PerformanceSettingsStore.cpp
         app/PerformanceSettingsStore.h
         app/QualificationReporter.cpp
