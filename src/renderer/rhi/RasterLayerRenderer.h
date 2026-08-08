@@ -1,5 +1,6 @@
 #pragma once
 
+#include "raster/RasterTileCache.h"
 #include "renderer/planning/FrameCamera.h"
 #include "renderer/rhi/RhiResource.h"
 #include "scene/SceneDocument.h"
@@ -44,6 +45,7 @@ static_assert(sizeof(RasterLayerUniform) == 96);
 #endif
 struct RasterLayerDraw {
     SceneLayerId layerId;
+    RasterCacheKey tileKey;
     RasterLayerUniform uniform;
     std::uint32_t uniformIndex = 0;
 };
@@ -71,6 +73,30 @@ rasterLayerQuadTransform(const RasterLayerMetadata &metadata,
                          const RasterLayerStyle &style,
                          Vec3d eye) noexcept;
 
+// The same mapping for one tile, built from the tile's base-pixel rect so
+// adjacent tiles and adjacent levels share an exact edge. The last row and
+// column snap to the base dimensions, which is what keeps the outer boundary
+// free of a floating-point gap.
+[[nodiscard]] RasterQuadTransform
+rasterTileQuadTransform(const RasterLayerMetadata &metadata,
+                        const RasterLayerStyle &style,
+                        RasterTileKey key,
+                        Vec3d eye) noexcept;
+
+// UVs cover only the tile's replicated-gutter interior, so the sampler never
+// reaches a neighbouring tile's texels.
+[[nodiscard]] std::array<float, 4>
+rasterTileUvRect(std::uint16_t validWidth, std::uint16_t validHeight) noexcept;
+
+// A decoded tile awaiting GPU residency. The pixels stay owned by the decoded
+// cache until QRhi has consumed the update.
+struct RasterPendingUpload {
+    RasterCacheKey key;
+    SceneLayerId layerId;
+    const RasterTileData *tile = nullptr;
+    bool nearest = false;
+};
+
 [[nodiscard]] std::optional<Bounds3d>
 rasterLayerCullBounds(const RasterLayerMetadata &metadata,
                       const RasterLayerStyle &style,
@@ -81,7 +107,8 @@ rasterLayerCullBounds(const RasterLayerMetadata &metadata,
 // replaces this with tiled residency.
 class RasterLayerRenderer {
 public:
-    RasterLayerRenderer() = default;
+    explicit RasterLayerRenderer(std::uint64_t gpuByteBudget = 256ULL * 1024 *
+                                                               1024);
     ~RasterLayerRenderer();
 
     RasterLayerRenderer(const RasterLayerRenderer &) = delete;
@@ -91,9 +118,23 @@ public:
     // Uploads textures for layers the document still owns and releases the
     // rest. Must run before beginPass(): QRhi resource updates are not legal
     // inside an active render pass.
-    void syncLayers(QRhiCommandBuffer *commandBuffer,
-                    std::span<const SceneLayer> layers,
-                    const PointColorMapCatalogSnapshotPtr &colorMaps);
+    // Creates textures for newly decoded tiles, stopping once the frame's
+    // upload budget is spent so a large refinement is spread over frames
+    // rather than stalling one. Returns the number uploaded.
+    std::size_t uploadPending(QRhiCommandBuffer *commandBuffer,
+                              std::span<const RasterPendingUpload> pending,
+                              std::span<const RasterCacheKey> protectedKeys,
+                              std::uint64_t frameByteBudget);
+    [[nodiscard]] bool gpuResident(const RasterCacheKey &key) const noexcept;
+    // Drops GPU tiles for layers the document no longer owns.
+    void retainLayers(std::span<const SceneLayerId> layerIds);
+    void releaseSource(RasterSourceId sourceId);
+    void setGpuByteBudget(std::uint64_t bytes,
+                          std::span<const RasterCacheKey> protectedKeys);
+    [[nodiscard]] std::size_t residentTileCount() const noexcept;
+    // Tiles the GPU budget can hold, which the planner takes as one of its two
+    // independent capacity ceilings.
+    [[nodiscard]] std::size_t tileCapacity() const noexcept;
     void updateUniforms(QRhiCommandBuffer *commandBuffer,
                         std::span<const RasterLayerDraw> draws);
     void recordDraws(QRhiCommandBuffer *commandBuffer,
@@ -103,32 +144,24 @@ public:
 
     [[nodiscard]] bool ready() const noexcept;
     [[nodiscard]] std::uint64_t gpuBytes() const noexcept;
-    [[nodiscard]] std::size_t residentLayerCount() const noexcept;
-    // Layers admitted as metadata whose source needs tiled rendering, or whose
-    // read failed. They are counted rather than retried every frame.
-    [[nodiscard]] std::size_t unavailableLayerCount() const noexcept;
 
 private:
-    struct GpuLayer {
+    struct GpuTile {
         RhiResourcePtr<QRhiTexture> texture;
         RhiResourcePtr<QRhiShaderResourceBindings> bindings;
-        RasterSourceId sourceId;
-        std::uint64_t renderGeneration = 0;
-        std::uint32_t width = 0;
-        std::uint32_t height = 0;
+        SceneLayerId layerId;
         std::uint64_t bytes = 0;
-        bool nearest = false;
-        bool unavailable = false;
+        std::uint64_t lastUsedFrame = 0;
+        std::uint16_t validWidth = 0;
+        std::uint16_t validHeight = 0;
     };
 
     void createUniformBuffer(std::size_t drawCapacity);
     void ensureUniformCapacity(std::size_t drawCount);
     void createPipeline(QRhiRenderPassDescriptor *renderPass);
-    void ensureLayer(QRhiCommandBuffer *commandBuffer,
-                     const RasterLayer &layer,
-                     const PointColorMapCatalogSnapshotPtr &colorMaps);
-    void destroyLayer(GpuLayer &layer) noexcept;
-    void pruneLayers(std::span<const SceneLayer> layers);
+    [[nodiscard]] bool makeRoom(std::uint64_t incoming,
+                                std::span<const RasterCacheKey> protectedKeys);
+    void destroyTile(GpuTile &tile) noexcept;
 
     QRhi *rhi_ = nullptr;
     RhiResourcePtr<QRhiBuffer> vertexBuffer_;
@@ -141,8 +174,10 @@ private:
     bool quadUploaded_ = false;
     std::uint32_t uniformStride_ = 0;
     std::size_t uniformCapacity_ = 0;
-    std::unordered_map<SceneLayerId, GpuLayer> layers_;
+    std::unordered_map<RasterCacheKey, GpuTile> tiles_;
     std::uint64_t gpuBytes_ = 0;
+    std::uint64_t gpuByteBudget_ = 0;
+    std::uint64_t frameCounter_ = 0;
 };
 
 } // namespace pci

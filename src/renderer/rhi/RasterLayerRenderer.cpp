@@ -15,7 +15,13 @@
 namespace pci {
 namespace {
 
-constexpr std::size_t initialUniformCapacity = 16;
+constexpr std::size_t initialUniformCapacity = 64;
+
+// QRhi does not expose binding allocation sizes, so a conservative fixed
+// amount is accounted per tile in addition to its texture bytes.
+constexpr std::uint64_t rasterTileBindingOverheadBytes = 1024;
+// An absolute floor, so a tiny configured budget still renders something.
+constexpr std::uint64_t rasterMinimumResidentTiles = 16;
 
 // Imagery and points at the same Z do not produce bit-identical depth: point
 // depth comes from a sprite vertex path and raster depth from an interpolated
@@ -58,40 +64,6 @@ QShader shader(const QString &path)
     return result;
 }
 
-// Resolves the styled ramp key against the document's catalog. Portable raster
-// code carries only the key; the stop table lives with the point catalog.
-[[nodiscard]] std::shared_ptr<const std::vector<PointColorStop>>
-resolveRamp(const PointColorMapCatalogSnapshotPtr &colorMaps,
-            const std::string &key)
-{
-    if (!colorMaps || key.empty()) {
-        return nullptr;
-    }
-    for (const PointColorMapDefinition &definition : colorMaps->definitions()) {
-        if (definition.key != key || definition.stops.empty()) {
-            continue;
-        }
-        return std::make_shared<const std::vector<PointColorStop>>(
-            definition.stops.begin(), definition.stops.end());
-    }
-    return nullptr;
-}
-
-[[nodiscard]] RasterDecodeParameters
-decodeFor(const RasterLayer &layer,
-          const PointColorMapCatalogSnapshotPtr &colorMaps)
-{
-    const RasterLayerMetadata &metadata = layer.data->metadata();
-    RasterDecodeParameters decode = metadata.defaultDisplay;
-    if (layer.style.displayRange) {
-        decode.displayRange = layer.style.displayRange;
-    }
-    if (auto ramp = resolveRamp(colorMaps, layer.style.colorRampKey)) {
-        decode.colorRamp = std::move(ramp);
-    }
-    return decode;
-}
-
 } // namespace
 
 RasterQuadTransform
@@ -113,6 +85,44 @@ rasterLayerQuadTransform(const RasterLayerMetadata &metadata,
     transform.edgeU = topRight - topLeft;
     transform.edgeV = bottomLeft - topLeft;
     return transform;
+}
+
+RasterQuadTransform rasterTileQuadTransform(const RasterLayerMetadata &metadata,
+                                            const RasterLayerStyle &style,
+                                            const RasterTileKey key,
+                                            const Vec3d eye) noexcept
+{
+    if (key.levelIndex >= metadata.levels.size()) {
+        return {};
+    }
+    const RasterBasePixelRect rect = rasterTileBasePixelRect(
+        metadata.levels[key.levelIndex], key, metadata.width, metadata.height);
+    const Vec3d topLeft = rasterPixelToWorld(
+        metadata.geoTransform, rect.minimumPixel, rect.minimumLine);
+    const Vec3d topRight = rasterPixelToWorld(
+        metadata.geoTransform, rect.maximumPixel, rect.minimumLine);
+    const Vec3d bottomLeft = rasterPixelToWorld(
+        metadata.geoTransform, rect.minimumPixel, rect.maximumLine);
+
+    RasterQuadTransform transform;
+    transform.origin =
+        Vec3d{topLeft.x - eye.x, topLeft.y - eye.y, style.zOffset - eye.z};
+    transform.edgeU = topRight - topLeft;
+    transform.edgeV = bottomLeft - topLeft;
+    return transform;
+}
+
+std::array<float, 4> rasterTileUvRect(const std::uint16_t validWidth,
+                                      const std::uint16_t validHeight) noexcept
+{
+    const auto stored = static_cast<float>(rasterStoredTilePixels);
+    const auto gutter = static_cast<float>(rasterTileGutter);
+    return {
+        gutter / stored,
+        gutter / stored,
+        (gutter + static_cast<float>(validWidth)) / stored,
+        (gutter + static_cast<float>(validHeight)) / stored,
+    };
 }
 
 std::optional<Bounds3d>
@@ -144,6 +154,11 @@ stageRasterLayerUniforms(const std::span<const RasterLayerDraw> draws,
     return staging;
 }
 
+RasterLayerRenderer::RasterLayerRenderer(const std::uint64_t gpuByteBudget)
+    : gpuByteBudget_(gpuByteBudget)
+{
+}
+
 RasterLayerRenderer::~RasterLayerRenderer()
 {
     releaseResources();
@@ -157,22 +172,6 @@ bool RasterLayerRenderer::ready() const noexcept
 std::uint64_t RasterLayerRenderer::gpuBytes() const noexcept
 {
     return gpuBytes_;
-}
-
-std::size_t RasterLayerRenderer::residentLayerCount() const noexcept
-{
-    return static_cast<std::size_t>(
-        std::ranges::count_if(layers_, [](const auto &entry) {
-            return !entry.second.unavailable;
-        }));
-}
-
-std::size_t RasterLayerRenderer::unavailableLayerCount() const noexcept
-{
-    return static_cast<std::size_t>(
-        std::ranges::count_if(layers_, [](const auto &entry) {
-            return entry.second.unavailable;
-        }));
 }
 
 void RasterLayerRenderer::ensureResources(QRhi *rhi,
@@ -263,11 +262,13 @@ void RasterLayerRenderer::createUniformBuffer(const std::size_t drawCapacity)
     uniformStride_ = stride;
     uniformCapacity_ = drawCapacity;
 
-    // Existing per-layer bindings reference the destroyed buffer, so they are
-    // rebuilt on the next sync rather than left dangling.
-    for (auto &[id, layer] : layers_) {
-        layer.bindings.reset();
+    // Existing per-tile bindings reference the destroyed buffer. Dropping the
+    // tiles is simpler than rebinding and costs one refill; a dangling binding
+    // would be a device-lost crash.
+    for (auto &[key, tile] : tiles_) {
+        destroyTile(tile);
     }
+    tiles_.clear();
 }
 
 void RasterLayerRenderer::ensureUniformCapacity(const std::size_t drawCount)
@@ -320,144 +321,189 @@ void RasterLayerRenderer::createPipeline(QRhiRenderPassDescriptor *renderPass)
     pipelineRenderPass_ = renderPass;
 }
 
-void RasterLayerRenderer::syncLayers(
+std::size_t RasterLayerRenderer::uploadPending(
     QRhiCommandBuffer *commandBuffer,
-    const std::span<const SceneLayer> layers,
-    const PointColorMapCatalogSnapshotPtr &colorMaps)
+    const std::span<const RasterPendingUpload> pending,
+    const std::span<const RasterCacheKey> protectedKeys,
+    const std::uint64_t frameByteBudget)
 {
     if (!ready() || !commandBuffer) {
-        throw std::logic_error("raster renderer is not ready to synchronize");
+        throw std::logic_error("raster renderer is not ready to upload");
     }
+    ++frameCounter_;
     if (!quadUploaded_) {
         // Immutable buffers need one upload, and resource updates are only
         // legal outside an active render pass.
-        RhiResourceUpdateBatchPtr updates(rhi_->nextResourceUpdateBatch());
-        updates->uploadStaticBuffer(vertexBuffer_.get(),
-                                    unitQuadVertices.data());
-        commandBuffer->resourceUpdate(updates.release());
+        RhiResourceUpdateBatchPtr quad(rhi_->nextResourceUpdateBatch());
+        quad->uploadStaticBuffer(vertexBuffer_.get(), unitQuadVertices.data());
+        commandBuffer->resourceUpdate(quad.release());
         quadUploaded_ = true;
     }
-    pruneLayers(layers);
-    for (const SceneLayer &sceneLayer : layers) {
-        const auto *raster = std::get_if<RasterLayerState>(&sceneLayer.payload);
-        if (raster == nullptr || !raster->data || !raster->data->source) {
+
+    std::uint64_t spent = 0;
+    std::size_t uploaded = 0;
+    RhiResourceUpdateBatchPtr updates(rhi_->nextResourceUpdateBatch());
+    for (const RasterPendingUpload &entry : pending) {
+        if (entry.tile == nullptr || tiles_.contains(entry.key)) {
             continue;
         }
-        ensureLayer(commandBuffer,
-                    RasterLayer{
-                        .id = sceneLayer.id,
-                        .data = raster->data,
-                        .visible = sceneLayer.visible,
-                        .style = raster->style,
-                        .renderGeneration = raster->renderGeneration,
-                    },
-                    colorMaps);
+        const auto bytes = static_cast<std::uint64_t>(entry.tile->rgba.size()) +
+                           rasterTileBindingOverheadBytes;
+        // Spread a large refinement across frames rather than stalling one.
+        if (spent + bytes > frameByteBudget && uploaded > 0) {
+            break;
+        }
+        if (!makeRoom(bytes, protectedKeys)) {
+            continue;
+        }
+
+        RhiResourcePtr<QRhiTexture> texture(
+            rhi_->newTexture(QRhiTexture::RGBA8,
+                             QSize(static_cast<int>(rasterStoredTilePixels),
+                                   static_cast<int>(rasterStoredTilePixels))));
+        texture->setName(QByteArrayLiteral("Raster tile"));
+        requireCreated(texture->create(), "raster tile texture");
+
+        QRhiTextureSubresourceUploadDescription subresource;
+        subresource.setData(
+            QByteArray(reinterpret_cast<const char *>(entry.tile->rgba.data()),
+                       static_cast<qsizetype>(entry.tile->rgba.size())));
+        subresource.setSourceSize(
+            QSize(static_cast<int>(rasterStoredTilePixels),
+                  static_cast<int>(rasterStoredTilePixels)));
+        updates->uploadTexture(
+            texture.get(), QRhiTextureUploadDescription({0, 0, subresource}));
+
+        RhiResourcePtr<QRhiShaderResourceBindings> bindings(
+            rhi_->newShaderResourceBindings());
+        bindings->setBindings({
+            QRhiShaderResourceBinding::uniformBufferWithDynamicOffset(
+                0,
+                QRhiShaderResourceBinding::VertexStage |
+                    QRhiShaderResourceBinding::FragmentStage,
+                uniformBuffer_.get(),
+                static_cast<quint32>(sizeof(RasterLayerUniform))),
+            QRhiShaderResourceBinding::sampledTexture(
+                1,
+                QRhiShaderResourceBinding::FragmentStage,
+                texture.get(),
+                entry.nearest ? nearestSampler_.get() : linearSampler_.get()),
+        });
+        requireCreated(bindings->create(), "raster tile shader bindings");
+
+        tiles_.emplace(entry.key,
+                       GpuTile{
+                           .texture = std::move(texture),
+                           .bindings = std::move(bindings),
+                           .layerId = entry.layerId,
+                           .bytes = bytes,
+                           .lastUsedFrame = frameCounter_,
+                           .validWidth = entry.tile->validWidth,
+                           .validHeight = entry.tile->validHeight,
+                       });
+        gpuBytes_ += bytes;
+        spent += bytes;
+        ++uploaded;
+    }
+    commandBuffer->resourceUpdate(updates.release());
+    return uploaded;
+}
+
+bool RasterLayerRenderer::makeRoom(
+    const std::uint64_t incoming,
+    const std::span<const RasterCacheKey> protectedKeys)
+{
+    // The same underflow-safe form the decoded cache uses: guard first, then
+    // subtract, so a live budget decrease cannot wrap the comparison.
+    if (incoming > gpuByteBudget_) {
+        return false;
+    }
+    while (gpuBytes_ > gpuByteBudget_ - incoming) {
+        auto victim = tiles_.end();
+        std::uint64_t oldest = std::numeric_limits<std::uint64_t>::max();
+        for (auto entry = tiles_.begin(); entry != tiles_.end(); ++entry) {
+            if (std::ranges::find(protectedKeys, entry->first) !=
+                protectedKeys.end()) {
+                continue;
+            }
+            if (entry->second.lastUsedFrame < oldest) {
+                oldest = entry->second.lastUsedFrame;
+                victim = entry;
+            }
+        }
+        if (victim == tiles_.end()) {
+            // Everything resident is on screen this frame; decline rather than
+            // evict what is being drawn.
+            return false;
+        }
+        destroyTile(victim->second);
+        tiles_.erase(victim);
+    }
+    return true;
+}
+
+bool RasterLayerRenderer::gpuResident(const RasterCacheKey &key) const noexcept
+{
+    return tiles_.contains(key);
+}
+
+void RasterLayerRenderer::retainLayers(
+    const std::span<const SceneLayerId> layerIds)
+{
+    for (auto entry = tiles_.begin(); entry != tiles_.end();) {
+        if (std::ranges::find(layerIds, entry->second.layerId) !=
+            layerIds.end()) {
+            ++entry;
+            continue;
+        }
+        destroyTile(entry->second);
+        entry = tiles_.erase(entry);
     }
 }
 
-void RasterLayerRenderer::ensureLayer(
-    QRhiCommandBuffer *commandBuffer,
-    const RasterLayer &layer,
-    const PointColorMapCatalogSnapshotPtr &colorMaps)
+void RasterLayerRenderer::releaseSource(const RasterSourceId sourceId)
 {
-    const auto existing = layers_.find(layer.id);
-    if (existing != layers_.end() &&
-        existing->second.sourceId == layer.data->sourceId &&
-        existing->second.renderGeneration == layer.renderGeneration) {
-        if (!existing->second.bindings && !existing->second.unavailable) {
-            // The uniform buffer was recreated; rebind against the new one.
-            RhiResourcePtr<QRhiShaderResourceBindings> bindings(
-                rhi_->newShaderResourceBindings());
-            bindings->setBindings({
-                QRhiShaderResourceBinding::uniformBufferWithDynamicOffset(
-                    0,
-                    QRhiShaderResourceBinding::VertexStage |
-                        QRhiShaderResourceBinding::FragmentStage,
-                    uniformBuffer_.get(),
-                    static_cast<quint32>(sizeof(RasterLayerUniform))),
-                QRhiShaderResourceBinding::sampledTexture(
-                    1,
-                    QRhiShaderResourceBinding::FragmentStage,
-                    existing->second.texture.get(),
-                    existing->second.nearest ? nearestSampler_.get()
-                                             : linearSampler_.get()),
-            });
-            requireCreated(bindings->create(), "raster shader bindings");
-            existing->second.bindings = std::move(bindings);
+    for (auto entry = tiles_.begin(); entry != tiles_.end();) {
+        if (entry->first.sourceId != sourceId) {
+            ++entry;
+            continue;
         }
-        return;
+        destroyTile(entry->second);
+        entry = tiles_.erase(entry);
     }
-    if (existing != layers_.end()) {
-        destroyLayer(existing->second);
-        layers_.erase(existing);
-    }
+}
 
-    const RasterLayerMetadata &metadata = layer.data->metadata();
-    GpuLayer record;
-    record.sourceId = layer.data->sourceId;
-    record.renderGeneration = layer.renderGeneration;
-    record.nearest =
-        metadata.defaultDisplay.sampleKind == RasterSampleKind::Categorical;
+void RasterLayerRenderer::setGpuByteBudget(
+    const std::uint64_t bytes,
+    const std::span<const RasterCacheKey> protectedKeys)
+{
+    gpuByteBudget_ = bytes;
+    static_cast<void>(makeRoom(0, protectedKeys));
+}
 
-    RasterStaticImage image;
-    try {
-        // Phase 1 reads on the render thread. The read is bounded by the
-        // texture cap and by rasterBoundedBaseReadPixels, so it is a one-time
-        // hitch rather than an unbounded scan; phase 2's streamer replaces it.
-        image = layer.data->source->readStaticImage(
-            static_cast<std::uint32_t>(
-                std::max(1, rhi_->resourceLimit(QRhi::TextureSizeMax))),
-            decodeFor(layer, colorMaps),
-            std::stop_token{});
-    } catch (const RasterReadError &) {
-        // A source needing tiled rendering is recorded as unavailable so it is
-        // reported once instead of retried on every frame.
-        record.unavailable = true;
-        layers_.emplace(layer.id, std::move(record));
-        return;
-    }
+std::size_t RasterLayerRenderer::residentTileCount() const noexcept
+{
+    return tiles_.size();
+}
 
-    RhiResourcePtr<QRhiTexture> texture(rhi_->newTexture(
-        QRhiTexture::RGBA8,
-        QSize(static_cast<int>(image.width), static_cast<int>(image.height))));
-    texture->setName(QByteArrayLiteral("Raster layer texture"));
-    requireCreated(texture->create(), "raster texture");
+std::size_t RasterLayerRenderer::tileCapacity() const noexcept
+{
+    const std::uint64_t perTile =
+        static_cast<std::uint64_t>(rasterStoredTileBytes) +
+        rasterTileBindingOverheadBytes;
+    // A quarter is held back for fallback ancestors and in-flight uploads, so
+    // the planner's target set cannot pin the whole budget.
+    const std::uint64_t capacity = gpuByteBudget_ / perTile;
+    return static_cast<std::size_t>(std::max<std::uint64_t>(
+        rasterMinimumResidentTiles, capacity - capacity / 4));
+}
 
-    QRhiTextureSubresourceUploadDescription subresource;
-    subresource.setData(
-        QByteArray(reinterpret_cast<const char *>(image.rgba.data()),
-                   static_cast<qsizetype>(image.rgba.size())));
-    subresource.setSourceSize(
-        QSize(static_cast<int>(image.width), static_cast<int>(image.height)));
-    RhiResourceUpdateBatchPtr updates(rhi_->nextResourceUpdateBatch());
-    updates->uploadTexture(texture.get(),
-                           QRhiTextureUploadDescription({0, 0, subresource}));
-    commandBuffer->resourceUpdate(updates.release());
-
-    RhiResourcePtr<QRhiShaderResourceBindings> bindings(
-        rhi_->newShaderResourceBindings());
-    bindings->setBindings({
-        QRhiShaderResourceBinding::uniformBufferWithDynamicOffset(
-            0,
-            QRhiShaderResourceBinding::VertexStage |
-                QRhiShaderResourceBinding::FragmentStage,
-            uniformBuffer_.get(),
-            static_cast<quint32>(sizeof(RasterLayerUniform))),
-        QRhiShaderResourceBinding::sampledTexture(
-            1,
-            QRhiShaderResourceBinding::FragmentStage,
-            texture.get(),
-            record.nearest ? nearestSampler_.get() : linearSampler_.get()),
-    });
-    requireCreated(bindings->create(), "raster shader bindings");
-
-    record.width = image.width;
-    record.height = image.height;
-    record.bytes = static_cast<std::uint64_t>(image.width) * image.height * 4;
-    record.texture = std::move(texture);
-    record.bindings = std::move(bindings);
-    gpuBytes_ += record.bytes;
-    layers_.emplace(layer.id, std::move(record));
+void RasterLayerRenderer::destroyTile(GpuTile &tile) noexcept
+{
+    gpuBytes_ -= std::min(gpuBytes_, tile.bytes);
+    tile.bytes = 0;
+    tile.bindings.reset();
+    tile.texture.reset();
 }
 
 void RasterLayerRenderer::updateUniforms(
@@ -499,11 +545,11 @@ void RasterLayerRenderer::recordDraws(
                      static_cast<float>(renderTarget->pixelSize().height())));
     for (std::size_t index = 0; index < draws.size(); ++index) {
         const RasterLayerDraw &draw = draws[index];
-        const auto found = layers_.find(draw.layerId);
-        if (found == layers_.end() || !found->second.bindings ||
-            found->second.unavailable) {
+        const auto found = tiles_.find(draw.tileKey);
+        if (found == tiles_.end() || !found->second.bindings) {
             continue;
         }
+        found->second.lastUsedFrame = frameCounter_;
         const QRhiCommandBuffer::DynamicOffset offset(
             0, static_cast<quint32>(index) * uniformStride_);
         commandBuffer->setGraphicsPipeline(pipeline_.get());
@@ -516,39 +562,12 @@ void RasterLayerRenderer::recordDraws(
     }
 }
 
-void RasterLayerRenderer::destroyLayer(GpuLayer &layer) noexcept
-{
-    gpuBytes_ -= std::min(gpuBytes_, layer.bytes);
-    layer.bytes = 0;
-    layer.bindings.reset();
-    layer.texture.reset();
-}
-
-void RasterLayerRenderer::pruneLayers(const std::span<const SceneLayer> layers)
-{
-    std::unordered_set<SceneLayerId> retained;
-    retained.reserve(layers.size());
-    for (const SceneLayer &layer : layers) {
-        if (std::holds_alternative<RasterLayerState>(layer.payload)) {
-            retained.insert(layer.id);
-        }
-    }
-    for (auto entry = layers_.begin(); entry != layers_.end();) {
-        if (retained.contains(entry->first)) {
-            ++entry;
-            continue;
-        }
-        destroyLayer(entry->second);
-        entry = layers_.erase(entry);
-    }
-}
-
 void RasterLayerRenderer::releaseResources()
 {
-    for (auto &[id, layer] : layers_) {
-        destroyLayer(layer);
+    for (auto &[key, tile] : tiles_) {
+        destroyTile(tile);
     }
-    layers_.clear();
+    tiles_.clear();
     gpuBytes_ = 0;
     pipeline_.reset();
     pipelineBindings_.reset();

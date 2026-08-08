@@ -11,6 +11,7 @@
 #include "renderer/rhi/PointCloudRenderer.h"
 #include "renderer/rhi/PointPicker.h"
 #include "renderer/rhi/RasterLayerRenderer.h"
+#include "renderer/rhi/RasterTileStreamer.h"
 #include "renderer/rhi/SceneSnapshotCache.h"
 #include "renderer/rhi/UploadScheduler.h"
 #include "renderer/rhi/VectorLayerRenderer.h"
@@ -125,7 +126,8 @@ private:
     [[nodiscard]] std::vector<BlockDraw>
     buildDrawList(const PointFramePlan &plan);
     [[nodiscard]] std::vector<VectorLayerDraw> buildVectorDrawList() const;
-    [[nodiscard]] std::vector<RasterLayerDraw> buildRasterDrawList() const;
+    [[nodiscard]] std::vector<RasterLayerDraw>
+    streamRasterTiles(QRhiCommandBuffer *commandBuffer);
     [[nodiscard]] QMatrix4x4
     frameViewProjection(const FrameCamera &frame) const;
     void updateSelectionGeneration(const std::vector<BlockDraw> &draws);
@@ -198,6 +200,9 @@ private:
     PointCloudRenderer pointCloudRenderer_;
     VectorLayerRenderer vectorLayerRenderer_;
     RasterLayerRenderer rasterLayerRenderer_;
+    RasterTileStreamer rasterTileStreamer_{rasterDefaultCpuCacheBytes};
+    std::unordered_map<SceneLayerId, std::vector<RasterTileKey>>
+        previousRasterSelection_;
     EyeDomeLightingPass eyeDomeLightingPass_;
     PointPicker pointPicker_;
     MeasurementOverlay *measurementOverlay_ = nullptr;

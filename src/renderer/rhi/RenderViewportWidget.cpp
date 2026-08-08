@@ -730,63 +730,132 @@ RenderViewportWidget::frameDuration(QRhiCommandBuffer *commandBuffer)
     return elapsed;
 }
 
-std::vector<RasterLayerDraw> RenderViewportWidget::buildRasterDrawList() const
+// One frame of raster streaming: plan the visible tiles, reconcile the read
+// queue, admit finished reads, upload what the frame's budget allows, and
+// build the draws for whatever is resident.
+std::vector<RasterLayerDraw>
+RenderViewportWidget::streamRasterTiles(QRhiCommandBuffer *commandBuffer)
 {
     const SceneDocumentSnapshotPtr &document = sceneSnapshotCache_.document();
     if (!document || document->rasterLayerCount() == 0) {
+        rasterLayerRenderer_.retainLayers({});
         return {};
     }
+
     const FrameCamera frame = currentFrameCamera();
     const QMatrix4x4 viewProjection = frameViewProjection(frame);
+    const std::vector<RasterLayer> layers = document->rasterLayers();
 
-    std::vector<RasterLayerDraw> result;
-    result.reserve(document->rasterLayerCount());
-    // Document order is painter order: a later raster layer covers an earlier
-    // one because raster draws do not write depth.
-    for (const SceneLayer &sceneLayer : document->layers) {
-        const auto *raster = std::get_if<RasterLayerState>(&sceneLayer.payload);
-        if (raster == nullptr || !sceneLayer.visible || !raster->data) {
+    std::vector<SceneLayerId> retained;
+    std::vector<RasterCacheKey> protectedTiles;
+    std::vector<RasterLayerDraw> draws;
+    std::vector<RasterPendingUpload> pending;
+
+    for (const RasterLayer &layer : layers) {
+        retained.push_back(layer.id);
+        if (!layer.visible || !layer.data) {
             continue;
         }
-        const RasterLayerMetadata &metadata = raster->data->metadata();
-        if (!rasterLayerCullBounds(metadata, raster->style, frame)) {
-            continue;
+
+        RasterLodPlanInput input;
+        input.layer = layer;
+        input.camera = frame;
+        input.previousSelection = previousRasterSelection_[layer.id];
+        input.gpuCapacityTiles = rasterLayerRenderer_.tileCapacity();
+        // Residency is answered against this layer's own cache keys, so two
+        // layers cannot be mistaken for one another.
+        const RasterSourceId sourceId = layer.data->sourceId;
+        const std::uint64_t generation = layer.renderGeneration;
+        input.gpuResident =
+            [this, sourceId, generation](const RasterTileKey key) {
+                return rasterLayerRenderer_.gpuResident(
+                    RasterCacheKey{sourceId, generation, key});
+            };
+        input.cpuResident =
+            [this, sourceId, generation](const RasterTileKey key) {
+                return rasterTileStreamer_.cpuResident(
+                    RasterCacheKey{sourceId, generation, key});
+            };
+
+        const RasterLodPlan plan = planRasterTiles(input);
+        previousRasterSelection_[layer.id] = plan.selected;
+
+        for (const RasterTileKey key : plan.draw) {
+            protectedTiles.push_back({sourceId, generation, key});
+        }
+        rasterTileStreamer_.reconcile(plan, layer);
+
+        const RasterLayerMetadata &metadata = layer.data->metadata();
+        const bool nearest =
+            metadata.defaultDisplay.sampleKind == RasterSampleKind::Categorical;
+        for (const RasterCacheKey &key :
+             rasterTileStreamer_.takeReadyUploads(rasterMaximumFrameUploads)) {
+            pending.push_back(RasterPendingUpload{
+                .key = key,
+                .layerId = layer.id,
+                .tile = rasterTileStreamer_.tile(key),
+                .nearest = nearest,
+            });
         }
 
-        // Eye-relative in double precision, then narrowed, so placement stays
-        // stable at large projected coordinates.
-        const RasterQuadTransform quad =
-            rasterLayerQuadTransform(metadata, raster->style, frame.eye);
-        QMatrix4x4 model;
-        model.setColumn(0,
-                        QVector4D(static_cast<float>(quad.edgeU.x),
-                                  static_cast<float>(quad.edgeU.y),
-                                  0.0F,
-                                  0.0F));
-        model.setColumn(1,
-                        QVector4D(static_cast<float>(quad.edgeV.x),
-                                  static_cast<float>(quad.edgeV.y),
-                                  0.0F,
-                                  0.0F));
-        model.setColumn(2, QVector4D(0.0F, 0.0F, 1.0F, 0.0F));
-        model.setColumn(3,
-                        QVector4D(static_cast<float>(quad.origin.x),
-                                  static_cast<float>(quad.origin.y),
-                                  static_cast<float>(quad.origin.z),
-                                  1.0F));
+        for (const RasterTileKey key : plan.draw) {
+            const RasterCacheKey cacheKey{sourceId, generation, key};
+            const RasterQuadTransform quad =
+                rasterTileQuadTransform(metadata, layer.style, key, frame.eye);
+            QMatrix4x4 model;
+            model.setColumn(0,
+                            QVector4D(static_cast<float>(quad.edgeU.x),
+                                      static_cast<float>(quad.edgeU.y),
+                                      0.0F,
+                                      0.0F));
+            model.setColumn(1,
+                            QVector4D(static_cast<float>(quad.edgeV.x),
+                                      static_cast<float>(quad.edgeV.y),
+                                      0.0F,
+                                      0.0F));
+            model.setColumn(2, QVector4D(0.0F, 0.0F, 1.0F, 0.0F));
+            model.setColumn(3,
+                            QVector4D(static_cast<float>(quad.origin.x),
+                                      static_cast<float>(quad.origin.y),
+                                      static_cast<float>(quad.origin.z),
+                                      1.0F));
 
-        RasterLayerDraw draw;
-        draw.layerId = sceneLayer.id;
-        const QMatrix4x4 mvp = viewProjection * model;
-        std::memcpy(
-            draw.uniform.mvp.data(), mvp.constData(), sizeof(draw.uniform.mvp));
-        // Phase 1 uploads the whole image with no gutter, so the inner extent
-        // is the full texture.
-        draw.uniform.uvRect = {0.0F, 0.0F, 1.0F, 1.0F};
-        draw.uniform.opacity = raster->style.opacity;
-        result.push_back(draw);
+            RasterLayerDraw draw;
+            draw.layerId = layer.id;
+            draw.tileKey = cacheKey;
+            const QMatrix4x4 mvp = viewProjection * model;
+            std::memcpy(draw.uniform.mvp.data(),
+                        mvp.constData(),
+                        sizeof(draw.uniform.mvp));
+            // The level's last row and column are short, so the UV rect must
+            // come from the tile's own valid extent rather than assuming a
+            // full tile; otherwise an edge tile samples its replicated gutter
+            // as if it were image content.
+            const RasterTileExtent extent =
+                rasterTileValidExtent(metadata.levels[key.levelIndex], key);
+            draw.uniform.uvRect =
+                rasterTileUvRect(static_cast<std::uint16_t>(extent.width),
+                                 static_cast<std::uint16_t>(extent.height));
+            draw.uniform.opacity = layer.style.opacity;
+            draws.push_back(draw);
+        }
     }
-    return result;
+
+    // Coarse fallback ancestors draw first; because raster draws do not write
+    // depth, a finer tile replaces its parent by painter order.
+    std::ranges::stable_sort(
+        draws, [](const RasterLayerDraw &left, const RasterLayerDraw &right) {
+            return left.tileKey.tile.levelIndex > right.tileKey.tile.levelIndex;
+        });
+
+    static_cast<void>(rasterTileStreamer_.drainCompletions(protectedTiles));
+    rasterLayerRenderer_.retainLayers(retained);
+    static_cast<void>(rasterLayerRenderer_.uploadPending(
+        commandBuffer, pending, protectedTiles, rasterFrameUploadBytes));
+    std::erase_if(previousRasterSelection_, [&retained](const auto &entry) {
+        return std::ranges::find(retained, entry.first) == retained.end();
+    });
+    return draws;
 }
 
 void RenderViewportWidget::recordScene(
@@ -1041,14 +1110,13 @@ void RenderViewportWidget::render(QRhiCommandBuffer *commandBuffer)
                     vectorDrawCalls,
                     std::uint64_t{draw.layer.data->markers.empty() ? 0U : 1U});
             }
-            rasterDraws = buildRasterDrawList();
             updateSelectionGeneration(draws);
             pointCloudRenderer_.updateUniforms(commandBuffer, draws);
             vectorLayerRenderer_.syncLayers(commandBuffer, document->layers);
             vectorLayerRenderer_.updateUniforms(commandBuffer, vectorDraws);
-            // Texture creation and uploads must complete before beginPass().
-            rasterLayerRenderer_.syncLayers(
-                commandBuffer, document->layers, colorMaps_);
+            // Uploads, texture creation, layer pruning, and uniform updates
+            // must all complete before beginPass().
+            rasterDraws = streamRasterTiles(commandBuffer);
             rasterLayerRenderer_.updateUniforms(commandBuffer, rasterDraws);
             submitPendingPick(commandBuffer, draws);
             if (eyeDomeLightingActive_) {

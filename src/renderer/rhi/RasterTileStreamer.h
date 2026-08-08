@@ -24,6 +24,14 @@ namespace pci {
 // cardinality must not translate into queue growth.
 inline constexpr std::size_t rasterMaximumPendingRequests = 256;
 inline constexpr std::uint32_t rasterDefaultReadWorkers = 2;
+inline constexpr std::uint64_t rasterDefaultCpuCacheBytes =
+    256ULL * 1024 * 1024;
+inline constexpr std::uint64_t rasterDefaultGpuCacheBytes =
+    256ULL * 1024 * 1024;
+// Uploading more than this in one frame trades a stall for latency the user
+// notices more.
+inline constexpr std::uint64_t rasterFrameUploadBytes = 32ULL * 1024 * 1024;
+inline constexpr std::size_t rasterMaximumFrameUploads = 64;
 
 struct RasterStreamerMetrics {
     std::uint64_t requested = 0;

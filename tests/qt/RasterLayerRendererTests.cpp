@@ -154,3 +154,52 @@ TEST_CASE("raster culling rejects layers outside the frustum", "[qt][raster]")
 }
 
 } // namespace
+TEST_CASE("raster tile quad lands on the tile's base-pixel rect",
+          "[qt][raster]")
+{
+    pci::RasterLayerMetadata metadata;
+    metadata.width = 512;
+    metadata.height = 512;
+    metadata.geoTransform = {1000.0, 2.0, 0.0, 5000.0, 0.0, -2.0};
+    pci::RasterLevel base;
+    base.width = 512;
+    base.height = 512;
+    base.channelCount = 3;
+    metadata.levels.push_back(base);
+
+    // Tile (1,0) starts at base pixel 256, which is 512 metres in.
+    const pci::RasterQuadTransform quad = pci::rasterTileQuadTransform(
+        metadata, {}, pci::RasterTileKey{0, 1, 0}, pci::Vec3d{});
+    CHECK(quad.origin.x == Catch::Approx(1000.0 + 512.0));
+    CHECK(quad.origin.y == Catch::Approx(5000.0));
+    CHECK(quad.edgeU.x == Catch::Approx(512.0));
+    CHECK(quad.edgeV.y == Catch::Approx(-512.0));
+
+    // Adjacent tiles share an exact edge, so no seam opens between them.
+    const pci::RasterQuadTransform left = pci::rasterTileQuadTransform(
+        metadata, {}, pci::RasterTileKey{0, 0, 0}, pci::Vec3d{});
+    CHECK(left.origin.x + left.edgeU.x == Catch::Approx(quad.origin.x));
+
+    // A key outside the level yields a degenerate quad rather than garbage.
+    const pci::RasterQuadTransform outside = pci::rasterTileQuadTransform(
+        metadata, {}, pci::RasterTileKey{9, 0, 0}, pci::Vec3d{});
+    CHECK(outside.edgeU.x == 0.0);
+}
+
+TEST_CASE("raster tile UVs exclude the replicated gutter", "[qt][raster]")
+{
+    const std::array<float, 4> full = pci::rasterTileUvRect(256, 256);
+    // The interior starts one texel in and ends one texel from the far edge,
+    // so the sampler never reaches a neighbouring tile's texels.
+    CHECK(full[0] == Catch::Approx(1.0F / 258.0F));
+    CHECK(full[1] == Catch::Approx(1.0F / 258.0F));
+    CHECK(full[2] == Catch::Approx(257.0F / 258.0F));
+    CHECK(full[3] == Catch::Approx(257.0F / 258.0F));
+
+    // An edge tile covers only its own valid extent; assuming a full tile
+    // would sample the replicated gutter as if it were image content.
+    const std::array<float, 4> edge = pci::rasterTileUvRect(100, 40);
+    CHECK(edge[2] == Catch::Approx(101.0F / 258.0F));
+    CHECK(edge[3] == Catch::Approx(41.0F / 258.0F));
+    CHECK(edge[0] == full[0]);
+}
