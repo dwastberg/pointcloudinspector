@@ -397,6 +397,7 @@ if(PCINSPECTOR_ENABLE_GPU_TESTS)
             SOURCES
             support/CatchGpuMain.cpp
             gpu/PointPickerGpuTests.cpp
+            gpu/RasterRenderGpuTests.cpp
             gpu/VectorRenderGpuTests.cpp
             LIBRARIES
             pcinspector::app_config
