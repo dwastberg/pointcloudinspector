@@ -75,6 +75,8 @@ public:
     void setViewportSettings(const ViewportSettings &settings) override;
     [[nodiscard]] std::uint64_t gpuByteBudget() const noexcept override;
     void setGpuByteBudget(std::uint64_t byteBudget) override;
+    void setRasterByteBudgets(std::uint64_t cpuByteBudget,
+                              std::uint64_t gpuByteBudget) override;
     [[nodiscard]] int pointSizePixels() const noexcept override;
     void setPointSizePixels(int pointSize) override;
     [[nodiscard]] ViewportTool activeTool() const noexcept override;

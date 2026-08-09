@@ -618,6 +618,16 @@ public:
         ++gpuByteBudgetSetCount_;
     }
 
+    void setRasterByteBudgets(const std::uint64_t cpuByteBudget,
+                              const std::uint64_t gpuByteBudget) override
+    {
+        rasterCpuByteBudget_ = cpuByteBudget;
+        rasterGpuByteBudget_ = gpuByteBudget;
+    }
+
+    std::uint64_t rasterCpuByteBudget_ = 0;
+    std::uint64_t rasterGpuByteBudget_ = 0;
+
     int pointSizePixels() const noexcept override
     {
         return pointSizePixels_;

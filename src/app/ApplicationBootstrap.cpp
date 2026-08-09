@@ -232,6 +232,17 @@ bootstrapApplication(const ApplicationConfig &config,
                                                memoryBudget.automaticParameters,
                                                cacheDirectory,
                                                colorMaps);
+    // The window budgets and reports the GDAL cache without linking GDAL.
+    window->setGdalCacheControls(GdalCacheControls{
+        .setByteBudget =
+            [](const std::uint64_t bytes) {
+                setGdalBlockCacheBytes(bytes);
+            },
+        .usedBytes =
+            [] {
+                return gdalBlockCacheUsedBytes();
+            },
+    });
 #ifdef PCINSPECTOR_ENABLE_DIAGNOSTIC_UI
     if (config.qualification) {
         window->configureQualificationReport(

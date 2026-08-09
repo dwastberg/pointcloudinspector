@@ -56,6 +56,12 @@ AutomaticMemoryBudget automaticMemoryBudget(
         saturatingAdd(saturatingAdd(parameters.gpuByteBudget,
                                     parameters.activeDecodeByteBudget),
                       parameters.applicationReserveBytes);
+    // Budget all three allocators or none: leaving the raster caches out here
+    // produces a confident point budget that is wrong by their size.
+    result.workingReserveBytes =
+        saturatingAdd(result.workingReserveBytes,
+                      saturatingAdd(parameters.rasterCpuByteBudget,
+                                    parameters.gdalCacheByteBudget));
 
     const std::uint64_t processEnvelope =
         fractionTenths(memory.totalPhysicalBytes, 7);

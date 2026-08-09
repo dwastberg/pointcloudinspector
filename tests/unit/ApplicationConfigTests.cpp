@@ -173,9 +173,32 @@ TEST_CASE("memory and cache resolution are deterministic",
         {.totalPhysicalBytes = std::uint64_t{16} * 1024 * MiB,
          .availablePhysicalBytes = std::uint64_t{14} * 1024 * MiB});
     REQUIRE(automaticBudget.automaticParameters);
-    CHECK(automaticBudget.automaticParameters->gpuByteBudget == 64 * MiB);
+    // Unified-memory devices draw point and raster textures from one pool, so
+    // the GPU allowance is their sum.
+    CHECK(automaticBudget.automaticParameters->gpuByteBudget ==
+          64 * MiB +
+              pci::mebibytesToBytes(automaticConfig.raster.gpuCacheMebibytes));
+    // Decoded raster tiles and the GDAL block cache are reserved too:
+    // budgeting two of three allocators reports compliance while the process
+    // envelope grows by the third.
+    CHECK(automaticBudget.automaticParameters->rasterCpuByteBudget ==
+          pci::mebibytesToBytes(automaticConfig.raster.cpuCacheMebibytes));
+    CHECK(automaticBudget.automaticParameters->gdalCacheByteBudget ==
+          pci::mebibytesToBytes(automaticConfig.raster.gdalCacheMebibytes));
     CHECK(automaticBudget.pointByteBudget ==
           automaticBudget.automaticBudget.pointByteBudget);
+
+    // Raising the raster budgets must lower the automatic point budget rather
+    // than raise the process envelope.
+    pci::ApplicationConfig rasterHeavyConfig = automaticConfig;
+    rasterHeavyConfig.raster.cpuCacheMebibytes = 2048;
+    rasterHeavyConfig.raster.gdalCacheMebibytes = 2048;
+    const pci::ResolvedMemoryBudget rasterHeavyBudget =
+        pci::resolveMemoryBudget(
+            rasterHeavyConfig,
+            {.totalPhysicalBytes = std::uint64_t{16} * 1024 * MiB,
+             .availablePhysicalBytes = std::uint64_t{14} * 1024 * MiB});
+    CHECK(rasterHeavyBudget.pointByteBudget < automaticBudget.pointByteBudget);
 
     CHECK(pci::pointPageCacheDirectory(QStringLiteral("/cache/pcinspector"),
                                        "/tmp") ==

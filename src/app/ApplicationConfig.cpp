@@ -1,5 +1,6 @@
 #include "app/ApplicationConfig.h"
 
+#include "foundation/CheckedArithmetic.h"
 #include "platform/QtPath.h"
 
 #include <QCommandLineOption>
@@ -280,7 +281,15 @@ resolveMemoryBudget(const ApplicationConfig &config,
         return result;
     }
     result.automaticParameters.emplace();
-    result.automaticParameters->gpuByteBudget = config.gpuByteBudget;
+    // Unified-memory devices draw point and raster textures from the same
+    // pool, so the GPU allowance is their sum rather than the point budget.
+    result.automaticParameters->gpuByteBudget =
+        saturatingAdd(config.gpuByteBudget,
+                      mebibytesToBytes(config.raster.gpuCacheMebibytes));
+    result.automaticParameters->rasterCpuByteBudget =
+        mebibytesToBytes(config.raster.cpuCacheMebibytes);
+    result.automaticParameters->gdalCacheByteBudget =
+        mebibytesToBytes(config.raster.gdalCacheMebibytes);
     result.automaticBudget =
         automaticMemoryBudget(memory, *result.automaticParameters);
     result.pointByteBudget = result.automaticBudget.pointByteBudget;

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "app/GdalCacheControls.h"
 #include "app/MemoryBudgetPolicy.h"
 #include "app/PerformanceSettings.h"
 #include "app/PointCloudLoadMode.h"
@@ -53,6 +54,9 @@ public:
                          PointCloudLoadMode firstMode);
     LoadJobId loadVectorLayers(VectorImportRequest request);
     LoadJobId importRasterLayer(RasterImportRequest request);
+    // Installed by the application layer, which owns the GDAL link. Applying
+    // the current settings once installed is the caller's responsibility.
+    void setGdalCacheControls(GdalCacheControls controls);
 #ifdef PCINSPECTOR_ENABLE_DIAGNOSTIC_UI
     void configureQualificationReport(std::filesystem::path outputPath,
                                       bool exitAfterWrite = false);
@@ -112,6 +116,7 @@ private:
     QLabel *navigationHintLabel_ = nullptr;
     bool navigationHintDismissed_ = false;
     PerformanceSettings performanceSettings_;
+    GdalCacheControls gdalCache_;
 #ifdef PCINSPECTOR_ENABLE_DIAGNOSTIC_UI
     bool profileLoading_ = false;
     QualificationReporter qualificationReporter_;

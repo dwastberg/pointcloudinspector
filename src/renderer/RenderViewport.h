@@ -99,6 +99,11 @@ public:
     virtual void setViewportSettings(const ViewportSettings &settings) = 0;
     [[nodiscard]] virtual std::uint64_t gpuByteBudget() const noexcept = 0;
     virtual void setGpuByteBudget(std::uint64_t byteBudget) = 0;
+    // Raster caches are budgeted separately from the point pages. Both limits
+    // apply live: lowering either evicts down to it immediately rather than at
+    // the next admission.
+    virtual void setRasterByteBudgets(std::uint64_t cpuByteBudget,
+                                      std::uint64_t gpuByteBudget) = 0;
     [[nodiscard]] virtual int pointSizePixels() const noexcept = 0;
     virtual void setPointSizePixels(int pointSize) = 0;
     [[nodiscard]] virtual ViewportTool activeTool() const noexcept = 0;

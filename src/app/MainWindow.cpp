@@ -16,6 +16,7 @@
 #ifdef PCINSPECTOR_ENABLE_DIAGNOSTIC_UI
 #include "app/DiagnosticsDock.h"
 #endif
+#include "foundation/CheckedArithmetic.h"
 #include "import/PointCloudLoadController.h"
 #include "import/VectorLoadController.h"
 #include "platform/QtPath.h"
@@ -867,6 +868,12 @@ LoadJobId MainWindow::loadVectorLayers(VectorImportRequest request)
     return session_->loadVectorLayers(std::move(request));
 }
 
+void MainWindow::setGdalCacheControls(GdalCacheControls controls)
+{
+    gdalCache_ = std::move(controls);
+    static_cast<void>(applyPerformanceSettings(performanceSettings_));
+}
+
 LoadJobId MainWindow::importRasterLayer(RasterImportRequest request)
 {
     // Rasters draw through the same renderer path as points, so unlike vector
@@ -949,16 +956,35 @@ bool MainWindow::applyPerformanceSettings(const PerformanceSettings &settings)
         performanceSettings_.maximumLoadPoints,
         1,
         static_cast<std::uint64_t>(maximumLoadPointsSetting));
+    performanceSettings_.raster =
+        clampRasterPerformanceSettings(performanceSettings_.raster);
 
     const std::uint64_t gpuBytes =
         performanceSettings_.gpuCacheMebibytes * bytesPerMebibyte;
     viewport_->setGpuByteBudget(gpuBytes);
     session_->setMaximumLoadPoints(performanceSettings_.maximumLoadPoints);
 
+    const std::uint64_t rasterCpuBytes =
+        mebibytesToBytes(performanceSettings_.raster.cpuCacheMebibytes);
+    const std::uint64_t rasterGpuBytes =
+        mebibytesToBytes(performanceSettings_.raster.gpuCacheMebibytes);
+    const std::uint64_t gdalCacheBytes =
+        mebibytesToBytes(performanceSettings_.raster.gdalCacheMebibytes);
+    viewport_->setRasterByteBudgets(rasterCpuBytes, rasterGpuBytes);
+    // Process-global and outside the application's own accounting, so it is
+    // set explicitly rather than left at GDAL's percentage-of-RAM default.
+    if (gdalCache_.setByteBudget) {
+        gdalCache_.setByteBudget(gdalCacheBytes);
+    }
+
     std::optional<AutomaticMemoryBudgetParameters> automaticParameters;
     if (performanceSettings_.automaticCpuCache) {
         automaticParameters.emplace();
-        automaticParameters->gpuByteBudget = gpuBytes;
+        // Both budgets share one pool on unified-memory devices.
+        automaticParameters->gpuByteBudget =
+            saturatingAdd(gpuBytes, rasterGpuBytes);
+        automaticParameters->rasterCpuByteBudget = rasterCpuBytes;
+        automaticParameters->gdalCacheByteBudget = gdalCacheBytes;
     }
     return session_->setDecodedByteBudget(
         performanceSettings_.cpuCacheMebibytes * bytesPerMebibyte,

@@ -524,6 +524,17 @@ void RenderViewportWidget::setGpuByteBudget(const std::uint64_t byteBudget)
     queueSceneInvalidation();
 }
 
+void RenderViewportWidget::setRasterByteBudgets(
+    const std::uint64_t cpuByteBudget, const std::uint64_t gpuByteBudget)
+{
+    // Nothing is on screen at this point in the frame, so no tile needs
+    // protecting: a decrease evicts purely by recency and the caches come back
+    // under their limits before the next admission compares against them.
+    rasterTileStreamer_.setCpuByteBudget(cpuByteBudget, {});
+    rasterLayerRenderer_.setGpuByteBudget(gpuByteBudget, {});
+    queueSceneInvalidation();
+}
+
 int RenderViewportWidget::pointSizePixels() const noexcept
 {
     return pointSizePixels_;
