@@ -30,9 +30,6 @@ signals:
                          pci::PerformanceSettings performanceSettings);
 
 private:
-    // Retained so an apply cannot silently discard budgets the dialog does
-    // not present.
-    RasterPerformanceSettings raster_;
     void chooseBackgroundColor();
     void refreshBackgroundButton();
     void publishSettings();
@@ -46,6 +43,10 @@ private:
     QSpinBox *cpuCacheMebibytes_ = nullptr;
     QSpinBox *gpuCacheMebibytes_ = nullptr;
     QDoubleSpinBox *maximumLoadPoints_ = nullptr;
+    QSpinBox *rasterCpuCacheMebibytes_ = nullptr;
+    QSpinBox *rasterGpuCacheMebibytes_ = nullptr;
+    QSpinBox *gdalCacheMebibytes_ = nullptr;
+    QSpinBox *rasterReadWorkers_ = nullptr;
 };
 
 } // namespace pci

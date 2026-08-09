@@ -112,3 +112,70 @@ TEST_CASE("settings dialog exposes appearance and depth controls",
     CHECK(radius->isEnabled());
     CHECK(strength->isEnabled());
 }
+
+TEST_CASE("settings dialog edits the raster budgets", "[ui][settings][raster]")
+{
+    const pci::PerformanceSettings performance{
+        .raster =
+            {
+                .cpuCacheMebibytes = 384,
+                .gpuCacheMebibytes = 192,
+                .gdalCacheMebibytes = 64,
+                .readWorkers = 3,
+            },
+    };
+    pci::SettingsDialog dialog(pci::ViewportSettings{}, performance);
+
+    auto *rasterCpu =
+        dialog.findChild<QSpinBox *>(QStringLiteral("rasterCpuCacheSpinBox"));
+    auto *rasterGpu =
+        dialog.findChild<QSpinBox *>(QStringLiteral("rasterGpuCacheSpinBox"));
+    auto *gdalCache =
+        dialog.findChild<QSpinBox *>(QStringLiteral("gdalCacheSpinBox"));
+    auto *workers =
+        dialog.findChild<QSpinBox *>(QStringLiteral("rasterWorkersSpinBox"));
+    REQUIRE(rasterCpu != nullptr);
+    REQUIRE(rasterGpu != nullptr);
+    REQUIRE(gdalCache != nullptr);
+    REQUIRE(workers != nullptr);
+
+    CHECK(rasterCpu->value() == 384);
+    CHECK(rasterGpu->value() == 192);
+    CHECK(gdalCache->value() == 64);
+    CHECK(workers->value() == 3);
+    // The read pool is built once, so the control says when the change lands
+    // rather than appearing to take effect immediately.
+    CHECK(workers->toolTip().contains(QStringLiteral("after restart")));
+
+    int liveChangeCount = 0;
+    QObject::connect(&dialog,
+                     &pci::SettingsDialog::settingsChanged,
+                     [&liveChangeCount](const pci::ViewportSettings &,
+                                        const pci::PerformanceSettings &) {
+                         ++liveChangeCount;
+                     });
+
+    rasterCpu->setValue(512);
+    CHECK(liveChangeCount == 1);
+    CHECK(dialog.performanceSettings().raster.cpuCacheMebibytes == 512);
+
+    // A budget below the working minimum is raised rather than accepted: the
+    // spin box floor and the clamp must agree, or an apply would silently
+    // differ from what the dialog shows.
+    rasterGpu->setValue(1);
+    CHECK(rasterGpu->value() ==
+          static_cast<int>(pci::minimumRasterGpuCacheMebibytes));
+    CHECK(dialog.performanceSettings().raster.gpuCacheMebibytes ==
+          pci::minimumRasterGpuCacheMebibytes);
+
+    // Every other field must survive an edit to one of them.
+    CHECK(dialog.performanceSettings().raster.gdalCacheMebibytes == 64);
+    CHECK(dialog.performanceSettings().raster.readWorkers == 3);
+
+    auto *restoreDefaults = dialog.findChild<QPushButton *>(
+        QStringLiteral("restoreDefaultsButton"));
+    REQUIRE(restoreDefaults != nullptr);
+    restoreDefaults->click();
+    CHECK(dialog.performanceSettings().raster ==
+          pci::RasterPerformanceSettings{});
+}

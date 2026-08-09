@@ -117,3 +117,45 @@ TEST_CASE("render diagnostics formatter owns panel and status presentation",
         "Test GPU [auto→Metal+validation] | CPU 5.00ms 200.0FPS")));
     CHECK(status.contains(QStringLiteral("First 12.3 ms")));
 }
+
+TEST_CASE("render diagnostics report all three raster allocators",
+          "[ui][diagnostics][raster]")
+{
+    const pci::RenderMetrics metrics{
+        .rasterCpuBytes = 6U * 1024U * 1024U,
+        .rasterCpuPeakBytes = 9U * 1024U * 1024U,
+        .rasterGpuBytes = 4U * 1024U * 1024U,
+        .rasterTilesRequested = 40,
+        .rasterTilesCompleted = 32,
+        .rasterTilesCancelled = 5,
+        .rasterTilesFailed = 1,
+        .rasterCacheEvictions = 7,
+        .rasterUploadedTiles = 30,
+        .rasterResidentTiles = 28,
+        .rasterSelectedTiles = 24,
+        .rasterDrawnTiles = 26,
+        .rasterPendingReads = 2,
+        .rasterFinestLevel = 1,
+        .rasterCoarsestLevel = 3,
+    };
+    const pci::PointCloudLoadControllerMetrics loadMetrics{};
+
+    const QString panel = pci::RenderDiagnosticsFormatter::panelText(
+        metrics, loadMetrics, std::uint64_t{12} * 1024 * 1024);
+    CHECK(panel.contains(QStringLiteral(
+        "Raster memory: 6.0 MiB CPU (peak 9.0), 4.0 MiB GPU, 12.0 MiB GDAL "
+        "block cache")));
+    CHECK(panel.contains(QStringLiteral(
+        "Raster tiles: 26 drawn / 24 selected / 28 resident, 2 pending, "
+        "levels 1-3")));
+    CHECK(panel.contains(QStringLiteral(
+        "Raster reads: 40 requested, 32 completed, 5 cancelled, 1 failed, "
+        "30 uploaded, 7 evictions")));
+
+    // Without the GDAL hook the third allocator is named as unavailable
+    // rather than reported as zero, which would read as "nothing cached".
+    const QString withoutGdal =
+        pci::RenderDiagnosticsFormatter::panelText(metrics, loadMetrics);
+    CHECK(withoutGdal.contains(QStringLiteral("unavailable")));
+    CHECK_FALSE(withoutGdal.contains(QStringLiteral("0.0 MiB GDAL")));
+}

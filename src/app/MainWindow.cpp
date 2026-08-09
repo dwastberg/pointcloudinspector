@@ -1244,8 +1244,12 @@ void MainWindow::showMetrics(const RenderMetrics &metrics)
     const PointCloudLoadControllerMetrics loadMetrics =
         session_->pointLoadMetrics();
     if (diagnosticsDock_) {
-        diagnosticsDock_->setDiagnostics(
-            RenderDiagnosticsFormatter::panelText(metrics, loadMetrics));
+        std::optional<std::uint64_t> gdalCacheUsedBytes;
+        if (gdalCache_.usedBytes) {
+            gdalCacheUsedBytes = gdalCache_.usedBytes();
+        }
+        diagnosticsDock_->setDiagnostics(RenderDiagnosticsFormatter::panelText(
+            metrics, loadMetrics, gdalCacheUsedBytes));
     }
     if (!session_->loading()) {
         statusBar()->showMessage(RenderDiagnosticsFormatter::statusText(

@@ -151,6 +151,59 @@ SettingsDialog::SettingsDialog(const ViewportSettings &settings,
     performanceLayout->addRow(tr("Maximum loaded points"), maximumLoadPoints_);
     layout->addWidget(performance);
 
+    // Separate from the point caches on purpose: three different allocators
+    // hold raster pixels, and the user needs to see all three.
+    auto *rasterPerformance = new QGroupBox(tr("Raster Layers"), this);
+    rasterPerformance->setObjectName(QStringLiteral("rasterPerformanceGroup"));
+    auto *rasterLayout = new QFormLayout(rasterPerformance);
+
+    rasterCpuCacheMebibytes_ = new QSpinBox(rasterPerformance);
+    rasterCpuCacheMebibytes_->setObjectName(
+        QStringLiteral("rasterCpuCacheSpinBox"));
+    rasterCpuCacheMebibytes_->setRange(
+        static_cast<int>(minimumRasterCpuCacheMebibytes),
+        maximumCacheMebibytes);
+    rasterCpuCacheMebibytes_->setSuffix(tr(" MiB"));
+    rasterCpuCacheMebibytes_->setGroupSeparatorShown(true);
+    rasterCpuCacheMebibytes_->setToolTip(
+        tr("Memory available for decoded raster tiles, separate from the "
+           "point caches"));
+    rasterLayout->addRow(tr("Raster CPU cache"), rasterCpuCacheMebibytes_);
+
+    rasterGpuCacheMebibytes_ = new QSpinBox(rasterPerformance);
+    rasterGpuCacheMebibytes_->setObjectName(
+        QStringLiteral("rasterGpuCacheSpinBox"));
+    rasterGpuCacheMebibytes_->setRange(
+        static_cast<int>(minimumRasterGpuCacheMebibytes),
+        maximumCacheMebibytes);
+    rasterGpuCacheMebibytes_->setSuffix(tr(" MiB"));
+    rasterGpuCacheMebibytes_->setGroupSeparatorShown(true);
+    rasterGpuCacheMebibytes_->setToolTip(
+        tr("Memory available for raster tile textures on the graphics "
+           "device"));
+    rasterLayout->addRow(tr("Raster GPU cache"), rasterGpuCacheMebibytes_);
+
+    gdalCacheMebibytes_ = new QSpinBox(rasterPerformance);
+    gdalCacheMebibytes_->setObjectName(QStringLiteral("gdalCacheSpinBox"));
+    gdalCacheMebibytes_->setRange(static_cast<int>(minimumGdalCacheMebibytes),
+                                  maximumCacheMebibytes);
+    gdalCacheMebibytes_->setSuffix(tr(" MiB"));
+    gdalCacheMebibytes_->setGroupSeparatorShown(true);
+    gdalCacheMebibytes_->setToolTip(
+        tr("Block cache GDAL uses while reading raster sources"));
+    rasterLayout->addRow(tr("GDAL block cache"), gdalCacheMebibytes_);
+
+    rasterReadWorkers_ = new QSpinBox(rasterPerformance);
+    rasterReadWorkers_->setObjectName(QStringLiteral("rasterWorkersSpinBox"));
+    rasterReadWorkers_->setRange(static_cast<int>(minimumRasterReadWorkers),
+                                 static_cast<int>(maximumRasterReadWorkers));
+    // The read pool is created once, so a change here cannot take effect
+    // until the next launch. Saying so beats silently ignoring the edit.
+    rasterReadWorkers_->setToolTip(
+        tr("Threads reading raster tiles. Applies after restart."));
+    rasterLayout->addRow(tr("Raster read workers"), rasterReadWorkers_);
+    layout->addWidget(rasterPerformance);
+
     connect(automaticCpuCache_,
             &QCheckBox::toggled,
             cpuCacheMebibytes_,
@@ -189,6 +242,10 @@ SettingsDialog::SettingsDialog(const ViewportSettings &settings,
     connect(cpuCacheMebibytes_, &QSpinBox::valueChanged, this, publish);
     connect(gpuCacheMebibytes_, &QSpinBox::valueChanged, this, publish);
     connect(maximumLoadPoints_, &QDoubleSpinBox::valueChanged, this, publish);
+    connect(rasterCpuCacheMebibytes_, &QSpinBox::valueChanged, this, publish);
+    connect(rasterGpuCacheMebibytes_, &QSpinBox::valueChanged, this, publish);
+    connect(gdalCacheMebibytes_, &QSpinBox::valueChanged, this, publish);
+    connect(rasterReadWorkers_, &QSpinBox::valueChanged, this, publish);
 }
 
 ViewportSettings SettingsDialog::settings() const noexcept
@@ -230,15 +287,38 @@ PerformanceSettings SettingsDialog::performanceSettings() const noexcept
             static_cast<std::uint64_t>(gpuCacheMebibytes_->value()),
         .maximumLoadPoints =
             static_cast<std::uint64_t>(maximumLoadPoints_->value()),
-        // The dialog does not edit the raster budgets yet, so it carries the
-        // current ones through rather than resetting them to defaults.
-        .raster = raster_,
+        .raster = clampRasterPerformanceSettings({
+            .cpuCacheMebibytes =
+                static_cast<std::uint64_t>(rasterCpuCacheMebibytes_->value()),
+            .gpuCacheMebibytes =
+                static_cast<std::uint64_t>(rasterGpuCacheMebibytes_->value()),
+            .gdalCacheMebibytes =
+                static_cast<std::uint64_t>(gdalCacheMebibytes_->value()),
+            .readWorkers =
+                static_cast<std::uint32_t>(rasterReadWorkers_->value()),
+        }),
     };
 }
 
 void SettingsDialog::setPerformanceSettings(const PerformanceSettings &settings)
 {
-    raster_ = settings.raster;
+    const RasterPerformanceSettings raster =
+        clampRasterPerformanceSettings(settings.raster);
+    const QSignalBlocker rasterCpuBlocker(rasterCpuCacheMebibytes_);
+    const QSignalBlocker rasterGpuBlocker(rasterGpuCacheMebibytes_);
+    const QSignalBlocker gdalBlocker(gdalCacheMebibytes_);
+    const QSignalBlocker workersBlocker(rasterReadWorkers_);
+    rasterCpuCacheMebibytes_->setValue(static_cast<int>(std::min<std::uint64_t>(
+        raster.cpuCacheMebibytes,
+        static_cast<std::uint64_t>(maximumCacheMebibytes))));
+    rasterGpuCacheMebibytes_->setValue(static_cast<int>(std::min<std::uint64_t>(
+        raster.gpuCacheMebibytes,
+        static_cast<std::uint64_t>(maximumCacheMebibytes))));
+    gdalCacheMebibytes_->setValue(static_cast<int>(std::min<std::uint64_t>(
+        raster.gdalCacheMebibytes,
+        static_cast<std::uint64_t>(maximumCacheMebibytes))));
+    rasterReadWorkers_->setValue(static_cast<int>(raster.readWorkers));
+
     const QSignalBlocker automaticBlocker(automaticCpuCache_);
     const QSignalBlocker cpuBlocker(cpuCacheMebibytes_);
     const QSignalBlocker gpuBlocker(gpuCacheMebibytes_);
