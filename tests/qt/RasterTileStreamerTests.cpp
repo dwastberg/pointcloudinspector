@@ -2,6 +2,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <array>
 #include <atomic>
 #include <memory>
 #include <thread>
@@ -257,6 +258,83 @@ TEST_CASE("raster streamer releases a removed layer", "[qt][raster][stream]")
     CHECK(streamer.takeReadyUploads(10).empty());
 }
 
+TEST_CASE("raster streamer drops completions for a released source",
+          "[qt][raster][stream]")
+{
+    Fixture fixture = makeFixture();
+    pci::RasterTileStreamer streamer(roomyBudget, 2);
+
+    // Reads that finish after their layer is gone must not sit in the
+    // completion queue holding decoded bytes that no cache counter reports.
+    streamer.reconcile(planFor({{0, 0, 0}, {0, 1, 0}}), fixture.layer);
+    streamer.waitForIdle();
+    streamer.releaseSource(fixture.layer.data->sourceId);
+
+    CHECK(streamer.drainCompletions({}).empty());
+    CHECK(streamer.metrics().cpuBytes == 0);
+    CHECK(streamer.metrics().pendingUploads == 0);
+}
+
+TEST_CASE("raster streamer reconciles every layer of a frame at once",
+          "[qt][raster][stream]")
+{
+    Fixture first = makeFixture();
+    Fixture second = makeFixture();
+    second.layer.id = pci::SceneLayerId{2};
+    pci::RasterTileStreamer streamer(roomyBudget, 2);
+
+    const pci::RasterLodPlan firstPlan = planFor({{0, 0, 0}, {0, 1, 0}});
+    const pci::RasterLodPlan secondPlan = planFor({{0, 2, 0}, {0, 3, 0}});
+    const std::array<pci::RasterFrameLayer, 2> frame{
+        pci::RasterFrameLayer{.plan = &firstPlan, .layer = &first.layer},
+        pci::RasterFrameLayer{.plan = &secondPlan, .layer = &second.layer},
+    };
+
+    streamer.reconcile(frame);
+    streamer.waitForIdle();
+
+    CHECK(streamer.drainCompletions({}).size() == 4);
+    CHECK(first.source->reads.load() == 2);
+    CHECK(second.source->reads.load() == 2);
+    // The queue is frame-global. A sweep that saw one layer at a time would
+    // treat the other layer's requests as work the camera moved away from and
+    // cancel them, which is why reconciliation takes the whole frame.
+    CHECK(streamer.metrics().cancelled == 0);
+}
+
+TEST_CASE("raster streamer keeps every layer's work across repeated frames",
+          "[qt][raster][stream]")
+{
+    Fixture first = makeFixture();
+    Fixture second = makeFixture();
+    second.layer.id = pci::SceneLayerId{2};
+    first.source->blocked.store(true);
+    second.source->blocked.store(true);
+    pci::RasterTileStreamer streamer(roomyBudget, 1);
+
+    const pci::RasterLodPlan firstPlan = planFor({{0, 0, 0}, {0, 1, 0}});
+    const pci::RasterLodPlan secondPlan = planFor({{0, 2, 0}, {0, 3, 0}});
+    const std::array<pci::RasterFrameLayer, 2> frame{
+        pci::RasterFrameLayer{.plan = &firstPlan, .layer = &first.layer},
+        pci::RasterFrameLayer{.plan = &secondPlan, .layer = &second.layer},
+    };
+
+    // A still camera over two layers must converge, not churn: the same plan
+    // reconciled repeatedly neither re-requests nor cancels anything.
+    for (int frameIndex = 0; frameIndex < 4; ++frameIndex) {
+        streamer.reconcile(frame);
+    }
+
+    const pci::RasterStreamerMetrics metrics = streamer.metrics();
+    CHECK(metrics.requested == 4);
+    CHECK(metrics.cancelled == 0);
+    CHECK(metrics.pending == 4);
+
+    first.source->blocked.store(false);
+    second.source->blocked.store(false);
+    streamer.waitForIdle();
+}
+
 TEST_CASE("raster streamer coalesces wakeups", "[qt][raster][stream]")
 {
     Fixture fixture = makeFixture();
@@ -302,8 +380,8 @@ TEST_CASE("raster streamer respects its pending-request ceiling",
     // Source size and catalog cardinality must not translate into queue
     // growth.
     const pci::RasterStreamerMetrics metrics = streamer.metrics();
-    CHECK(metrics.queued + metrics.inFlight <=
-          pci::rasterMaximumPendingRequests);
+    CHECK(metrics.pending == pci::rasterMaximumPendingRequests);
+    CHECK(metrics.queued <= metrics.pending);
 
     fixture.source->blocked = false;
     streamer.shutdown();

@@ -45,10 +45,26 @@ struct RasterStreamerMetrics {
     std::uint64_t cpuBytes = 0;
     std::uint64_t cpuPeakBytes = 0;
     std::uint64_t cacheEvictions = 0;
-    std::size_t inFlight = 0;
+    // Accepted and not yet completed, whether waiting for a worker or being
+    // read. `queued` is the subset still waiting, so the two must never be
+    // added together.
+    std::size_t pending = 0;
     std::size_t queued = 0;
     std::size_t pendingUploads = 0;
     std::size_t negativeEntries = 0;
+};
+
+// One visible layer's contribution to a frame's reconciliation.
+//
+// The read queue is frame-global, so reconciliation must see every visible
+// layer at once. Reconciling one layer at a time makes each layer's
+// cancellation sweep drop the other layers' queued work, because a request for
+// a different source is never in the current layer's wanted set: with two
+// raster layers the queue thrashes every frame and only reads already picked
+// up by a worker ever finish.
+struct RasterFrameLayer {
+    const RasterLodPlan *plan = nullptr;
+    const RasterLayer *layer = nullptr;
 };
 
 // Owns request generations, worker scheduling, cancellation, decoded-cache
@@ -77,8 +93,11 @@ public:
     void setCpuByteBudget(std::uint64_t bytes,
                           std::span<const RasterCacheKey> protectedKeys);
 
-    // Render thread only. Cancels queued work outside the new plan and
-    // schedules the plan's requests in priority order.
+    // Render thread only. Cancels queued work outside the frame's plans and
+    // schedules their requests in priority order. Every visible layer must be
+    // passed in one call; see RasterFrameLayer.
+    void reconcile(std::span<const RasterFrameLayer> frame);
+    // Single-layer convenience for the common case and for tests.
     void reconcile(const RasterLodPlan &plan, const RasterLayer &layer);
 
     // Render thread only. Admits finished reads into the decoded cache and
@@ -128,7 +147,7 @@ private:
     mutable std::mutex mutex_;
     std::condition_variable_any queueReady_;
     std::deque<Request> queue_;
-    std::unordered_set<RasterCacheKey> inFlight_;
+    std::unordered_set<RasterCacheKey> pendingKeys_;
     std::vector<Completion> completions_;
     std::stop_source stop_;
     std::vector<std::jthread> workers_;

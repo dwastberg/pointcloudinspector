@@ -88,7 +88,7 @@ void RasterTileStreamer::workerLoop(std::stop_token stop)
         {
             const std::scoped_lock lock(mutex_);
             completions_.push_back(std::move(completion));
-            inFlight_.erase(request.key);
+            pendingKeys_.erase(request.key);
             --activeReads_;
         }
         idle_.notify_all();
@@ -99,42 +99,55 @@ void RasterTileStreamer::workerLoop(std::stop_token stop)
 void RasterTileStreamer::reconcile(const RasterLodPlan &plan,
                                    const RasterLayer &layer)
 {
-    if (!layer.data) {
-        return;
-    }
+    const RasterFrameLayer single{.plan = &plan, .layer = &layer};
+    reconcile(std::span{&single, 1});
+}
+
+void RasterTileStreamer::reconcile(
+    const std::span<const RasterFrameLayer> frame)
+{
     ++requestEpoch_;
 
     std::unordered_set<RasterCacheKey> wanted;
-    wanted.reserve(plan.requests.size());
     std::vector<Request> scheduled;
-    scheduled.reserve(plan.requests.size());
 
-    auto decode = std::make_shared<const RasterDecodeParameters>(
-        layer.data->metadata().defaultDisplay);
-
-    for (const RasterTileKey key : plan.requests) {
-        const RasterCacheKey cacheKey{
-            .sourceId = layer.data->sourceId,
-            .renderGeneration = layer.renderGeneration,
-            .tile = key,
-        };
-        wanted.insert(cacheKey);
-        // A tile already decoded, or already known to fail for this
-        // generation, is not requested again.
-        if (cache_.contains(cacheKey) || negativeCache_.contains(cacheKey)) {
+    for (const RasterFrameLayer &entry : frame) {
+        if (!entry.plan || !entry.layer || !entry.layer->data) {
             continue;
         }
-        scheduled.push_back(Request{
-            .key = cacheKey,
-            .epoch = requestEpoch_,
-            .source = layer.data->source,
-            .request =
-                RasterTileRequest{
-                    .key = key,
-                    .renderGeneration = layer.renderGeneration,
-                    .decode = decode,
-                },
-        });
+        const RasterLayer &layer = *entry.layer;
+        const RasterLodPlan &plan = *entry.plan;
+        wanted.reserve(wanted.size() + plan.requests.size());
+        scheduled.reserve(scheduled.size() + plan.requests.size());
+
+        auto decode = std::make_shared<const RasterDecodeParameters>(
+            layer.data->metadata().defaultDisplay);
+
+        for (const RasterTileKey key : plan.requests) {
+            const RasterCacheKey cacheKey{
+                .sourceId = layer.data->sourceId,
+                .renderGeneration = layer.renderGeneration,
+                .tile = key,
+            };
+            wanted.insert(cacheKey);
+            // A tile already decoded, or already known to fail for this
+            // generation, is not requested again.
+            if (cache_.contains(cacheKey) ||
+                negativeCache_.contains(cacheKey)) {
+                continue;
+            }
+            scheduled.push_back(Request{
+                .key = cacheKey,
+                .epoch = requestEpoch_,
+                .source = layer.data->source,
+                .request =
+                    RasterTileRequest{
+                        .key = key,
+                        .renderGeneration = layer.renderGeneration,
+                        .decode = decode,
+                    },
+            });
+        }
     }
 
     const std::scoped_lock lock(mutex_);
@@ -148,16 +161,19 @@ void RasterTileStreamer::reconcile(const RasterLodPlan &plan,
     metrics_.cancelled += before - queue_.size();
 
     for (Request &request : scheduled) {
-        if (queue_.size() + inFlight_.size() >= rasterMaximumPendingRequests) {
+        // pendingKeys_ already contains every queued request, so the ceiling
+        // is measured against it alone. Adding the queue size too would halve
+        // the effective limit.
+        if (pendingKeys_.size() >= rasterMaximumPendingRequests) {
             break;
         }
-        if (inFlight_.contains(request.key) ||
+        if (pendingKeys_.contains(request.key) ||
             std::ranges::any_of(queue_, [&request](const Request &pending) {
                 return pending.key == request.key;
             })) {
             continue;
         }
-        inFlight_.insert(request.key);
+        pendingKeys_.insert(request.key);
         queue_.push_back(std::move(request));
         ++metrics_.requested;
     }
@@ -306,7 +322,7 @@ void RasterTileStreamer::shutdown() noexcept
     {
         const std::scoped_lock lock(mutex_);
         completions_.clear();
-        inFlight_.clear();
+        pendingKeys_.clear();
     }
     pendingUploads_.clear();
     cache_.clear();
@@ -317,7 +333,7 @@ RasterStreamerMetrics RasterTileStreamer::metrics() const
     RasterStreamerMetrics result = metrics_;
     {
         const std::scoped_lock lock(mutex_);
-        result.inFlight = inFlight_.size();
+        result.pending = pendingKeys_.size();
         result.queued = queue_.size();
     }
     result.pendingUploads = pendingUploads_.size();

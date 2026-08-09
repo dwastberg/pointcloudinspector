@@ -743,23 +743,54 @@ RenderViewportWidget::streamRasterTiles(QRhiCommandBuffer *commandBuffer)
     // starting at zero would make the reported minimum permanently zero.
     rasterFinestLevel_ = std::numeric_limits<std::uint32_t>::max();
     rasterCoarsestLevel_ = 0;
-    if (!document || document->rasterLayerCount() == 0) {
-        rasterLayerRenderer_.retainLayers({});
-        return {};
-    }
+
+    // An empty document is deliberately not an early return: releasing removed
+    // sources and pruning per-layer state is exactly what a removed layer
+    // needs, and skipping it strands that layer's in-flight reads in a
+    // completion queue nothing ever drains.
+    const std::vector<RasterLayer> layers =
+        document ? document->rasterLayers() : std::vector<RasterLayer>{};
 
     const FrameCamera frame = currentFrameCamera();
     const QMatrix4x4 viewProjection = frameViewProjection(frame);
-    const std::vector<RasterLayer> layers = document->rasterLayers();
+
+    // A completed read names its source, not its layer.
+    struct UploadTarget {
+        SceneLayerId layerId;
+        bool nearest = false;
+    };
 
     std::vector<SceneLayerId> retained;
+    std::vector<RasterSourceId> liveSources;
     std::vector<RasterCacheKey> protectedTiles;
     std::vector<RasterLayerDraw> draws;
     std::vector<RasterPendingUpload> pending;
+    std::unordered_map<RasterSourceId, UploadTarget> uploadTargets;
+    // Plans outlive the loop because reconciliation is frame-global; see
+    // RasterFrameLayer.
+    std::vector<std::pair<std::size_t, RasterLodPlan>> plans;
+    plans.reserve(layers.size());
 
-    for (const RasterLayer &layer : layers) {
+    for (std::size_t index = 0; index < layers.size(); ++index) {
+        const RasterLayer &layer = layers[index];
         retained.push_back(layer.id);
-        if (!layer.visible || !layer.data) {
+        if (!layer.data) {
+            continue;
+        }
+        liveSources.push_back(layer.data->sourceId);
+        const RasterLayerMetadata &metadata = layer.data->metadata();
+        // Registered even while hidden. A read that finished before the layer
+        // was hidden is still queued for upload, and dropping it would strand
+        // the tile CPU-resident but never uploaded: the planner would not ask
+        // for it again, because the decoded cache already holds it.
+        uploadTargets.insert_or_assign(
+            layer.data->sourceId,
+            UploadTarget{
+                .layerId = layer.id,
+                .nearest = metadata.defaultDisplay.sampleKind ==
+                           RasterSampleKind::Categorical,
+            });
+        if (!layer.visible) {
             continue;
         }
 
@@ -783,7 +814,8 @@ RenderViewportWidget::streamRasterTiles(QRhiCommandBuffer *commandBuffer)
                     RasterCacheKey{sourceId, generation, key});
             };
 
-        const RasterLodPlan plan = planRasterTiles(input);
+        const RasterLodPlan &plan =
+            plans.emplace_back(index, planRasterTiles(input)).second;
         previousRasterSelection_[layer.id] = plan.selected;
         rasterSelectedTiles_ += plan.selected.size();
         for (const RasterTileKey key : plan.selected) {
@@ -795,21 +827,6 @@ RenderViewportWidget::streamRasterTiles(QRhiCommandBuffer *commandBuffer)
         for (const RasterTileKey key : plan.draw) {
             protectedTiles.push_back({sourceId, generation, key});
         }
-        rasterTileStreamer_.reconcile(plan, layer);
-
-        const RasterLayerMetadata &metadata = layer.data->metadata();
-        const bool nearest =
-            metadata.defaultDisplay.sampleKind == RasterSampleKind::Categorical;
-        for (const RasterCacheKey &key :
-             rasterTileStreamer_.takeReadyUploads(rasterMaximumFrameUploads)) {
-            pending.push_back(RasterPendingUpload{
-                .key = key,
-                .layerId = layer.id,
-                .tile = rasterTileStreamer_.tile(key),
-                .nearest = nearest,
-            });
-        }
-
         for (const RasterTileKey key : plan.draw) {
             const RasterCacheKey cacheKey{sourceId, generation, key};
             const RasterQuadTransform quad =
@@ -863,7 +880,44 @@ RenderViewportWidget::streamRasterTiles(QRhiCommandBuffer *commandBuffer)
     if (rasterFinestLevel_ == std::numeric_limits<std::uint32_t>::max()) {
         rasterFinestLevel_ = 0;
     }
+
+    // One reconciliation for the whole frame. Per-layer calls would make each
+    // layer's cancellation sweep drop every other layer's queued reads.
+    std::vector<RasterFrameLayer> frameLayers;
+    frameLayers.reserve(plans.size());
+    for (const auto &[index, plan] : plans) {
+        frameLayers.push_back(
+            RasterFrameLayer{.plan = &plan, .layer = &layers[index]});
+    }
+    rasterTileStreamer_.reconcile(frameLayers);
+
+    // A source the document no longer owns releases its decoded tiles, queued
+    // reads, remembered failures, and GPU textures. Without this its in-flight
+    // reads complete into a queue nothing drains, holding bytes outside every
+    // accounted cache while the counters read zero.
+    for (const RasterSourceId sourceId : knownRasterSources_) {
+        if (std::ranges::find(liveSources, sourceId) != liveSources.end()) {
+            continue;
+        }
+        rasterTileStreamer_.releaseSource(sourceId);
+        rasterLayerRenderer_.releaseSource(sourceId);
+    }
+    knownRasterSources_ = std::move(liveSources);
+
     static_cast<void>(rasterTileStreamer_.drainCompletions(protectedTiles));
+    for (const RasterCacheKey &key :
+         rasterTileStreamer_.takeReadyUploads(rasterMaximumFrameUploads)) {
+        const auto target = uploadTargets.find(key.sourceId);
+        if (target == uploadTargets.end()) {
+            continue;
+        }
+        pending.push_back(RasterPendingUpload{
+            .key = key,
+            .layerId = target->second.layerId,
+            .tile = rasterTileStreamer_.tile(key),
+            .nearest = target->second.nearest,
+        });
+    }
     rasterLayerRenderer_.retainLayers(retained);
     rasterUploadedTiles_ += rasterLayerRenderer_.uploadPending(
         commandBuffer, pending, protectedTiles, rasterFrameUploadBytes);
@@ -2091,8 +2145,7 @@ void RenderViewportWidget::publishMetrics(const bool force)
             .rasterResidentTiles = rasterLayerRenderer_.residentTileCount(),
             .rasterSelectedTiles = rasterSelectedTiles_,
             .rasterDrawnTiles = rasterDrawnTiles_,
-            .rasterPendingReads =
-                rasterStreamerMetrics.queued + rasterStreamerMetrics.inFlight,
+            .rasterPendingReads = rasterStreamerMetrics.pending,
             .rasterFinestLevel = rasterFinestLevel_,
             .rasterCoarsestLevel = rasterCoarsestLevel_,
             .gpuResidentPoints = uploadScheduler_.residentPointCount(),

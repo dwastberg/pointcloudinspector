@@ -203,6 +203,9 @@ private:
     RasterTileStreamer rasterTileStreamer_{rasterDefaultCpuCacheBytes};
     std::unordered_map<SceneLayerId, std::vector<RasterTileKey>>
         previousRasterSelection_;
+    // Sources the last frame saw, so a source that disappears can be released
+    // rather than left holding decoded tiles and queued reads.
+    std::vector<RasterSourceId> knownRasterSources_;
     std::size_t rasterSelectedTiles_ = 0;
     std::size_t rasterDrawnTiles_ = 0;
     std::uint64_t rasterUploadedTiles_ = 0;
