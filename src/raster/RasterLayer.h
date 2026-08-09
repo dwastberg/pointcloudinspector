@@ -32,9 +32,10 @@ static_assert(rasterStoredTilePixels == 258);
 // band below this threshold; runtime tile reads never do, at any size.
 inline constexpr std::uint64_t rasterBoundedBaseReadPixels = 64ULL << 20;
 
-// Hard ceiling for phase 1's single static texture, additionally clamped to
-// the QRhi-reported maximum texture size at upload time.
-inline constexpr std::uint32_t rasterStaticTextureLimitPixels = 4096;
+// A level at or under this size covers the whole raster in at most 16x16
+// tiles, which is what makes a zoomed-out view affordable. Above it, a source
+// with no coarser level is reported as under-overviewed.
+inline constexpr std::uint32_t rasterOverviewCoverageLimitPixels = 4096;
 
 inline constexpr double maximumRasterZOffsetMagnitude = 1.0e6;
 
@@ -140,31 +141,16 @@ struct RasterLayerStyle {
     bool operator==(const RasterLayerStyle &) const = default;
 };
 
-// True when no backed level fits the static texture cap and the base image is
-// too large to decimate in one bounded read. Such a source is admitted as
-// metadata and reports "tiled rendering required" rather than scanning its
-// base band.
+// True when the source has no level coarse enough to show the whole raster
+// without reading an unreasonable number of native-resolution tiles, and its
+// base is too large to be worth covering that way. Such a source is admitted
+// as metadata, renders whatever its level table supports, and warns that
+// overviews are missing rather than pretending the display is complete.
+//
+// Everything renders through the tiled path now, so this is a display-quality
+// warning rather than a decision between two read strategies.
 [[nodiscard]] bool
 rasterRequiresTiledRendering(const RasterLayerMetadata &metadata) noexcept;
-
-// How phase 1 should fill its single static texture.
-struct RasterStaticReadPlan {
-    std::uint32_t levelIndex = 0;
-    std::uint32_t width = 0;
-    std::uint32_t height = 0;
-    // True when no backed level fits and the base band is decimated instead.
-    // Permitted only below rasterBoundedBaseReadPixels, because a decimating
-    // read is bounded exactly when the base is bounded.
-    bool decimatedBase = false;
-    bool operator==(const RasterStaticReadPlan &) const = default;
-};
-
-// Chooses the finest backed level that fits the texture cap, falling back to
-// one bounded decimating base read. Empty when the source requires tiled
-// rendering.
-[[nodiscard]] std::optional<RasterStaticReadPlan>
-planRasterStaticRead(const RasterLayerMetadata &metadata,
-                     std::uint32_t maximumTexturePixels) noexcept;
 
 [[nodiscard]] RasterLayerStyle
 defaultRasterLayerStyle(const RasterLayerMetadata &metadata);

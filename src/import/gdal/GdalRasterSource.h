@@ -61,11 +61,6 @@ public:
     [[nodiscard]] RasterTileData readTile(const RasterTileRequest &request,
                                           std::stop_token stop) const override;
 
-    [[nodiscard]] RasterStaticImage
-    readStaticImage(std::uint32_t maximumTexturePixels,
-                    const RasterDecodeParameters &decode,
-                    std::stop_token stop) const override;
-
     // Number of GDAL RasterIO calls this source has issued. The bounded-read
     // acceptance tests assert against it, so a regression that starts scanning
     // the base image fails loudly instead of merely running slowly.

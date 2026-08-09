@@ -244,64 +244,19 @@ rasterTileBasePixelRect(const RasterLevel &level,
     return rect;
 }
 
-std::optional<RasterStaticReadPlan>
-planRasterStaticRead(const RasterLayerMetadata &metadata,
-                     const std::uint32_t maximumTexturePixels) noexcept
-{
-    if (metadata.levels.empty() || metadata.width == 0 ||
-        metadata.height == 0) {
-        return std::nullopt;
-    }
-    const std::uint32_t cap =
-        std::min(maximumTexturePixels, rasterStaticTextureLimitPixels);
-    if (cap == 0) {
-        return std::nullopt;
-    }
-
-    // Levels run finest to coarsest, so the first that fits is the most
-    // detailed one that fits.
-    for (std::size_t index = 0; index < metadata.levels.size(); ++index) {
-        const RasterLevel &level = metadata.levels[index];
-        if (level.width <= cap && level.height <= cap) {
-            return RasterStaticReadPlan{
-                .levelIndex = static_cast<std::uint32_t>(index),
-                .width = level.width,
-                .height = level.height,
-                .decimatedBase = false,
-            };
-        }
-    }
-
-    const auto basePixels =
-        static_cast<std::uint64_t>(metadata.width) * metadata.height;
-    if (basePixels > rasterBoundedBaseReadPixels) {
-        return std::nullopt; // tiled rendering required
-    }
-
-    const double scale = std::min(static_cast<double>(cap) / metadata.width,
-                                  static_cast<double>(cap) / metadata.height);
-    return RasterStaticReadPlan{
-        .levelIndex = 0,
-        .width = std::max<std::uint32_t>(
-            1, static_cast<std::uint32_t>(std::floor(metadata.width * scale))),
-        .height = std::max<std::uint32_t>(
-            1, static_cast<std::uint32_t>(std::floor(metadata.height * scale))),
-        .decimatedBase = true,
-    };
-}
-
 bool rasterRequiresTiledRendering(const RasterLayerMetadata &metadata) noexcept
 {
     if (metadata.levels.empty()) {
         return true;
     }
     const RasterLevel &coarsest = metadata.levels.back();
-    if (coarsest.width <= rasterStaticTextureLimitPixels &&
-        coarsest.height <= rasterStaticTextureLimitPixels) {
+    if (coarsest.width <= rasterOverviewCoverageLimitPixels &&
+        coarsest.height <= rasterOverviewCoverageLimitPixels) {
         return false;
     }
-    // No backed level fits, so the only remaining option is a decimating read
-    // of the base band. That is bounded exactly when the base is bounded.
+    // The coarsest level still needs many tiles to cover the view. That is
+    // tolerable while the base itself is small, and a missing-overview problem
+    // once it is not.
     const auto basePixels =
         static_cast<std::uint64_t>(metadata.width) * metadata.height;
     return basePixels > rasterBoundedBaseReadPixels;

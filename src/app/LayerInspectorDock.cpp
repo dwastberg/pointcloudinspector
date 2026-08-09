@@ -961,10 +961,12 @@ void LayerInspectorDock::updateRasterProperties(const RasterLayer &raster)
     }
     if (metadata.insufficientOverviews) {
         // Reported rather than compensated for: generating overviews is the
-        // user's job, via gdaladdo or an equivalent.
+        // user's job, via gdaladdo or an equivalent. Display quality on a
+        // source without them is bounded by what the source provides.
         warnings << QStringLiteral(
-            "This raster is too large to display without overviews. Tiled "
-            "rendering is required; run gdaladdo to add them.");
+            "This raster has no overviews coarse enough for its size, so "
+            "zoomed-out views show only part of it. Run gdaladdo to add "
+            "them.");
     }
     rasterVisibilityWarning_->setVisible(!warnings.isEmpty());
     rasterVisibilityWarningLabel_->setText(warnings.join(QChar::LineFeed));

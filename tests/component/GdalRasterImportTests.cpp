@@ -363,35 +363,12 @@ TEST_CASE("raster import compares CRS without reprojecting",
 }
 
 } // namespace
-TEST_CASE("raster static image uses a backed overview when one fits",
+TEST_CASE("raster mid-size source without overviews renders tiled",
           "[component][gdal]")
 {
-    const pci::RasterLayerDataPtr data =
-        load(fixtures().rgbNonPowerOfTwoOverviews);
-    const pci::RasterStaticImage image = data->source->readStaticImage(
-        4096, data->metadata().defaultDisplay, std::stop_token{});
-
-    // The 256x192 base already fits the cap, so the finest level is chosen and
-    // nothing is decimated.
-    CHECK(image.levelIndex == 0);
-    CHECK_FALSE(image.decimatedBase);
-    CHECK(image.width == 256);
-    CHECK(image.height == 192);
-    CHECK(image.rgba.size() ==
-          static_cast<std::size_t>(image.width) * image.height * 4);
-
-    // A small device cap forces a coarser backed level rather than a
-    // decimating read of a level that does not fit.
-    const pci::RasterStaticImage coarse = data->source->readStaticImage(
-        100, data->metadata().defaultDisplay, std::stop_token{});
-    CHECK(coarse.levelIndex > 0);
-    CHECK_FALSE(coarse.decimatedBase);
-    CHECK(coarse.width <= 100);
-}
-
-TEST_CASE("raster static image decimates a bounded mid-size base band",
-          "[component][gdal]")
-{
+    // The most common first import: about 5000x5000 with no overviews. The
+    // tiled path reads it at native resolution, so it needs no warning and no
+    // decimating whole-image read.
     const pci::GdalRasterLoader loader;
     const pci::RasterLayerDataPtr data =
         load(fixtures().midSizeNoOverviews, loader);
@@ -399,8 +376,6 @@ TEST_CASE("raster static image decimates a bounded mid-size base band",
 
     REQUIRE(metadata.width == 5000);
     REQUIRE(metadata.levels.size() == 1);
-    // Below the bounded-read threshold, so this ordinary source is displayable
-    // rather than reporting that tiled rendering is required.
     CHECK_FALSE(metadata.insufficientOverviews);
     CHECK_FALSE(pci::rasterRequiresTiledRendering(metadata));
 
@@ -409,20 +384,22 @@ TEST_CASE("raster static image decimates a bounded mid-size base band",
     REQUIRE(source != nullptr);
     const std::uint64_t before = source->readCount();
 
-    const pci::RasterStaticImage image = data->source->readStaticImage(
-        4096, metadata.defaultDisplay, std::stop_token{});
-    CHECK(image.decimatedBase);
-    CHECK(image.levelIndex == 0);
-    CHECK(image.width == pci::rasterStaticTextureLimitPixels);
-    CHECK(image.height == pci::rasterStaticTextureLimitPixels);
-    CHECK(image.rgba.size() ==
-          static_cast<std::size_t>(image.width) * image.height * 4);
-
-    // One read per selected band, not one per source block.
+    const pci::RasterTileData tile = data->source->readTile(
+        pci::RasterTileRequest{
+            .key = pci::RasterTileKey{0, 0, 0},
+            .renderGeneration = 1,
+            .decode = std::make_shared<const pci::RasterDecodeParameters>(
+                metadata.defaultDisplay),
+        },
+        std::stop_token{});
+    CHECK(tile.validWidth == pci::rasterTilePixels);
+    CHECK(tile.validHeight == pci::rasterTilePixels);
+    CHECK(tile.rgba.size() == pci::rasterStoredTileBytes);
+    // One window per selected band, sized to the tile rather than the source.
     CHECK(source->readCount() - before == 3);
 }
 
-TEST_CASE("raster static image refuses an unbounded base band",
+TEST_CASE("raster source above the coverage limit reports missing overviews",
           "[component][gdal][stress]")
 {
     const pci::RasterLayerDataPtr data = load(fixtures().sparseHuge);
@@ -431,50 +408,11 @@ TEST_CASE("raster static image refuses an unbounded base band",
     REQUIRE(source != nullptr);
     const std::uint64_t before = source->readCount();
 
-    // The message names the condition, and — more importantly — no read is
-    // issued. A source above the threshold must never scan its base image.
-    CHECK_THROWS_AS(
-        data->source->readStaticImage(
-            4096, data->metadata().defaultDisplay, std::stop_token{}),
-        pci::RasterReadError);
+    // Covering the view from this source's coarsest level would take
+    // thousands of native tiles, so it is flagged. Asking for the flag must
+    // itself read nothing: the warning is derived from metadata, never from a
+    // scan.
+    CHECK(data->metadata().insufficientOverviews);
+    CHECK(pci::rasterRequiresTiledRendering(data->metadata()));
     CHECK(source->readCount() == before);
-
-    try {
-        static_cast<void>(data->source->readStaticImage(
-            4096, data->metadata().defaultDisplay, std::stop_token{}));
-        FAIL("expected the unbounded static read to be refused");
-    } catch (const pci::RasterReadError &error) {
-        CHECK(std::string(error.what()).find("tiled rendering") !=
-              std::string::npos);
-    }
-}
-
-TEST_CASE("raster static image honours transparency and cancellation",
-          "[component][gdal]")
-{
-    const pci::RasterLayerDataPtr data = load(fixtures().rgba);
-    const pci::RasterStaticImage image = data->source->readStaticImage(
-        4096, data->metadata().defaultDisplay, std::stop_token{});
-    REQUIRE(image.width == 32);
-
-    const auto texel = [&image](const std::uint32_t x, const std::uint32_t y) {
-        const std::size_t base =
-            (static_cast<std::size_t>(y) * image.width + x) * 4;
-        return std::array<std::byte, 4>{image.rgba[base],
-                                        image.rgba[base + 1],
-                                        image.rgba[base + 2],
-                                        image.rgba[base + 3]};
-    };
-    // The fixture's left half is transparent, and premultiplication zeroes its
-    // color so filtering cannot drag it into a valid neighbour.
-    CHECK(texel(4, 4)[3] == std::byte{0});
-    CHECK(texel(4, 4)[0] == std::byte{0});
-    CHECK(texel(28, 4)[3] == std::byte{255});
-
-    std::stop_source stop;
-    stop.request_stop();
-    CHECK_THROWS_AS(
-        data->source->readStaticImage(
-            4096, data->metadata().defaultDisplay, stop.get_token()),
-        pci::RasterReadCancelled);
 }

@@ -334,83 +334,34 @@ TEST_CASE("raster source identifiers are monotonic", "[unit][raster]")
 }
 
 } // namespace
-TEST_CASE("raster static read prefers the finest level that fits",
+
+TEST_CASE("raster overview coverage decides the missing-overview warning",
           "[unit][raster]")
 {
-    pci::RasterLayerMetadata metadata;
-    metadata.width = 8000;
-    metadata.height = 6000;
-    metadata.levels = {
-        makeLevel(8000, 6000, 8000, 6000),
-        makeLevel(4000, 3000, 8000, 6000),
-        makeLevel(2000, 1500, 8000, 6000),
-    };
-
-    const auto plan = pci::planRasterStaticRead(metadata, 8192);
-    REQUIRE(plan.has_value());
-    // 8000 exceeds the 4096 hard cap even though the caller allows 8192, so
-    // the 4000-wide overview is the finest that fits.
-    CHECK(plan->levelIndex == 1);
-    CHECK(plan->width == 4000);
-    CHECK_FALSE(plan->decimatedBase);
-
-    // A smaller device cap pushes the choice one level coarser.
-    const auto limited = pci::planRasterStaticRead(metadata, 2048);
-    REQUIRE(limited.has_value());
-    CHECK(limited->levelIndex == 2);
-    CHECK(limited->width == 2000);
-    CHECK_FALSE(limited->decimatedBase);
-}
-
-TEST_CASE("raster static read decimates a bounded base band", "[unit][raster]")
-{
     // The most common thing a user drags in first: an un-overviewed mid-size
-    // GeoTIFF whose only level is its base.
-    pci::RasterLayerMetadata metadata;
-    metadata.width = 5000;
-    metadata.height = 5000;
-    metadata.levels = {makeLevel(5000, 5000, 5000, 5000)};
-    REQUIRE_FALSE(pci::rasterRequiresTiledRendering(metadata));
+    // GeoTIFF whose only level is its base. It renders through the tiled path
+    // at native resolution, so it earns no warning.
+    pci::RasterLayerMetadata midSize;
+    midSize.width = 5000;
+    midSize.height = 5000;
+    midSize.levels = {makeLevel(5000, 5000, 5000, 5000)};
+    CHECK_FALSE(pci::rasterRequiresTiledRendering(midSize));
 
-    const auto plan = pci::planRasterStaticRead(metadata, 16384);
-    REQUIRE(plan.has_value());
-    CHECK(plan->decimatedBase);
-    CHECK(plan->levelIndex == 0);
-    CHECK(plan->width == pci::rasterStaticTextureLimitPixels);
-    CHECK(plan->height == pci::rasterStaticTextureLimitPixels);
-}
+    // Far above the threshold, covering the view from the base band alone
+    // would take thousands of native-resolution tiles. That is a missing
+    // overview, and the layer says so rather than silently showing a fraction
+    // of the image.
+    pci::RasterLayerMetadata huge;
+    huge.width = 100000;
+    huge.height = 100000;
+    huge.levels = {makeLevel(100000, 100000, 100000, 100000)};
+    CHECK(pci::rasterRequiresTiledRendering(huge));
 
-TEST_CASE("raster static read refuses an unbounded base band", "[unit][raster]")
-{
-    // Above the threshold a decimating read is an unbounded scan, so the
-    // source reports that tiled rendering is required instead.
-    pci::RasterLayerMetadata metadata;
-    metadata.width = 100000;
-    metadata.height = 100000;
-    metadata.levels = {makeLevel(100000, 100000, 100000, 100000)};
+    // The warning clears the moment a level coarse enough to cover the raster
+    // exists, without any change to the threshold.
+    huge.levels.push_back(makeLevel(3125, 3125, 100000, 100000));
+    CHECK_FALSE(pci::rasterRequiresTiledRendering(huge));
 
-    CHECK(pci::rasterRequiresTiledRendering(metadata));
-    CHECK_FALSE(pci::planRasterStaticRead(metadata, 16384).has_value());
-
-    // The same source becomes displayable the moment it gains a level that
-    // fits, without any change to the threshold.
-    metadata.levels.push_back(makeLevel(3125, 3125, 100000, 100000));
-    REQUIRE(pci::planRasterStaticRead(metadata, 16384).has_value());
-    CHECK_FALSE(pci::rasterRequiresTiledRendering(metadata));
-}
-
-TEST_CASE("raster static read preserves aspect ratio", "[unit][raster]")
-{
-    pci::RasterLayerMetadata metadata;
-    metadata.width = 6000;
-    metadata.height = 3000;
-    metadata.levels = {makeLevel(6000, 3000, 6000, 3000)};
-
-    const auto plan = pci::planRasterStaticRead(metadata, 16384);
-    REQUIRE(plan.has_value());
-    CHECK(plan->width == pci::rasterStaticTextureLimitPixels);
-    CHECK(plan->height == pci::rasterStaticTextureLimitPixels / 2);
-
-    CHECK_FALSE(pci::planRasterStaticRead(metadata, 0).has_value());
-    CHECK_FALSE(pci::planRasterStaticRead({}, 4096).has_value());
+    // A source with no level table at all can display nothing.
+    CHECK(pci::rasterRequiresTiledRendering({}));
 }

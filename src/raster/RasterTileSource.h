@@ -60,18 +60,6 @@ struct RasterTileData {
     }
 };
 
-// One bounded, already-decimated image for phase 1's single static texture.
-// Phase 2's tiled path supersedes it; runtime tile reads are always 1:1.
-struct RasterStaticImage {
-    std::uint32_t width = 0;
-    std::uint32_t height = 0;
-    std::uint32_t levelIndex = 0;
-    // True when the image came from a decimating base-band read rather than
-    // from an explicitly backed overview.
-    bool decimatedBase = false;
-    std::vector<std::byte> rgba; // premultiplied, width * height * 4
-};
-
 // The only contract through which non-GDAL code reads pixels. It names no Qt,
 // GDAL, or QRhi type.
 class RasterTileSource {
@@ -91,19 +79,6 @@ public:
     // caller can mistake a zeroed buffer for transparent imagery.
     [[nodiscard]] virtual RasterTileData readTile(const RasterTileRequest &,
                                                   std::stop_token) const = 0;
-
-    // Reads the finest backed level that fits maximumTexturePixels, or one
-    // decimating base-band read when the base is below
-    // rasterBoundedBaseReadPixels. Throws RasterReadError when neither
-    // applies, so a source too large for either path reports "tiled rendering
-    // required" instead of scanning its base image.
-    [[nodiscard]] virtual RasterStaticImage
-    readStaticImage(std::uint32_t /*maximumTexturePixels*/,
-                    const RasterDecodeParameters &,
-                    std::stop_token) const
-    {
-        throw RasterReadError("This source cannot produce a static image");
-    }
 };
 
 using RasterTileSourcePtr = std::shared_ptr<const RasterTileSource>;
