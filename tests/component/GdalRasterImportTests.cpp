@@ -2,6 +2,7 @@
 #include "import/gdal/GdalRasterDataset.h"
 #include "import/gdal/GdalRasterLoader.h"
 #include "import/gdal/GdalRasterSource.h"
+#include "import/gdal/GdalRuntime.h"
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -447,4 +448,153 @@ TEST_CASE("raster source drivers come from the path, not its contents",
     CHECK(drivers("scene.tif").index.empty());
     // A plain GeoPackage raster is not a tile index.
     CHECK(drivers("scene.gpkg").container.empty());
+}
+
+TEST_CASE("VRT mosaic exposes the union extent and its common overviews",
+          "[component][gdal][catalog]")
+{
+    const pci::GdalRasterLoader loader;
+    const pci::RasterLayerDataPtr data = load(fixtures().vrtMosaic, loader);
+    const pci::RasterLayerMetadata &metadata = data->metadata();
+
+    CHECK(metadata.sourceDriver == "VRT");
+    // Four small members 400 km apart: the mosaic is enormous logically while
+    // nothing enormous was written to disk.
+    CHECK(metadata.width == 200512);
+    CHECK(metadata.height == 200512);
+    // The members' own overviews surface as mosaic levels, so the level table
+    // is three deep rather than base-only.
+    REQUIRE(metadata.levels.size() == 3);
+    CHECK(metadata.levels[0].width == 200512);
+    CHECK(metadata.levels[1].width == 100256);
+    CHECK(metadata.levels[2].width == 50128);
+    CHECK(metadata.bands.size() == 3);
+}
+
+TEST_CASE("GTI catalog opens without enumerating its members",
+          "[component][gdal][catalog]")
+{
+    const pci::GdalRasterLoader loader;
+    const pci::RasterLayerDataPtr data = load(fixtures().catalog, loader);
+
+    // Inspection cost must come from the sample budget, not from catalog
+    // cardinality or pixel count. 200512 squared is about 4e10 pixels; a scan
+    // proportional to either would not return in a test.
+    CHECK(loader.sampleReadCount() <= 64);
+
+    const pci::RasterLayerMetadata &metadata = data->metadata();
+    CHECK(metadata.sourceDriver == "GTI");
+    CHECK(metadata.width == 200512);
+    CHECK(metadata.height == 200512);
+    CHECK(metadata.bands.size() == 3);
+}
+
+TEST_CASE("large sources report insufficient overviews rather than pretending",
+          "[component][gdal][catalog]")
+{
+    const pci::GdalRasterLoader loader;
+
+    // The catalog has no overviews at all: covering it needs level-0 tiles.
+    const pci::RasterLayerDataPtr catalog = load(fixtures().catalog, loader);
+    REQUIRE(catalog->metadata().levels.size() == 1);
+    CHECK(catalog->metadata().insufficientOverviews);
+
+    // The mosaic does have overviews, and is still flagged. The warning is
+    // about whether any level can cover the view cheaply, not about whether
+    // overviews exist at all: 50128 pixels still needs about 38000 tiles.
+    const pci::RasterLayerDataPtr mosaic = load(fixtures().vrtMosaic, loader);
+    REQUIRE(mosaic->metadata().levels.size() == 3);
+    CHECK(mosaic->metadata().insufficientOverviews);
+}
+
+TEST_CASE("catalog tile reads reach native member pixels at bounded cost",
+          "[component][gdal][catalog]")
+{
+    const pci::GdalRasterLoader loader;
+    const pci::RasterLayerDataPtr data = load(fixtures().catalog, loader);
+    const pci::RasterLayerMetadata &metadata = data->metadata();
+    const auto *source =
+        dynamic_cast<const pci::GdalRasterSource *>(data->source.get());
+    REQUIRE(source != nullptr);
+
+    // The first member sits at the catalog's north-west corner, so tile (0,0)
+    // of the native level lands inside real pixels.
+    const std::uint64_t before = source->readCount();
+    const pci::RasterTileData tile = data->source->readTile(
+        pci::RasterTileRequest{
+            .key = pci::RasterTileKey{0, 0, 0},
+            .renderGeneration = 1,
+            .decode = std::make_shared<const pci::RasterDecodeParameters>(
+                metadata.defaultDisplay),
+        },
+        std::stop_token{});
+
+    // One window per selected band, whatever the catalog's size: the read is
+    // driven by the tile, not by the index.
+    CHECK(source->readCount() - before == 3);
+    CHECK(tile.validWidth == pci::rasterTilePixels);
+    CHECK(tile.rgba.size() == pci::rasterStoredTileBytes);
+
+    // The member carries a two-pixel checkerboard that no overview could
+    // reproduce, so finding both phases proves native pixels were read.
+    const auto texel = [&tile](const std::uint32_t x, const std::uint32_t y) {
+        const std::size_t index =
+            ((static_cast<std::size_t>(y) + 1) * pci::rasterStoredTilePixels +
+             static_cast<std::size_t>(x) + 1) *
+            4;
+        return std::to_integer<int>(tile.rgba[index]);
+    };
+    CHECK(texel(0, 0) != texel(2, 0));
+    CHECK(texel(0, 0) == texel(1, 0));
+}
+
+TEST_CASE("a missing driver is named, and the container comes first",
+          "[unit][gdal][catalog]")
+{
+    // Every build the tests run on has all of these drivers, so the absent
+    // case is expressed through the capability struct rather than by taking
+    // drivers out of GDAL's registry. Doing the latter measures GDAL's
+    // deferred-plugin behaviour instead of this decision.
+    pci::GdalCatalogCapabilities complete;
+    complete.tileIndex = true;
+    complete.virtualRaster = true;
+    complete.geoPackage = true;
+    complete.flatGeobuf = true;
+    complete.shapefile = true;
+
+    const pci::RasterSourceDrivers catalog{.container = "GTI", .index = "GPKG"};
+    CHECK(pci::missingRasterDriver(catalog, complete).empty());
+
+    // Without GTI the catalog cannot be read at all, so GTI is what the user
+    // is told about even though the index driver is also relevant.
+    pci::GdalCatalogCapabilities withoutTileIndex = complete;
+    withoutTileIndex.tileIndex = false;
+    CHECK(pci::missingRasterDriver(catalog, withoutTileIndex) == "GTI");
+
+    // With GTI present, a missing index format is the actionable fact:
+    // reinstalling GTI would not help.
+    pci::GdalCatalogCapabilities withoutGeoPackage = complete;
+    withoutGeoPackage.geoPackage = false;
+    CHECK(pci::missingRasterDriver(catalog, withoutGeoPackage) == "GPKG");
+    // A catalog indexed differently is unaffected by the same gap.
+    CHECK(pci::missingRasterDriver({.container = "GTI", .index = "FlatGeobuf"},
+                                   withoutGeoPackage)
+              .empty());
+
+    // An ordinary raster implies no driver, so it never reports one missing.
+    CHECK(pci::missingRasterDriver({}, pci::GdalCatalogCapabilities{}).empty());
+}
+
+TEST_CASE("this build can open the catalog it was given",
+          "[component][gdal][catalog]")
+{
+    // The other direction of the same rule: with every required driver
+    // present, the open must actually succeed rather than be refused by an
+    // over-eager capability check.
+    CHECK(pci::missingRasterDriver(
+              pci::rasterSourceDriversFor(fixtures().catalog),
+              pci::gdalCatalogCapabilities())
+              .empty());
+    CHECK(pci::openRasterDataset(fixtures().catalog) != nullptr);
+    CHECK(pci::openRasterDataset(fixtures().vrtMosaic) != nullptr);
 }

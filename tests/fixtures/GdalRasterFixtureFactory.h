@@ -1,6 +1,7 @@
 #pragma once
 
 #include <filesystem>
+#include <vector>
 
 namespace pci::test {
 
@@ -28,6 +29,14 @@ struct GdalRasterFixturePaths {
     std::filesystem::path sparseHuge;
     // Bands drawn from two sources with different overview availability.
     std::filesystem::path mismatchedOverviews;
+    // A VRT mosaic over four separate members.
+    std::filesystem::path vrtMosaic;
+    // A GTI catalog over the same four members, whose logical extent is fixed
+    // and enormous while the members stay tiny on disk. Sized absolutely, not
+    // relative to available memory, so CI and a workstation agree.
+    std::filesystem::path catalog;
+    // The catalog's members, for tests that need to read one directly.
+    std::vector<std::filesystem::path> catalogMembers;
 };
 
 [[nodiscard]] GdalRasterFixturePaths

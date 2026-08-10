@@ -2,6 +2,7 @@
 
 #include <cpl_string.h>
 #include <gdal_priv.h>
+#include <gdal_utils.h>
 #include <ogr_spatialref.h>
 
 #include <array>
@@ -9,6 +10,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 #include <vector>
 
 namespace pci::test {
@@ -340,6 +342,149 @@ std::filesystem::path writeMidSizeFixture(const std::filesystem::path &path)
     return path;
 }
 
+// One member of a catalog: a small tile placed at a known origin. Members stay
+// tiny on disk while their placement makes the catalog's logical extent large,
+// which is what lets the acceptance test fix an enormous size without writing
+// an enormous file.
+[[nodiscard]] std::filesystem::path
+writeCatalogMember(const std::filesystem::path &path,
+                   const double originX,
+                   const double originY,
+                   const double pixelSize,
+                   const int extent,
+                   const std::uint8_t tint)
+{
+    const std::array<const char *, 3> options{
+        "TILED=YES", "BLOCKXSIZE=256", nullptr};
+    DatasetPtr dataset =
+        create(path, extent, extent, 3, GDT_Byte, options.data());
+    applyProjectedReference(*dataset);
+    applyTransform(*dataset,
+                   {originX, pixelSize, 0.0, originY, 0.0, -pixelSize});
+
+    // A checkerboard at the finest scale: an overview cannot reproduce it, so
+    // reaching it on screen proves the native level was read.
+    std::vector<std::uint8_t> row(static_cast<std::size_t>(extent));
+    for (int band = 1; band <= 3; ++band) {
+        dataset->GetRasterBand(band)->SetColorInterpretation(
+            band == 1   ? GCI_RedBand
+            : band == 2 ? GCI_GreenBand
+                        : GCI_BlueBand);
+        for (int y = 0; y < extent; ++y) {
+            for (int x = 0; x < extent; ++x) {
+                const bool even = ((x / 2) + (y / 2)) % 2 == 0;
+                row[static_cast<std::size_t>(x)] =
+                    even ? tint : static_cast<std::uint8_t>(255U - tint);
+            }
+            if (dataset->GetRasterBand(band)->RasterIO(GF_Write,
+                                                       0,
+                                                       y,
+                                                       extent,
+                                                       1,
+                                                       row.data(),
+                                                       extent,
+                                                       1,
+                                                       GDT_Byte,
+                                                       0,
+                                                       0) != CE_None) {
+                throw std::runtime_error("could not write a catalog member");
+            }
+        }
+    }
+
+    // Members carry their own overviews so the catalog can offer coarse
+    // coverage instead of only native-resolution reads.
+    const std::array<int, 3> levels{2, 4, 8};
+    if (dataset->BuildOverviews("AVERAGE",
+                                static_cast<int>(levels.size()),
+                                const_cast<int *>(levels.data()),
+                                0,
+                                nullptr,
+                                nullptr,
+                                nullptr) != CE_None) {
+        throw std::runtime_error("could not build catalog member overviews");
+    }
+    return path;
+}
+
+// A VRT mosaic over separate members, built by GDAL itself rather than by
+// hand-written XML, so the fixture exercises the same path a user's mosaic
+// takes.
+std::filesystem::path
+writeVrtMosaicFixture(const std::filesystem::path &path,
+                      const std::vector<std::filesystem::path> &members)
+{
+    std::vector<GDALDatasetH> sources;
+    std::vector<DatasetPtr> owned;
+    for (const std::filesystem::path &member : members) {
+        DatasetPtr dataset{
+            GDALDataset::FromHandle(GDALOpenEx(member.string().c_str(),
+                                               GDAL_OF_RASTER,
+                                               nullptr,
+                                               nullptr,
+                                               nullptr))};
+        if (!dataset) {
+            throw std::runtime_error("could not open a VRT member");
+        }
+        sources.push_back(GDALDataset::ToHandle(dataset.get()));
+        owned.push_back(std::move(dataset));
+    }
+    DatasetPtr result{
+        GDALDataset::FromHandle(GDALBuildVRT(path.string().c_str(),
+                                             static_cast<int>(sources.size()),
+                                             sources.data(),
+                                             nullptr,
+                                             nullptr,
+                                             nullptr))};
+    if (!result) {
+        throw std::runtime_error("could not build the VRT mosaic fixture");
+    }
+    return path;
+}
+
+// A GTI catalog over the same members. Built through GDAL's own tile-index
+// utility, so the index layout matches what gdaltindex produces rather than a
+// hand-rolled approximation that might diverge from the driver's expectations.
+std::filesystem::path
+writeCatalogFixture(const std::filesystem::path &path,
+                    const std::vector<std::filesystem::path> &members)
+{
+    // Built through GDAL's own tile-index utility so the index layout matches
+    // what gdaltindex produces, rather than a hand-rolled approximation that
+    // could diverge from what the driver expects.
+    std::vector<std::string> names;
+    std::vector<const char *> sources;
+    names.reserve(members.size());
+    for (const std::filesystem::path &member : members) {
+        names.push_back(member.string());
+    }
+    for (const std::string &name : names) {
+        sources.push_back(name.c_str());
+    }
+    sources.push_back(nullptr);
+
+    // A pre-existing index would be appended to, so a rebuilt corpus would
+    // accumulate duplicate members and stop being deterministic.
+    std::error_code removeError;
+    std::filesystem::remove(path, removeError);
+
+    GDALTileIndexOptions *options = GDALTileIndexOptionsNew(nullptr, nullptr);
+    if (options == nullptr) {
+        throw std::runtime_error("could not build tile index options");
+    }
+    DatasetPtr result{
+        GDALDataset::FromHandle(GDALTileIndex(path.string().c_str(),
+                                              static_cast<int>(names.size()),
+                                              sources.data(),
+                                              options,
+                                              nullptr))};
+    GDALTileIndexOptionsFree(options);
+    if (!result) {
+        throw std::runtime_error("could not build the GTI catalog fixture");
+    }
+    return path;
+}
+
 std::filesystem::path writeSparseHugeFixture(const std::filesystem::path &path)
 {
     // Enormous logically, empty physically. Inspecting it must cost the sample
@@ -443,6 +588,28 @@ writeGdalRasterFixtures(const std::filesystem::path &directory)
         writeAntimeridianFixture(directory / "antimeridian.tif");
     paths.midSizeNoOverviews = writeMidSizeFixture(directory / "mid-size.tif");
     paths.sparseHuge = writeSparseHugeFixture(directory / "sparse-huge.tif");
+
+    // Members are 512x512 at 2 m, placed on a grid 400 km apart, so the
+    // catalog's logical extent is about 1.2 million metres across: 600000
+    // pixels on a side, far beyond anything that could be read whole.
+    constexpr double memberPixelSize = 2.0;
+    constexpr int memberExtent = 512;
+    constexpr double memberSpacing = 400000.0;
+    for (int index = 0; index < 4; ++index) {
+        const double originX = 200000.0 + (index % 2) * memberSpacing;
+        const double originY = 7000000.0 - (index / 2) * memberSpacing;
+        paths.catalogMembers.push_back(writeCatalogMember(
+            directory / ("catalog-member-" + std::to_string(index) + ".tif"),
+            originX,
+            originY,
+            memberPixelSize,
+            memberExtent,
+            static_cast<std::uint8_t>(40 + index * 30)));
+    }
+    paths.vrtMosaic =
+        writeVrtMosaicFixture(directory / "mosaic.vrt", paths.catalogMembers);
+    paths.catalog = writeCatalogFixture(directory / "catalog.gti.gpkg",
+                                        paths.catalogMembers);
 
     paths.mismatchedOverviews = writeMismatchedOverviewFixture(
         directory / "mismatched-overviews.vrt",

@@ -1,9 +1,12 @@
 #pragma once
 
+#include "import/gdal/GdalRuntime.h"
+
 #include <gdal_priv.h>
 
 #include <filesystem>
 #include <memory>
+#include <string_view>
 
 namespace pci {
 
@@ -31,6 +34,14 @@ struct RasterSourceDrivers {
 
 [[nodiscard]] RasterSourceDrivers
 rasterSourceDriversFor(const std::filesystem::path &path);
+
+// The driver this path needs and this build does not have, or empty when
+// nothing required is missing. Kept a pure function over the capability probe
+// so the missing-driver behaviour can be tested against a build that has every
+// driver, which is the only kind of build the tests ever run on.
+[[nodiscard]] std::string_view
+missingRasterDriver(RasterSourceDrivers required,
+                    const GdalCatalogCapabilities &capabilities) noexcept;
 
 // Opens a dataset for read-only raster access, reporting the driver's own
 // error text rather than a generic open failure. When the path implies a
