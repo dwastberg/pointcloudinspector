@@ -49,6 +49,16 @@ jobs:
           cmake --build --preset package --parallel 3
           ctest --preset package
 
+          # The packaged GDAL is not the developer machine's GDAL. A non-zero
+          # exit here fails the job rather than shipping a build that cannot
+          # open catalogs.
+          # WIN32_EXECUTABLE detaches from the console, so the exit code is
+          # the gate here rather than the printed report.
+          & "build\package\src\pcinspector.exe" --gdal-capabilities
+          if ($LASTEXITCODE -ne 0) {
+            throw "The packaged build cannot import raster catalogs."
+          }
+
           $wixDirectory = Join-Path $PWD "build\wix"
           dotnet tool install --tool-path $wixDirectory wix --version 4.0.6
           $wix = Join-Path $wixDirectory "wix.exe"

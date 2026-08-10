@@ -39,6 +39,13 @@ jobs:
           run-tests: true
           upload-artifact: false
 
+      - name: Verify packaged GDAL capabilities
+        run: |
+          # The Flatpak runtime ships its own GDAL. Prove it can open catalogs
+          # here rather than leaving it for a user to discover.
+          flatpak run io.github.dwastberg.PointCloudInspector \
+            --gdal-capabilities
+
       - name: Create package checksum
         shell: bash
         run: |

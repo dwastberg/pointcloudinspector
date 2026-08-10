@@ -41,6 +41,11 @@ int main(int argc, char *argv[])
     }
     const pci::ApplicationConfig config =
         std::get<pci::ApplicationConfig>(invocation);
+    if (config.reportGdalCapabilities) {
+        // Answered before any window or renderer exists, so a packaged build
+        // can be checked on a headless machine.
+        return pci::reportGdalCapabilities();
+    }
 
     pci::PointColorMapCatalog colorMapCatalog;
     const pci::EmbeddedColorMapLoadResult colorMapLoad =

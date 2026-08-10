@@ -409,6 +409,19 @@ pci_add_catch_test_target(pcinspector_renderer_internal_ui_tests
         PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+# Runs against the built application rather than a test target, so it measures
+# the driver set that actually shipped. Deliberately outside the GPU-test guard
+# and free of any display requirement: the packaging lanes, which build with
+# diagnostics and GPU tests off, are the ones whose GDAL differs from a
+# developer machine's.
+if(TARGET pcinspector)
+    add_test(NAME gdal_capability_smoke
+            COMMAND $<TARGET_FILE:pcinspector> --gdal-capabilities)
+    set_tests_properties(gdal_capability_smoke PROPERTIES
+            LABELS "component;gdal;packaging"
+            TIMEOUT 60)
+endif()
+
 if(PCINSPECTOR_ENABLE_GPU_TESTS)
     pci_add_catch_test_target(pcinspector_gpu_tests
             INTEGRATION

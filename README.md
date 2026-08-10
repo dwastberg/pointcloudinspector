@@ -29,7 +29,20 @@ It is built with C++23, Qt 6, PDAL, and GDAL.
 - A C++23 compiler: GCC 12+, Clang 16+, AppleClang 15+, or MSVC 19.33+
 - Qt 6.7 or newer, including its private GUI headers and ShaderTools
 - PDAL 2.10 or newer
-- GDAL 3.9 or newer, built with the GTI raster tile-index driver
+- GDAL 3.9 or newer, built with the GTI raster tile-index driver and at least
+  one index format (GeoPackage, FlatGeobuf, or ESRI Shapefile)
+
+A version floor is not a driver guarantee, so check what a given build actually
+has rather than inferring it from the version:
+
+```sh
+pcinspector --gdal-capabilities
+```
+
+It prints the GDAL version and each raster driver's availability, and exits
+non-zero when catalog import is unavailable. The packaging jobs run it against
+the built application for exactly that reason: a package ships its own GDAL,
+not the developer machine's.
 
 Clone the repository and initialize its submodules:
 
@@ -81,7 +94,12 @@ wildcard patterns (`*`, `?`, and `[set]`) are supported.
 | `--max-points <count>` | Maximum number of source points exposed by a loaded point cloud. | `10000000` |
 | `--cpu-cache-mb <MiB\|auto>` | CPU budget shared by retained previews and decoded hierarchy pages. | `auto` |
 | `--gpu-cache-mb <MiB>` | GPU point-buffer residency budget. | `512` |
+| `--raster-cpu-cache-mb <MiB>` | Decoded raster tile budget, separate from the point caches. | `256` |
+| `--raster-gpu-cache-mb <MiB>` | Raster tile texture budget on the graphics device. | `256` |
+| `--gdal-cache-mb <MiB>` | GDAL block cache, the third allocator holding raster pixels. | `128` |
+| `--raster-workers <count>` | Raster tile read threads, 1-8. Applies at startup. | `2` |
 | `--graphics-api <api>` | Select `auto`, `metal`, `vulkan`, `d3d11`, `d3d12`, or `opengl`. | `auto` |
+| `--gdal-capabilities` | Print this build's GDAL version and raster driver availability, then exit. | |
 | `--smoke-test` | Exit after three rendered frames. | off |
 
 Example:

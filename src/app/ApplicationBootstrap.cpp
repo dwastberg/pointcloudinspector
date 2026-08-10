@@ -17,6 +17,7 @@
 #include <QDebug>
 #include <QDir>
 #include <QStandardPaths>
+#include <QTextStream>
 #include <QTimer>
 
 #include <cstdint>
@@ -191,6 +192,33 @@ ImportServices createImportServices()
 }
 
 } // namespace
+
+int reportGdalCapabilities()
+{
+    configurePackagedGeospatialData();
+    const GdalCatalogCapabilities capabilities = gdalCatalogCapabilities();
+    const auto yesNo = [](const bool value) {
+        return value ? QStringLiteral("yes") : QStringLiteral("no");
+    };
+    QTextStream stream(stdout);
+    stream
+        << QStringLiteral("gdal_version: %1\n")
+               .arg(QString::fromStdString(capabilities.version.release))
+        << QStringLiteral("driver_gti: %1\n").arg(yesNo(capabilities.tileIndex))
+        << QStringLiteral("driver_vrt: %1\n")
+               .arg(yesNo(capabilities.virtualRaster))
+        << QStringLiteral("driver_gpkg: %1\n")
+               .arg(yesNo(capabilities.geoPackage))
+        << QStringLiteral("driver_flatgeobuf: %1\n")
+               .arg(yesNo(capabilities.flatGeobuf))
+        << QStringLiteral("driver_shapefile: %1\n")
+               .arg(yesNo(capabilities.shapefile))
+        << QStringLiteral("catalog_import: %1\n")
+               .arg(yesNo(capabilities.catalogImport()));
+    // A non-zero exit is what lets a packaging job fail on a stripped GDAL
+    // rather than shipping a build that silently cannot open catalogs.
+    return capabilities.catalogImport() ? 0 : 1;
+}
 
 std::unique_ptr<MainWindow>
 bootstrapApplication(const ApplicationConfig &config,

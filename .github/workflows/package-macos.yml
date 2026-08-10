@@ -63,6 +63,11 @@ jobs:
           # and its bundled dependencies can load outside the build environment.
           "$app/Contents/MacOS/Point Cloud Inspector" --help >/dev/null
 
+          # The packaged GDAL is not the developer machine's GDAL. This fails
+          # the job when the bundle cannot open catalogs, rather than shipping
+          # a build that only reveals it when a user opens one.
+          "$app/Contents/MacOS/Point Cloud Inspector" --gdal-capabilities
+
           mkdir -p "$dmg_root"
           ditto "$app" "$dmg_root/Point Cloud Inspector.app"
           cp README.md LICENSE "$dmg_root/"

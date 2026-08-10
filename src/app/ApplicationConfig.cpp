@@ -93,6 +93,13 @@ ApplicationInvocation parseApplicationInvocation(const QStringList &arguments)
             "Graphics API: auto, metal, vulkan, d3d11, d3d12, or opengl."),
         QStringLiteral("api"),
         QStringLiteral("auto"));
+    // Deliberately outside the diagnostic-UI guard: packaged builds are the
+    // ones whose driver set differs from a developer machine's, and they are
+    // built with diagnostics off.
+    const QCommandLineOption gdalCapabilitiesOption(
+        QStringLiteral("gdal-capabilities"),
+        QStringLiteral("Print the GDAL version and raster driver availability "
+                       "of this build, then exit."));
 #ifdef PCINSPECTOR_ENABLE_DIAGNOSTIC_UI
     const QCommandLineOption gpuValidationOption(
         QStringLiteral("gpu-validation"),
@@ -116,6 +123,7 @@ ApplicationInvocation parseApplicationInvocation(const QStringList &arguments)
     parser.addOption(gdalCacheOption);
     parser.addOption(rasterWorkersOption);
     parser.addOption(graphicsApiOption);
+    parser.addOption(gdalCapabilitiesOption);
 #ifdef PCINSPECTOR_ENABLE_DIAGNOSTIC_UI
     parser.addOption(gpuValidationOption);
     parser.addOption(qualificationReportOption);
@@ -231,6 +239,7 @@ ApplicationInvocation parseApplicationInvocation(const QStringList &arguments)
     }
     config.graphicsApi = *graphicsApi;
     config.smokeTest = parser.isSet(smokeOption);
+    config.reportGdalCapabilities = parser.isSet(gdalCapabilitiesOption);
 
     const QStringList positional = parser.positionalArguments();
     std::vector<std::filesystem::path> paths;

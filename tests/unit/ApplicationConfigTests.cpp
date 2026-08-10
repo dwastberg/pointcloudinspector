@@ -155,6 +155,19 @@ TEST_CASE("application invocation parser returns help and version text",
           QStringLiteral("Point Cloud Inspector 0.1.0-test"));
 }
 
+TEST_CASE("application invocation exposes the GDAL capability probe",
+          "[unit][app-config][cli][gdal]")
+{
+    CHECK_FALSE(
+        configFor({QStringLiteral("pcinspector")}).reportGdalCapabilities);
+    // Packaged builds are compiled with the diagnostic UI off, so this option
+    // must exist without it: they are exactly the builds whose driver set
+    // differs from a developer machine's.
+    CHECK(configFor({QStringLiteral("pcinspector"),
+                     QStringLiteral("--gdal-capabilities")})
+              .reportGdalCapabilities);
+}
+
 TEST_CASE("memory and cache resolution are deterministic",
           "[unit][app-config][memory][path]")
 {

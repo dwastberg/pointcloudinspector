@@ -35,6 +35,10 @@ struct ApplicationConfig {
     RasterPerformanceSettings raster;
     GraphicsApi graphicsApi = GraphicsApi::Auto;
     bool smokeTest = false;
+    // Prints what the running GDAL build can open and exits. Packaged builds
+    // ship a different driver set from a developer machine, and this is how a
+    // package proves its own set without a display or a GPU.
+    bool reportGdalCapabilities = false;
     bool gpuValidation = false;
     std::optional<QualificationOptions> qualification;
 
