@@ -87,6 +87,9 @@ TEST_CASE("scene document keeps rasters in their own revision domain",
     CHECK(document.setLayerVisible(id, true));
     REQUIRE(document.visibleSceneBounds());
     CHECK(document.visibleSceneBounds()->maximum[0] == 1064.0);
+    CHECK(document.pointRevision() == 0);
+    CHECK(document.vectorRevision() == 0);
+    CHECK(document.rasterRevision() == 2);
 }
 
 TEST_CASE("raster layer bounds inflate only the flat Z dimension",
@@ -259,6 +262,12 @@ TEST_CASE("raster layers participate in isolation and removal",
     CHECK(document.rasterLayerCount() == 1);
     CHECK_FALSE(document.rasterLayer(first).has_value());
     CHECK(document.layerKind(first) == pci::SceneLayerKind::None);
+    // Visibility and removal belong to the payload's own revision domain.
+    // Treating every non-point layer as a vector leaves raster-only consumers
+    // looking at a stale revision even though the document revision changed.
+    CHECK(document.pointRevision() == 0);
+    CHECK(document.vectorRevision() == 0);
+    CHECK(document.rasterRevision() == 4);
 }
 
 TEST_CASE("reference CRS prefers point clouds over rasters",

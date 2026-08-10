@@ -41,7 +41,8 @@ inline constexpr double maximumRasterZOffsetMagnitude = 1.0e6;
 
 // A single continuous scalar band is colorized rather than presented as if it
 // were photographic grayscale.
-inline constexpr std::string_view defaultRasterScalarColorRampKey = "viridis";
+inline constexpr std::string_view defaultRasterScalarColorRampKey =
+    "cpt:viridis.cpt";
 
 using RasterSourceId = StrongId<struct RasterSourceIdTag>;
 
@@ -120,6 +121,9 @@ struct RasterLayerMetadata {
     std::uint32_t width = 0;
     std::uint32_t height = 0;
     std::array<double, 6> geoTransform{};
+    // Length of the affine column and row basis vectors. Unlike abs(gt[1])
+    // and abs(gt[5]), these remain correct for rotation and skew.
+    std::array<double, 2> nativePixelSize{};
     Bounds3d bounds;
     std::string spatialReferenceWkt;
     std::vector<RasterBandInfo> bands;
@@ -131,6 +135,10 @@ struct RasterLayerMetadata {
     bool extentDisjointXY = false;
     bool insufficientOverviews = false;
     bool crossesAntimeridian = false;
+    // Three/four otherwise-unlabelled equal-type bands were interpreted as
+    // RGB(A) by position. The layer remains usable, but the assignment is a
+    // user-visible warning rather than a silent claim about source semantics.
+    bool positionalBandFallback = false;
 };
 
 struct RasterLayerStyle {

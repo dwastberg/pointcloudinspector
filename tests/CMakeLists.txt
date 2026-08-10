@@ -130,7 +130,12 @@ pci_add_catch_test_target(pcinspector_import_gdal_tests
         "${CMAKE_CURRENT_SOURCE_DIR}"
         LIBRARIES
         pcinspector::import_gdal
-        GDAL::GDAL)
+        GDAL::GDAL
+        PROPERTIES
+        # Catch discovery runs each case in a separate process. Every process
+        # rebuilds the shared on-disk corpus, so parallel cases would otherwise
+        # delete and rewrite the same TIFF/VRT/GPKG files concurrently.
+        RESOURCE_LOCK pcinspector_import_gdal_fixtures)
 
 # The large-source acceptance lane. It links both the GDAL adapter and the
 # renderer's streaming code because the bound being asserted spans them: reads
@@ -148,6 +153,7 @@ pci_add_catch_test_target(pcinspector_raster_stress_tests
         pcinspector::renderer
         GDAL::GDAL
         PROPERTIES
+        RESOURCE_LOCK pcinspector_raster_stress_fixtures
         TIMEOUT 120)
 
 pci_add_catch_test_target(pcinspector_import_ogr_tests

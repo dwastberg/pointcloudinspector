@@ -64,12 +64,17 @@ struct Fixture {
     pci::RasterLayer layer;
 };
 
-[[nodiscard]] Fixture makeFixture()
+[[nodiscard]] Fixture makeFixture(
+    const pci::RasterSampleKind sampleKind =
+        pci::RasterSampleKind::ContinuousColor)
 {
     pci::RasterLayerMetadata metadata;
     metadata.width = 1024;
     metadata.height = 1024;
     metadata.geoTransform = {0.0, 1.0, 0.0, 0.0, 0.0, -1.0};
+    metadata.defaultDisplay.sampleKind = sampleKind;
+    metadata.defaultDisplay.displayRange =
+        pci::RasterDisplayRange{.minimum = 0.0, .maximum = 100.0};
     pci::RasterLevel level;
     level.width = 1024;
     level.height = 1024;
@@ -107,6 +112,33 @@ struct Fixture {
 // opt-in rather than incidental.
 constexpr std::uint64_t roomyBudget = 64ULL * 1024 * 1024;
 
+TEST_CASE("raster decode parameters apply the edited scalar range and ramp",
+          "[qt][raster][color]")
+{
+    Fixture fixture = makeFixture(pci::RasterSampleKind::ContinuousScalar);
+    fixture.layer.style.displayRange =
+        pci::RasterDisplayRange{.minimum = 20.0, .maximum = 40.0};
+    fixture.layer.style.colorRampKey =
+        std::string(pci::defaultRasterScalarColorRampKey);
+
+    pci::PointColorMapCatalog catalog;
+    const auto registration = catalog.registerContinuous(
+        std::string(pci::defaultRasterScalarColorRampKey),
+        "Test viridis",
+        {{.position = 0.0F, .color = {1.0F, 0.0F, 0.0F, 1.0F}},
+         {.position = 1.0F, .color = {0.0F, 1.0F, 0.0F, 1.0F}}});
+    REQUIRE(registration);
+    const pci::PointColorMapCatalogSnapshotPtr maps = catalog.freeze();
+
+    const auto decode = pci::resolveRasterDecodeParameters(fixture.layer, *maps);
+    REQUIRE(decode != nullptr);
+    REQUIRE(decode->displayRange.has_value());
+    CHECK(decode->displayRange->minimum == 20.0);
+    CHECK(decode->displayRange->maximum == 40.0);
+    REQUIRE(decode->colorRamp != nullptr);
+    CHECK(decode->colorRamp->size() == 2);
+}
+
 TEST_CASE("raster streamer admits completed reads once", "[qt][raster][stream]")
 {
     Fixture fixture = makeFixture();
@@ -127,6 +159,33 @@ TEST_CASE("raster streamer admits completed reads once", "[qt][raster][stream]")
     streamer.waitForIdle();
     CHECK(streamer.drainCompletions({}).empty());
     CHECK(fixture.source->reads.load() == 2);
+}
+
+TEST_CASE("raster CPU accounting includes active reads and completions",
+          "[qt][raster][stream][memory]")
+{
+    Fixture fixture = makeFixture();
+    const std::uint64_t budget = pci::rasterStoredTileBytes * 3;
+    pci::RasterTileStreamer streamer(budget, 2);
+    fixture.source->blocked = true;
+
+    streamer.reconcile(
+        planFor({{0, 0, 0}, {0, 1, 0}, {0, 2, 0}, {0, 3, 0}}),
+        fixture.layer);
+    while (fixture.source->reads.load() == 0) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+
+    // The cache is still empty, so a non-zero value here can only be the
+    // reservation acquired before the source allocated its destination.
+    CHECK(streamer.metrics().cpuBytes >= pci::rasterStoredTileBytes);
+    CHECK(streamer.metrics().cpuBytes <= budget);
+
+    fixture.source->blocked = false;
+    streamer.waitForIdle();
+    static_cast<void>(streamer.drainCompletions({}));
+    CHECK(streamer.metrics().cpuBytes <= budget);
+    CHECK(streamer.metrics().cpuPeakBytes <= budget);
 }
 
 TEST_CASE("raster streamer hands uploads over in bounded batches",
@@ -217,6 +276,34 @@ TEST_CASE("raster streamer drops queued work the camera moved away from",
     static_cast<void>(streamer.drainCompletions({}));
     CHECK(streamer.cpuResident(cacheKey(fixture.layer, {0, 9, 9})));
     CHECK_FALSE(streamer.cpuResident(cacheKey(fixture.layer, {0, 3, 0})));
+    CHECK(streamer.metrics().pending == 0);
+}
+
+TEST_CASE("raster streamer camera churn releases cancelled queue slots",
+          "[qt][raster][stream][churn]")
+{
+    Fixture fixture = makeFixture();
+    pci::RasterTileStreamer streamer(roomyBudget, 1);
+    fixture.source->blocked = true;
+
+    streamer.reconcile(planFor({{0, 0, 0}, {0, 1, 0}}), fixture.layer);
+    while (fixture.source->reads.load() == 0) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+
+    // Only one current queued key plus the active read may survive each pan.
+    // Leaving cancelled keys in the dedupe set eventually fills all 256 slots
+    // and permanently prevents the current view from scheduling work.
+    for (std::uint32_t frame = 1; frame < 400; ++frame) {
+        streamer.reconcile(planFor({{0, frame % 4, frame / 4}}), fixture.layer);
+        CAPTURE(frame);
+        CHECK(streamer.metrics().pending <= 2);
+    }
+
+    fixture.source->blocked = false;
+    streamer.waitForIdle();
+    static_cast<void>(streamer.drainCompletions({}));
+    CHECK(streamer.metrics().pending == 0);
 }
 
 TEST_CASE("raster streamer separates render generations",
@@ -273,6 +360,44 @@ TEST_CASE("raster streamer drops completions for a released source",
     CHECK(streamer.drainCompletions({}).empty());
     CHECK(streamer.metrics().cpuBytes == 0);
     CHECK(streamer.metrics().pendingUploads == 0);
+}
+
+TEST_CASE("raster streamer rejects a read that finishes after source release",
+          "[qt][raster][stream][cancellation]")
+{
+    Fixture fixture = makeFixture();
+    pci::RasterTileStreamer streamer(roomyBudget, 1);
+    fixture.source->blocked = true;
+
+    streamer.reconcile(planFor({{0, 0, 0}, {0, 1, 0}}), fixture.layer);
+    while (fixture.source->reads.load() == 0) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    streamer.releaseSource(fixture.layer.data->sourceId);
+    fixture.source->blocked = false;
+    streamer.waitForIdle();
+
+    CHECK(streamer.drainCompletions({}).empty());
+    CHECK_FALSE(streamer.cpuResident(cacheKey(fixture.layer, {0, 0, 0})));
+    CHECK(streamer.metrics().pending == 0);
+    CHECK(streamer.metrics().cpuBytes == 0);
+}
+
+TEST_CASE("raster streamer retries uploads rejected by temporary GPU pressure",
+          "[qt][raster][stream][cache]")
+{
+    Fixture fixture = makeFixture();
+    pci::RasterTileStreamer streamer(roomyBudget, 1);
+    streamer.reconcile(planFor({{0, 0, 0}}), fixture.layer);
+    streamer.waitForIdle();
+    static_cast<void>(streamer.drainCompletions({}));
+
+    const std::vector<pci::RasterCacheKey> first =
+        streamer.takeReadyUploads(1);
+    REQUIRE(first.size() == 1);
+    streamer.requeueReadyUploads(first);
+    CHECK(streamer.metrics().pendingUploads == 1);
+    CHECK(streamer.takeReadyUploads(1) == first);
 }
 
 TEST_CASE("raster streamer reconciles every layer of a frame at once",
@@ -402,7 +527,7 @@ TEST_CASE("raster streamer does not evict tiles that are on screen",
         cacheKey(fixture.layer, {0, 0, 0})};
     streamer.reconcile(planFor({{0, 1, 0}, {0, 2, 0}, {0, 3, 0}}),
                        fixture.layer);
-    streamer.waitForIdle();
+    streamer.waitForIdle(onScreen);
     static_cast<void>(streamer.drainCompletions(onScreen));
 
     // The protected tile survives; admission declines rather than evicting

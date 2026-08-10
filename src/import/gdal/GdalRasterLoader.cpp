@@ -690,6 +690,11 @@ GdalRasterLoader::inspect(const RasterImportRequest &request) const
     metadata.width = static_cast<std::uint32_t>(width);
     metadata.height = static_cast<std::uint32_t>(height);
     metadata.geoTransform = geoTransform;
+    metadata.nativePixelSize = {
+        std::hypot(geoTransform[1], geoTransform[4]),
+        std::hypot(geoTransform[2], geoTransform[5]),
+    };
+    metadata.positionalBandFallback = selection.positionalFallback;
     metadata.spatialReferenceWkt =
         spatialReferenceWkt(*dataset, metadata.geographicCrs);
     metadata.crsMissing = metadata.spatialReferenceWkt.empty();

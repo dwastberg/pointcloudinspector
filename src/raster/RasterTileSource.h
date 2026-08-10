@@ -20,6 +20,14 @@ inline constexpr std::size_t rasterStoredTileBytes =
     static_cast<std::size_t>(rasterStoredTilePixels) * rasterStoredTilePixels *
     4U;
 
+// The production GDAL adapter's worst supported tile decode (three widened
+// color planes, widened alpha, mask, and the destination RGBA tile) fits
+// below this ceiling. The streamer reserves from the configured CPU budget
+// before a source may allocate. Keeping the ceiling explicit prevents the
+// worker count from multiplying an invisible scratch allowance.
+inline constexpr std::uint64_t rasterMaximumTileReadReservationBytes =
+    3ULL * 1024 * 1024;
+
 // A tile read that could not produce valid pixels. The worker wrapper converts
 // this into a negative-cache entry.
 class RasterReadError : public std::runtime_error {
@@ -73,6 +81,17 @@ public:
 
     [[nodiscard]] virtual const RasterLayerMetadata &
     metadata() const noexcept = 0;
+
+    // Conservative bytes needed by readTile(), including temporary channel
+    // planes and the returned allocation. The streamer acquires this
+    // reservation before entering the source. Implementations that allocate
+    // scratch must override it; the default is exact for a source that only
+    // creates the standard RGBA tile.
+    [[nodiscard]] virtual std::uint64_t
+    readReservationBytes(const RasterTileRequest &) const
+    {
+        return sizeof(RasterTileData) + rasterStoredTileBytes;
+    }
 
     // Throws RasterReadError on failure and RasterReadCancelled when the stop
     // token is requested. It never returns a partially valid tile, so no

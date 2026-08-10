@@ -54,6 +54,13 @@ struct RasterStreamerMetrics {
     std::size_t negativeEntries = 0;
 };
 
+// Combines immutable source defaults with the scene style for one render
+// generation. Scalar ramps are resolved by stable catalog key and copied once
+// into shared storage that remains alive until every worker using it exits.
+[[nodiscard]] std::shared_ptr<const RasterDecodeParameters>
+resolveRasterDecodeParameters(const RasterLayer &layer,
+                              const PointColorMapCatalogSnapshot &colorMaps);
+
 // One visible layer's contribution to a frame's reconciliation.
 //
 // The read queue is frame-global, so reconciliation must see every visible
@@ -65,6 +72,10 @@ struct RasterStreamerMetrics {
 struct RasterFrameLayer {
     const RasterLodPlan *plan = nullptr;
     const RasterLayer *layer = nullptr;
+    // Resolved from the layer style once per render generation. Keeping it on
+    // the frame entry prevents the streamer from silently falling back to the
+    // source default when the user edits a scalar range or color ramp.
+    std::shared_ptr<const RasterDecodeParameters> decode;
 };
 
 // Owns request generations, worker scheduling, cancellation, decoded-cache
@@ -108,6 +119,11 @@ public:
                      std::size_t maximumResults = 64);
     [[nodiscard]] std::vector<RasterCacheKey>
     takeReadyUploads(std::size_t maximumTiles);
+    // Returns GPU-rejected uploads to the bounded ready queue. A CPU-resident
+    // tile must remain retryable when the GPU cache is temporarily full of
+    // protected on-screen tiles; dropping the key strands it forever because
+    // the planner correctly declines to decode it again.
+    void requeueReadyUploads(std::span<const RasterCacheKey> keys);
 
     [[nodiscard]] bool cpuResident(const RasterCacheKey &key) const noexcept;
     [[nodiscard]] const RasterTileData *tile(const RasterCacheKey &key);
@@ -121,7 +137,10 @@ public:
     // Stops workers and drops queued work. Must run before the sources and the
     // viewport it reports to are destroyed.
     void shutdown() noexcept;
-    void waitForIdle();
+    // Qualification callers may need to drain completions while reservations
+    // apply backpressure. Preserve their current on-screen set during that
+    // internal admission just as a render-frame drain would.
+    void waitForIdle(std::span<const RasterCacheKey> protectedKeys = {});
 
     [[nodiscard]] RasterStreamerMetrics metrics() const;
 
@@ -139,20 +158,39 @@ private:
         std::optional<RasterTileData> tile;
         std::string error;
         bool cancelled = false;
+        // A successful completion keeps its destination reservation until the
+        // allocation is transferred into the decoded cache or destroyed.
+        std::uint64_t reservedBytes = 0;
     };
 
     void workerLoop(std::stop_token stop);
     void notifyWake();
+    void releaseCompletionReservation(std::uint64_t bytes);
+    void updateCpuPeak(std::uint64_t reservedBytes) noexcept;
+    [[nodiscard]] std::uint64_t readPoolCapacity(
+        std::uint64_t totalBudget) const noexcept;
 
     mutable std::mutex mutex_;
     std::condition_variable_any queueReady_;
     std::deque<Request> queue_;
     std::unordered_set<RasterCacheKey> pendingKeys_;
     std::vector<Completion> completions_;
+    // The current generation for sources still owned by the document. Workers
+    // consult it before publishing, so a completion that races layer removal
+    // or a range/ramp edit is destroyed before render-thread admission.
+    std::unordered_map<RasterSourceId, std::uint64_t> liveGenerations_;
     std::stop_source stop_;
     std::vector<std::jthread> workers_;
     std::size_t activeReads_ = 0;
+    std::size_t memoryWaiters_ = 0;
     std::condition_variable_any idle_;
+    std::condition_variable_any memoryReady_;
+    std::uint64_t totalCpuByteBudget_ = 0;
+    std::uint64_t readPoolByteCapacity_ = 0;
+    // Active source scratch plus decoded completions not yet transferred to
+    // the cache. Guarded by mutex_.
+    std::uint64_t reservedReadBytes_ = 0;
+    std::uint32_t workerCount_ = 1;
 
     // Render-thread state; not guarded by mutex_.
     RasterTileCache cache_;
@@ -160,6 +198,11 @@ private:
     std::vector<RasterCacheKey> pendingUploads_;
     std::unordered_map<RasterCacheKey, std::string> negativeCache_;
     RasterStreamerMetrics metrics_;
+
+    // Lets worker-side reservation changes update the combined peak without
+    // touching the render-thread-owned cache object.
+    std::atomic_uint64_t cacheResidentBytes_{0};
+    std::atomic_uint64_t cpuPeakBytes_{0};
 
     std::atomic_bool wakeQueued_{false};
     WakeCallback wake_;

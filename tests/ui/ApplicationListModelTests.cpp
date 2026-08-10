@@ -291,6 +291,19 @@ TEST_CASE("scene layer model warns about unusable raster placement",
                   .data(pci::SceneLayerListModel::WarningRole)
                   .toBool());
     }
+
+    SECTION("a positional RGB assignment is a warning")
+    {
+        pci::RasterLayerDataPtr data = rasterData("/data/unlabelled.tif");
+        const_cast<pci::RasterLayerMetadata &>(data->metadata())
+            .positionalBandFallback = true;
+        model.setSnapshot(rasterSnapshot({
+            pci::RasterLayer{.id = pci::SceneLayerId{4}, .data = data},
+        }));
+        CHECK(model.index(0, 0)
+                  .data(pci::SceneLayerListModel::WarningRole)
+                  .toBool());
+    }
 }
 
 TEST_CASE("scene layer model mixes point, vector, and raster rows in order",

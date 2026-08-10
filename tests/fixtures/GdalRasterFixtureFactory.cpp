@@ -164,6 +164,54 @@ std::filesystem::path writeRgbFixture(const std::filesystem::path &path)
     return path;
 }
 
+std::filesystem::path
+writePositionalRgbFixture(const std::filesystem::path &path)
+{
+    constexpr int width = 32;
+    constexpr int height = 24;
+    std::filesystem::path source = path;
+    source.replace_extension(".tif");
+    {
+        DatasetPtr dataset = create(source, width, height, 3, GDT_Byte);
+        applyProjectedReference(*dataset);
+        applyTransform(*dataset,
+                       {674000.0, 2.0, 0.0, 6580000.0, 0.0, -2.0});
+        writeRgb(*dataset, width, height);
+    }
+
+    // GTiff persists three Byte bands as RGB through its PHOTOMETRIC tag even
+    // after SetColorInterpretation(Undefined), so reopening that file cannot
+    // exercise the positional fallback. A VRT with deliberately unlabelled
+    // bands preserves the real-world ambiguous layout deterministically.
+    const auto band = [&source](const int number) {
+        return "  <VRTRasterBand dataType=\"Byte\" band=\"" +
+               std::to_string(number) +
+               "\">\n"
+               "    <SimpleSource>\n"
+               "      <SourceFilename relativeToVRT=\"0\">" +
+               source.string() +
+               "</SourceFilename>\n"
+               "      <SourceBand>" +
+               std::to_string(number) +
+               "</SourceBand>\n"
+               "    </SimpleSource>\n"
+               "  </VRTRasterBand>\n";
+    };
+    const std::string document =
+        "<VRTDataset rasterXSize=\"32\" rasterYSize=\"24\">\n"
+        "  <SRS>EPSG:3006</SRS>\n"
+        "  <GeoTransform>674000.0, 2.0, 0.0, 6580000.0, 0.0, -2.0"
+        "</GeoTransform>\n" +
+        band(1) + band(2) + band(3) + "</VRTDataset>\n";
+    VSILFILE *file = VSIFOpenL(path.string().c_str(), "wb");
+    if (file == nullptr) {
+        throw std::runtime_error("could not write " + path.string());
+    }
+    VSIFWriteL(document.data(), 1, document.size(), file);
+    VSIFCloseL(file);
+    return path;
+}
+
 std::filesystem::path writeOverviewFixture(const std::filesystem::path &path)
 {
     constexpr int width = 256;
@@ -255,22 +303,26 @@ std::filesystem::path writeTerrainFixture(const std::filesystem::path &path)
     constexpr int width = 64;
     constexpr int height = 64;
     constexpr double nodata = -9999.0;
-    DatasetPtr dataset = create(path, width, height, 1, GDT_Float32);
-    applyProjectedReference(*dataset);
-    applyTransform(*dataset, {674000.0, 1.0, 0.0, 6580000.0, 0.0, -1.0});
+    {
+        DatasetPtr dataset = create(path, width, height, 1, GDT_Float32);
+        applyProjectedReference(*dataset);
+        applyTransform(
+            *dataset, {674000.0, 1.0, 0.0, 6580000.0, 0.0, -1.0});
 
-    std::vector<float> elevation(static_cast<std::size_t>(width) * height);
-    for (int y = 0; y < height; ++y) {
-        for (int x = 0; x < width; ++x) {
-            const auto index = static_cast<std::size_t>(y) * width + x;
-            // A nodata block against valid terrain, so filtering across the
-            // boundary can be checked for color bleed.
-            elevation[index] = x < 8 ? static_cast<float>(nodata)
-                                     : 100.0F + static_cast<float>(x + y);
+        std::vector<float> elevation(static_cast<std::size_t>(width) * height);
+        for (int y = 0; y < height; ++y) {
+            for (int x = 0; x < width; ++x) {
+                const auto index = static_cast<std::size_t>(y) * width + x;
+                // A nodata block against valid terrain, so filtering across
+                // the downsampled boundary can be checked for color bleed.
+                elevation[index] = x < 8 ? static_cast<float>(nodata)
+                                         : 100.0F + static_cast<float>(x + y);
+            }
         }
+        writeBand(*dataset, 1, GDT_Float32, elevation);
+        dataset->GetRasterBand(1)->SetNoDataValue(nodata);
     }
-    writeBand(*dataset, 1, GDT_Float32, elevation);
-    dataset->GetRasterBand(1)->SetNoDataValue(nodata);
+    buildOverviews(path, {2});
     return path;
 }
 
@@ -576,6 +628,8 @@ writeGdalRasterFixtures(const std::filesystem::path &directory)
 
     GdalRasterFixturePaths paths;
     paths.rgb = writeRgbFixture(directory / "rgb.tif");
+    paths.positionalRgb =
+        writePositionalRgbFixture(directory / "positional-rgb.vrt");
     paths.rgbNonPowerOfTwoOverviews =
         writeOverviewFixture(directory / "rgb-overviews.tif");
     paths.rgba = writeRgbaFixture(directory / "rgba.tif");

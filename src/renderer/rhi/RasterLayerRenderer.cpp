@@ -31,10 +31,6 @@ constexpr std::uint64_t rasterMinimumResidentTiles = 16;
 constexpr int rasterDepthBias = 1;
 constexpr float rasterSlopeScaledDepthBias = 1.0F;
 
-// The unit square as a triangle strip: (0,0), (1,0), (0,1), (1,1).
-constexpr std::array<float, 8> unitQuadVertices{
-    0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F, 1.0F, 1.0F};
-
 void requireCreated(const bool created, const char *resource)
 {
     if (!created) {
@@ -166,7 +162,7 @@ RasterLayerRenderer::~RasterLayerRenderer()
 
 bool RasterLayerRenderer::ready() const noexcept
 {
-    return rhi_ != nullptr && pipeline_ && uniformBuffer_ && vertexBuffer_;
+    return rhi_ != nullptr && pipeline_ && uniformBuffer_;
 }
 
 std::uint64_t RasterLayerRenderer::gpuBytes() const noexcept
@@ -184,16 +180,6 @@ void RasterLayerRenderer::ensureResources(QRhi *rhi,
     if (rhi_ != rhi) {
         releaseResources();
         rhi_ = rhi;
-    }
-    if (!vertexBuffer_) {
-        RhiResourcePtr<QRhiBuffer> buffer(
-            rhi_->newBuffer(QRhiBuffer::Immutable,
-                            QRhiBuffer::VertexBuffer,
-                            sizeof(unitQuadVertices)));
-        buffer->setName(QByteArrayLiteral("Raster unit quad"));
-        requireCreated(buffer->create(), "raster vertex buffer");
-        vertexBuffer_ = std::move(buffer);
-        quadUploaded_ = false;
     }
     if (!linearSampler_) {
         RhiResourcePtr<QRhiSampler> sampler(
@@ -288,9 +274,6 @@ void RasterLayerRenderer::createPipeline(QRhiRenderPassDescriptor *renderPass)
 {
     pipeline_.reset();
     QRhiVertexInputLayout layout;
-    layout.setBindings({QRhiVertexInputBinding(sizeof(float) * 2)});
-    layout.setAttributes(
-        {QRhiVertexInputAttribute(0, 0, QRhiVertexInputAttribute::Float2, 0)});
 
     RhiResourcePtr<QRhiGraphicsPipeline> pipeline(rhi_->newGraphicsPipeline());
     pipeline->setName(QByteArrayLiteral("Raster layer pipeline"));
@@ -331,14 +314,6 @@ std::size_t RasterLayerRenderer::uploadPending(
         throw std::logic_error("raster renderer is not ready to upload");
     }
     ++frameCounter_;
-    if (!quadUploaded_) {
-        // Immutable buffers need one upload, and resource updates are only
-        // legal outside an active render pass.
-        RhiResourceUpdateBatchPtr quad(rhi_->nextResourceUpdateBatch());
-        quad->uploadStaticBuffer(vertexBuffer_.get(), unitQuadVertices.data());
-        commandBuffer->resourceUpdate(quad.release());
-        quadUploaded_ = true;
-    }
 
     // Hashed and ordered once for the whole pass rather than per tile.
     const std::unordered_set<RasterCacheKey> protectedSet(protectedKeys.begin(),
@@ -575,9 +550,6 @@ void RasterLayerRenderer::recordDraws(
         commandBuffer->setGraphicsPipeline(pipeline_.get());
         commandBuffer->setShaderResources(
             found->second.bindings.get(), 1, &offset);
-        const QRhiCommandBuffer::VertexInput vertexInput(vertexBuffer_.get(),
-                                                         0);
-        commandBuffer->setVertexInput(0, 1, &vertexInput);
         commandBuffer->draw(4);
     }
 }
@@ -594,8 +566,6 @@ void RasterLayerRenderer::releaseResources()
     uniformBuffer_.reset();
     nearestSampler_.reset();
     linearSampler_.reset();
-    vertexBuffer_.reset();
-    quadUploaded_ = false;
     pipelineRenderPass_ = nullptr;
     uniformCapacity_ = 0;
     uniformStride_ = 0;

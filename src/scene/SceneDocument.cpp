@@ -364,8 +364,13 @@ bool SceneDocument::removeLayer(const PointCloudLayerId id)
         markPointChanged();
         return true;
     }
+    const bool removedRaster = rasterState(*found) != nullptr;
     sceneLayers_.erase(found);
-    markVectorChanged();
+    if (removedRaster) {
+        markRasterChanged();
+    } else {
+        markVectorChanged();
+    }
     return true;
 }
 
@@ -444,7 +449,11 @@ bool SceneDocument::setLayerVisible(const PointCloudLayerId id,
     }
     if (found->visible != visible) {
         found->visible = visible;
-        markVectorChanged();
+        if (rasterState(*found)) {
+            markRasterChanged();
+        } else {
+            markVectorChanged();
+        }
     }
     return true;
 }

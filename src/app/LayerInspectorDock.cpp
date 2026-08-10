@@ -968,6 +968,11 @@ void LayerInspectorDock::updateRasterProperties(const RasterLayer &raster)
             "zoomed-out views show only part of it. Run gdaladdo to add "
             "them.");
     }
+    if (metadata.positionalBandFallback) {
+        warnings << QStringLiteral(
+            "This raster does not label its color bands. Bands 1–3 were "
+            "interpreted as RGB by position; verify the displayed colors.");
+    }
     rasterVisibilityWarning_->setVisible(!warnings.isEmpty());
     rasterVisibilityWarningLabel_->setText(warnings.join(QChar::LineFeed));
     rasterShowAnywayButton_->setVisible(hiddenDisjoint);
@@ -981,8 +986,20 @@ void LayerInspectorDock::updateRasterProperties(const RasterLayer &raster)
     rasterBandsValue_->setText(QString::number(metadata.bands.size()));
     rasterPixelSizeValue_->setText(
         QStringLiteral("%1 x %2")
-            .arg(std::abs(metadata.geoTransform[1]), 0, 'g', 4)
-            .arg(std::abs(metadata.geoTransform[5]), 0, 'g', 4));
+            .arg(metadata.nativePixelSize[0] > 0.0
+                     ? metadata.nativePixelSize[0]
+                     : std::hypot(metadata.geoTransform[1],
+                                  metadata.geoTransform[4]),
+                 0,
+                 'g',
+                 4)
+            .arg(metadata.nativePixelSize[1] > 0.0
+                     ? metadata.nativePixelSize[1]
+                     : std::hypot(metadata.geoTransform[2],
+                                  metadata.geoTransform[5]),
+                 0,
+                 'g',
+                 4));
     if (metadata.levels.size() <= 1) {
         rasterOverviewsValue_->setText(QStringLiteral("None"));
     } else {

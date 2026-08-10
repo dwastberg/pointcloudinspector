@@ -286,12 +286,52 @@ TEST_CASE("raster planner requests coarse coverage before detail",
     pci::RasterLodPlanInput input = planInput(layer, overheadCamera(700.0));
     const pci::RasterLodPlan plan = pci::planRasterTiles(input);
     REQUIRE(plan.requests.size() > 1);
+    CHECK(plan.requests.front().levelIndex ==
+          layer.data->metadata().levels.size() - 1);
 
     // Coarse levels come first so the view fills in before it sharpens.
     for (std::size_t index = 1; index < plan.requests.size(); ++index) {
         CHECK(plan.requests[index - 1].levelIndex >=
               plan.requests[index].levelIndex);
     }
+}
+
+TEST_CASE("raster planner bounds enumeration across an enormous overview gap",
+          "[renderer][raster][lod][stress]")
+{
+    pci::RasterLayerMetadata metadata;
+    metadata.width = 1'000'000'000;
+    metadata.height = 1'000'000'000;
+    // The logical source is enormous while its world footprint is ordinary.
+    // A one-texel overview is too coarse for the screen and its next finer
+    // level contains trillions of tiles. The planner must stop enumeration at
+    // the effective cap rather than materialize that candidate set first.
+    metadata.geoTransform = {0.0, 1.0e-6, 0.0, 0.0, 0.0, -1.0e-6};
+    metadata.bounds = *pci::rasterPixelEdgeBounds(
+        metadata.geoTransform, metadata.width, metadata.height);
+    metadata.levels = {
+        makeLevel(metadata.width,
+                  metadata.height,
+                  metadata.width,
+                  metadata.height),
+        makeLevel(1, 1, metadata.width, metadata.height),
+    };
+
+    pci::RasterLayer layer;
+    layer.id = pci::SceneLayerId{7};
+    layer.data = std::make_shared<pci::RasterLayerData>(pci::RasterLayerData{
+        .sourceId = pci::nextRasterSourceId(),
+        .source = std::make_shared<PlannerRasterSource>(std::move(metadata)),
+    });
+
+    pci::RasterLodPlanInput input =
+        planInput(layer, overheadCamera(1000.0, 500.0, -500.0));
+    input.maximumSelectedTiles = 4;
+    input.gpuCapacityTiles = 4;
+    const pci::RasterLodPlan plan = pci::planRasterTiles(input);
+    CHECK(plan.selected.size() <= 4);
+    CHECK(plan.capacityLimited);
+    CHECK(plan.insufficientOverviews);
 }
 
 TEST_CASE("raster planner clips a rotated footprint to its visible region",

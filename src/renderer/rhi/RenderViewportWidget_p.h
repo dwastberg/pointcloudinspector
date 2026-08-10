@@ -203,6 +203,11 @@ private:
     VectorLayerRenderer vectorLayerRenderer_;
     RasterLayerRenderer rasterLayerRenderer_;
     RasterTileStreamer rasterTileStreamer_{rasterDefaultCpuCacheBytes};
+    struct RasterDecodeState {
+        std::uint64_t generation = 0;
+        std::shared_ptr<const RasterDecodeParameters> parameters;
+    };
+    std::unordered_map<SceneLayerId, RasterDecodeState> rasterDecodeStates_;
     std::unordered_map<SceneLayerId, std::vector<RasterTileKey>>
         previousRasterSelection_;
     // Sources the last frame saw, so a source that disappears can be released

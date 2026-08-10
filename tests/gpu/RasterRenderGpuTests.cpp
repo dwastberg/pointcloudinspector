@@ -1,5 +1,6 @@
 #include "app/ApplicationOptions.h"
 #include "renderer/rhi/RenderViewportWidget_p.h"
+#include "scene/PointCloudScene.h"
 #include "support/RenderViewportTestAccess.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -192,6 +193,52 @@ patternLayer(const std::vector<std::uint32_t> &levelWidths,
     });
 }
 
+[[nodiscard]] pci::RasterLayerDataPtr
+patternLayer(pci::RasterLayerMetadata metadata, LevelPainter painter)
+{
+    auto source = std::make_shared<PatternSource>(std::move(metadata),
+                                                  std::move(painter));
+    return std::make_shared<pci::RasterLayerData>(pci::RasterLayerData{
+        .sourceId = pci::nextRasterSourceId(),
+        .source = std::move(source),
+    });
+}
+
+[[nodiscard]] pci::PointCloudScenePtr coplanarPointGrid()
+{
+    constexpr int cells = 21;
+    pci::PointCloudMetadata metadata;
+    metadata.sourcePointCount = cells * cells;
+    metadata.sourceBounds = {
+        .minimum = {-90.0, -90.0, -0.01},
+        .maximum = {90.0, 90.0, 0.01},
+    };
+    metadata.hasColor = true;
+    auto scene = std::make_shared<pci::PointCloudScene>(metadata);
+    auto block = std::make_shared<pci::PointBlock>();
+    block->origin = {-100.0, -100.0, -1.0};
+    block->scale = 200.0 / 65535.0;
+    block->bounds = metadata.sourceBounds;
+    block->points.reserve(cells * cells);
+    for (int y = 0; y < cells; ++y) {
+        for (int x = 0; x < cells; ++x) {
+            const pci::Vec3d position{-90.0 + 180.0 * x / (cells - 1),
+                                      -90.0 + 180.0 * y / (cells - 1),
+                                      0.0};
+            const auto quantized =
+                pci::quantizeToBlock(position, block->origin, block->scale);
+            block->points.push_back({.x = quantized[0],
+                                     .y = quantized[1],
+                                     .z = quantized[2],
+                                     .rgba = 0xffffffffU});
+        }
+    }
+    block->attributes.resize(block->points.size());
+    scene->addBlock(std::move(block));
+    scene->markLoadingComplete();
+    return scene;
+}
+
 QImage renderFrames(pci::RenderViewportWidget &viewport, const int frames)
 {
     viewport.show();
@@ -301,6 +348,16 @@ bool nearlyBlue(const QColor &color)
     return color.blue() > 150 && color.red() < 90 && color.green() < 90;
 }
 
+bool nearlyYellow(const QColor &color)
+{
+    return color.red() > 150 && color.green() > 150 && color.blue() < 90;
+}
+
+bool nearlyWhite(const QColor &color)
+{
+    return color.red() > 150 && color.green() > 150 && color.blue() > 150;
+}
+
 std::uint64_t countWhere(const QImage &image,
                          const std::function<bool(const QColor &)> &predicate)
 {
@@ -333,18 +390,111 @@ void frameWholeScene(pci::RenderViewportWidget &viewport)
 
 } // namespace
 
-// NOT YET COVERED: georeferenced placement readback, and coplanar points
-// staying visible under EDL.
-//
-// Both need the layer framed wholly inside the viewport so screen positions
-// can be checked against world coordinates. Driving the camera from a test
-// does not currently produce that: with frameVisibleLayersTopDown() the layer
-// renders clipped and vertically foreshortened, and its rendered height grows
-// with the source's tile count even though every fixture covers the same
-// world rectangle (256px source -> 224x32 on screen, 512px -> 224x128,
-// 1024px -> 224x176). Whether that is a placement defect or an artifact of
-// how the test drives the camera is unresolved, and asserting either way
-// would be guessing. See the report accompanying this commit.
+TEST_CASE("GPU raster pixels land at their affine georeferenced coordinates",
+          "[gpu][raster][placement]")
+{
+    pci::RasterLayerMetadata metadata;
+    metadata.width = 256;
+    metadata.height = 256;
+    // A rotated and skewed parallelogram. Its four corners are deliberately
+    // asymmetric so a center-only or north-up placement can not pass.
+    metadata.geoTransform = {
+        -80.0, 200.0 / 256.0, 40.0 / 256.0,
+        60.0, 50.0 / 256.0, -160.0 / 256.0,
+    };
+    metadata.bounds = *pci::rasterPixelEdgeBounds(
+        metadata.geoTransform, metadata.width, metadata.height);
+    metadata.levels = {
+        pci::RasterLevel{.width = metadata.width,
+                         .height = metadata.height,
+                         .basePixelsPerTexelX = 1.0,
+                         .basePixelsPerTexelY = 1.0,
+                         .channelCount = 3},
+    };
+
+    auto document = std::make_shared<pci::SceneDocument>();
+    static_cast<void>(document->addRasterLayer(patternLayer(
+        metadata,
+        [width = metadata.width,
+         height = metadata.height](std::uint32_t,
+                                   const double pixel,
+                                   const double line) -> Rgba {
+            if (pixel < width * 0.5 && line < height * 0.5) {
+                return {255, 0, 0};
+            }
+            if (pixel >= width * 0.5 && line < height * 0.5) {
+                return {0, 255, 0};
+            }
+            return pixel < width * 0.5 ? Rgba{0, 0, 255}
+                                       : Rgba{255, 255, 0};
+        })));
+
+    auto viewport = makeViewport();
+    viewport->setDocument(document->snapshot(), true);
+    viewport->setEyeDomeLightingEnabled(false);
+    viewport->setOrthographic(true);
+    frameWholeScene(*viewport);
+
+    const auto screenAtBasePixel = [&metadata, &viewport](
+                                       const QSize imageSize,
+                                       const double pixel,
+                                       const double line) {
+        const pci::RasterQuadTransform quad = pci::rasterTileQuadTransform(
+            metadata,
+            {},
+            pci::RasterTileKey{0, 0, 0},
+            pci::testAccess(*viewport).cameraForTesting().position());
+        QMatrix4x4 model;
+        model.setColumn(0,
+                        QVector4D(static_cast<float>(quad.edgeU.x),
+                                  static_cast<float>(quad.edgeU.y),
+                                  0.0F,
+                                  0.0F));
+        model.setColumn(1,
+                        QVector4D(static_cast<float>(quad.edgeV.x),
+                                  static_cast<float>(quad.edgeV.y),
+                                  0.0F,
+                                  0.0F));
+        model.setColumn(2, QVector4D(0.0F, 0.0F, 1.0F, 0.0F));
+        model.setColumn(3,
+                        QVector4D(static_cast<float>(quad.origin.x),
+                                  static_cast<float>(quad.origin.y),
+                                  static_cast<float>(quad.origin.z),
+                                  1.0F));
+        const QMatrix4x4 mvp =
+            pci::testAccess(*viewport).frameViewProjectionForTesting() * model;
+        const QVector4D local(static_cast<float>(pixel / metadata.width),
+                              static_cast<float>(line / metadata.height),
+                              0.0F,
+                              1.0F);
+        const QVector4D clip = mvp * local;
+        const double ndcX = clip.x() / clip.w();
+        const double ndcY = clip.y() / clip.w();
+        const int x = static_cast<int>(
+            std::lround((ndcX + 1.0) * 0.5 * imageSize.width()));
+        const int y = static_cast<int>(
+            std::lround((1.0 - ndcY) * 0.5 * imageSize.height()));
+        return QPoint{x, y};
+    };
+    const auto sampleAtBasePixel = [&screenAtBasePixel](
+                                       const QImage &image,
+                                       const double pixel,
+                                       const double line) {
+        const QPoint position =
+            screenAtBasePixel(image.size(), pixel, line);
+        return image.pixelColor(
+            std::clamp(position.x(), 0, image.width() - 1),
+            std::clamp(position.y(), 0, image.height() - 1));
+    };
+
+    const bool placed = renderUntil(*viewport, [&](const QImage &image) {
+        return nearlyRed(sampleAtBasePixel(image, 64.0, 64.0)) &&
+               nearlyGreen(sampleAtBasePixel(image, 192.0, 64.0)) &&
+               nearlyBlue(sampleAtBasePixel(image, 64.0, 192.0)) &&
+               nearlyYellow(sampleAtBasePixel(image, 192.0, 192.0));
+    });
+    REQUIRE(placed);
+}
 
 TEST_CASE("GPU raster shows coarse coverage before native detail",
           "[gpu][raster][lod]")
@@ -400,7 +550,7 @@ TEST_CASE("GPU raster layers obey painter order and opacity",
             return Rgba{255, 0, 0};
         })));
     const pci::SceneLayerId top = document->addRasterLayer(
-        patternLayer({256}, [](std::uint32_t, double, double) {
+        patternLayer({1024, 256}, [](std::uint32_t, double, double) {
             return Rgba{0, 255, 0};
         }));
 
@@ -430,6 +580,41 @@ TEST_CASE("GPU raster layers obey painter order and opacity",
         const QColor color = sampleWithin(image, footprint, 0.5, 0.5);
         return color.red() > 60 && color.green() > 60;
     }));
+}
+
+TEST_CASE("GPU coplanar points remain visible over rasters through an EDL camera sweep",
+          "[gpu][raster][edl][depth]")
+{
+    auto document = std::make_shared<pci::SceneDocument>();
+    static_cast<void>(document->addLayer(coplanarPointGrid()));
+    static_cast<void>(document->addRasterLayer(
+        patternLayer({256}, [](std::uint32_t, double, double) {
+            return Rgba{0, 0, 180};
+        })));
+
+    auto viewport = makeViewport();
+    viewport->setDocument(document->snapshot(), true);
+    viewport->setPointSizePixels(5);
+
+    for (const bool edl : {false, true}) {
+        viewport->setEyeDomeLightingEnabled(edl);
+        frameWholeScene(*viewport);
+        REQUIRE(renderUntil(*viewport, [](const QImage &image) {
+            return countWhere(image, nearlyWhite) > 100 &&
+                   countWhere(image, nearlyBlue) > 1000;
+        }));
+
+        // Depth rounding changes continuously as the camera moves. Holding
+        // the assertion across a sequence catches the shimmer that a single
+        // top-down frame misses.
+        for (int frame = 0; frame < 12; ++frame) {
+            pci::testAccess(*viewport).orbitCameraForTesting(
+                frame % 2 == 0 ? 1.5 : -0.75, 0.35);
+            const QImage image = renderFrames(*viewport, 2);
+            CAPTURE(edl, frame);
+            CHECK(countWhere(image, nearlyWhite) > 50);
+        }
+    }
 }
 
 TEST_CASE("GPU raster textures stay inside the configured budget",

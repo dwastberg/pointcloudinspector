@@ -114,8 +114,13 @@ struct PixelRect {
 visibleCells(const RasterLayerMetadata &metadata,
              const std::uint32_t levelIndex,
              const std::vector<Point2> &polygon,
-             const PixelRect &bounds)
+             const PixelRect &bounds,
+             const std::size_t maximumCells,
+             bool *const truncated = nullptr)
 {
+    if (truncated) {
+        *truncated = false;
+    }
     const RasterLevel &level = metadata.levels[levelIndex];
     const std::uint32_t countX = rasterLevelTileCountX(level);
     const std::uint32_t countY = rasterLevelTileCountY(level);
@@ -154,6 +159,12 @@ visibleCells(const RasterLayerMetadata &metadata,
             const RasterTileKey key{levelIndex, x, y};
             if (convexPolygonOverlapsRect(polygon,
                                           tileBaseRect(metadata, key))) {
+                if (cells.size() >= maximumCells) {
+                    if (truncated) {
+                        *truncated = true;
+                    }
+                    return cells;
+                }
                 cells.push_back(key);
             }
         }
@@ -274,14 +285,18 @@ RasterLodPlan planRasterTiles(const RasterLodPlanInput &input)
     // Refinement starts from the coarsest backed level; nothing walks from a
     // dataset-wide root, so the work is proportional to visible coverage.
     std::deque<RasterTileKey> pending;
-    for (const RasterTileKey key :
-         visibleCells(metadata, coarsest, polygon, visibleBounds)) {
+    bool coarseTruncated = false;
+    for (const RasterTileKey key : visibleCells(metadata,
+                                                coarsest,
+                                                polygon,
+                                                visibleBounds,
+                                                effectiveCap,
+                                                &coarseTruncated)) {
         pending.push_back(key);
     }
-    if (pending.size() > effectiveCap) {
+    if (coarseTruncated) {
         plan.capacityLimited = true;
         plan.insufficientOverviews = true;
-        pending.resize(effectiveCap);
     }
 
     const auto desiredLevel = [&](const RasterTileKey key) {
@@ -335,14 +350,23 @@ RasterLodPlan planRasterTiles(const RasterLodPlanInput &input)
             continue;
         }
 
+        const std::size_t occupied = plan.selected.size() + pending.size();
+        const std::size_t remaining =
+            occupied < effectiveCap ? effectiveCap - occupied : 0;
+        bool childrenTruncated = false;
         const std::vector<RasterTileKey> children = visibleCells(
-            metadata, key.levelIndex - 1, polygon, tileBaseRect(metadata, key));
+            metadata,
+            key.levelIndex - 1,
+            polygon,
+            tileBaseRect(metadata, key),
+            remaining,
+            &childrenTruncated);
         // Arbitrarily large gaps between overviews can turn one parent into
         // millions of child candidates, so the count is checked before the
         // children are materialized into the plan.
-        if (plan.selected.size() + pending.size() + children.size() >
-            effectiveCap) {
+        if (childrenTruncated) {
             plan.capacityLimited = true;
+            plan.insufficientOverviews = true;
             plan.selected.push_back(key);
             continue;
         }
@@ -358,6 +382,9 @@ RasterLodPlan planRasterTiles(const RasterLodPlanInput &input)
     const auto resident = [&input](const RasterTileKey key) {
         return input.gpuResident && input.gpuResident(key);
     };
+    const auto decoded = [&input](const RasterTileKey key) {
+        return input.cpuResident && input.cpuResident(key);
+    };
 
     // A resident coarser ancestor stays visible until every selected child is
     // ready, which is what prevents holes and flashes during refinement.
@@ -367,7 +394,9 @@ RasterLodPlan planRasterTiles(const RasterLodPlanInput &input)
             plan.protectedTiles.push_back(key);
             continue;
         }
-        plan.requests.push_back(key);
+        if (!decoded(key)) {
+            plan.requests.push_back(key);
+        }
 
         const PixelRect cell = tileBaseRect(metadata, key);
         for (std::uint32_t level = key.levelIndex + 1;
@@ -376,15 +405,24 @@ RasterLodPlan planRasterTiles(const RasterLodPlanInput &input)
             // The ancestor relation is geometric, not x / 2: adjacent GDAL
             // levels may reduce by any ratio.
             bool found = false;
-            for (const RasterTileKey candidate :
-                 visibleCells(metadata, level, polygon, cell)) {
-                if (!resident(candidate)) {
-                    continue;
+            for (const RasterTileKey candidate : visibleCells(
+                     metadata,
+                     level,
+                     polygon,
+                     cell,
+                     effectiveCap)) {
+                if (resident(candidate)) {
+                    plan.draw.push_back(candidate);
+                    plan.protectedTiles.push_back(candidate);
+                    found = true;
+                    break;
                 }
-                plan.draw.push_back(candidate);
-                plan.protectedTiles.push_back(candidate);
-                found = true;
-                break;
+                // Missing ancestors are requested as well as the detail tile.
+                // The final priority sort puts these coarser keys first, so an
+                // initially blank close view gains coverage before sharpness.
+                if (!decoded(candidate)) {
+                    plan.requests.push_back(candidate);
+                }
             }
             if (found) {
                 break;
@@ -397,6 +435,9 @@ RasterLodPlan planRasterTiles(const RasterLodPlanInput &input)
     std::ranges::sort(plan.protectedTiles);
     plan.protectedTiles.erase(std::ranges::unique(plan.protectedTiles).begin(),
                               plan.protectedTiles.end());
+    std::ranges::sort(plan.requests);
+    plan.requests.erase(std::ranges::unique(plan.requests).begin(),
+                        plan.requests.end());
 
     // Coarse coverage first, then detail ordered by distance to the viewport
     // center, so the view fills in before it sharpens.

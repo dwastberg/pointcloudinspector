@@ -250,7 +250,8 @@ SceneLayerListModel::project(const SceneDocumentSnapshot &snapshot)
                 .warning =
                     metadata != nullptr &&
                     (metadata->extentDisjointXY || metadata->crsMismatch ||
-                     metadata->crsMissing || metadata->insufficientOverviews),
+                     metadata->crsMissing || metadata->insufficientOverviews ||
+                     metadata->positionalBandFallback),
                 .allowShowAnyway =
                     metadata != nullptr && metadata->extentDisjointXY,
             });

@@ -71,6 +71,8 @@ TEST_CASE("raster inspection reports placement metadata", "[component][gdal]")
     CHECK(metadata.sourceDriver == "GTiff");
     CHECK(metadata.width == 64);
     CHECK(metadata.height == 48);
+    CHECK(metadata.nativePixelSize[0] == Catch::Approx(2.0));
+    CHECK(metadata.nativePixelSize[1] == Catch::Approx(2.0));
     CHECK(metadata.bands.size() == 3);
     CHECK_FALSE(metadata.crsMissing);
     CHECK_FALSE(metadata.crossesAntimeridian);
@@ -125,6 +127,14 @@ TEST_CASE("raster band selection resolves deterministically",
               pci::RasterSampleKind::ContinuousScalar);
         CHECK(pci::defaultRasterLayerStyle(data->metadata()).colorRampKey ==
               pci::defaultRasterScalarColorRampKey);
+    }
+
+    SECTION("unlabelled RGB bands preserve a positional warning")
+    {
+        const pci::RasterLayerDataPtr data = load(fixtures().positionalRgb);
+        CHECK(data->metadata().defaultDisplay.sampleKind ==
+              pci::RasterSampleKind::ContinuousColor);
+        CHECK(data->metadata().positionalBandFallback);
     }
 }
 
@@ -220,7 +230,16 @@ TEST_CASE("raster tile reads are 1:1 windows with a replicated gutter",
           "[component][gdal]")
 {
     const pci::RasterLayerDataPtr data = load(fixtures().rgb);
-    const pci::RasterTileData tile = readFirstTile(*data);
+    pci::RasterTileRequest request;
+    request.key = pci::RasterTileKey{0, 0, 0};
+    request.decode = std::make_shared<pci::RasterDecodeParameters>(
+        data->metadata().defaultDisplay);
+    const std::uint64_t reserved =
+        data->source->readReservationBytes(request);
+    const pci::RasterTileData tile =
+        data->source->readTile(request, std::stop_token{});
+    CHECK(reserved >= tile.byteSize());
+    CHECK(reserved <= pci::rasterMaximumTileReadReservationBytes);
 
     CHECK(tile.key == pci::RasterTileKey{0, 0, 0});
     CHECK(tile.rgba.size() == pci::rasterStoredTileBytes);
@@ -278,6 +297,15 @@ TEST_CASE("raster nodata becomes transparency, not a color",
     CHECK(texel(tile, 4, 20)[3] == std::byte{0});
     CHECK(texel(tile, 4, 20)[0] == std::byte{0});
     CHECK(texel(tile, 40, 20)[3] == std::byte{255});
+
+    // This is an actually backed, downsampled level. The transparent side has
+    // zero premultiplied color, so sampling cannot bleed terrain color across
+    // the overview's nodata boundary.
+    REQUIRE(data->metadata().levels.size() >= 2);
+    const pci::RasterTileData overview = readFirstTile(*data, 1);
+    CHECK(texel(overview, 3, 10)[3] == std::byte{0});
+    CHECK(texel(overview, 3, 10)[0] == std::byte{0});
+    CHECK(texel(overview, 10, 10)[3] == std::byte{255});
 }
 
 TEST_CASE("raster tile reads honour cancellation without failing",
@@ -321,6 +349,12 @@ TEST_CASE("raster rotation and negative pixel height are placed correctly",
         CHECK(corner.y <= metadata.bounds.maximum[1]);
     }
     CHECK(metadata.bounds.maximum[0] > metadata.bounds.minimum[0]);
+    CHECK(metadata.nativePixelSize[0] ==
+          Catch::Approx(std::hypot(metadata.geoTransform[1],
+                                   metadata.geoTransform[4])));
+    CHECK(metadata.nativePixelSize[1] ==
+          Catch::Approx(std::hypot(metadata.geoTransform[2],
+                                   metadata.geoTransform[5])));
     CHECK_NOTHROW(readFirstTile(*data));
 }
 

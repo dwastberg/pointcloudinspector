@@ -27,6 +27,10 @@ TEST_CASE("raster uniform block matches its std140 layout", "[qt][raster]")
     // would otherwise break silently.
     CHECK(sizeof(pci::RasterLayerUniform) == 96);
     CHECK(alignof(pci::RasterLayerUniform) == 16);
+    CHECK(offsetof(pci::RasterLayerUniform, clipTopLeft) == 0);
+    CHECK(offsetof(pci::RasterLayerUniform, clipTopRight) == 16);
+    CHECK(offsetof(pci::RasterLayerUniform, clipBottomLeft) == 32);
+    CHECK(offsetof(pci::RasterLayerUniform, clipBottomRight) == 48);
     CHECK(offsetof(pci::RasterLayerUniform, uvRect) == 64);
     CHECK(offsetof(pci::RasterLayerUniform, opacity) == 80);
 }

@@ -1,15 +1,13 @@
 #version 450
 
-// The quad is the unit square in level pixel-edge space. Its world placement,
-// including any rotation or skew from the source geotransform, is folded into
-// mvp on the CPU in double precision before narrowing.
-layout(location = 0) in vec2 unitPosition;
-
 layout(location = 0) out vec2 uv;
 
 layout(std140, binding = 0) uniform RasterTileData
 {
-    mat4 mvp;
+    vec4 clipTopLeft;
+    vec4 clipTopRight;
+    vec4 clipBottomLeft;
+    vec4 clipBottomRight;
     // Inner extent of the stored image, excluding the replicated gutter.
     vec4 uvRect;
     float opacity;
@@ -18,6 +16,16 @@ tile;
 
 void main()
 {
+    // A four-vertex strip needs no GPU buffer. Deriving the unit coordinates
+    // from the vertex index also keeps the vertex slot namespace independent
+    // of QRhi's native uniform/texture bindings on every backend.
+    const vec2 unitPositions[4] = vec2[4](
+        vec2(0.0, 0.0), vec2(1.0, 0.0),
+        vec2(0.0, 1.0), vec2(1.0, 1.0));
+    vec2 unitPosition = unitPositions[gl_VertexIndex];
     uv = mix(tile.uvRect.xy, tile.uvRect.zw, unitPosition);
-    gl_Position = tile.mvp * vec4(unitPosition, 0.0, 1.0);
+    vec4 clipTop = mix(tile.clipTopLeft, tile.clipTopRight, unitPosition.x);
+    vec4 clipBottom = mix(
+        tile.clipBottomLeft, tile.clipBottomRight, unitPosition.x);
+    gl_Position = mix(clipTop, clipBottom, unitPosition.y);
 }

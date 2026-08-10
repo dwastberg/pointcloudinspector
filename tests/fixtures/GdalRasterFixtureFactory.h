@@ -9,6 +9,9 @@ struct GdalRasterFixturePaths {
     // 64x48 Byte RGB, EPSG:3006, north-up, no overviews. Corner pixels carry
     // known colors so georeferenced placement can be asserted.
     std::filesystem::path rgb;
+    // Three Byte bands with no color interpretations. Imported positionally
+    // as RGB, with an explicit warning in metadata and the UI.
+    std::filesystem::path positionalRgb;
     // 256x192 Byte RGB whose overviews reduce by 3 and 5, so no level ratio is
     // a power of two.
     std::filesystem::path rgbNonPowerOfTwoOverviews;

@@ -75,6 +75,19 @@ public:
         viewport_.requestRender();
     }
 
+    void orbitCameraForTesting(const double horizontalPixels,
+                               const double verticalPixels)
+    {
+        viewport_.camera_.orbitFromDrag(horizontalPixels, verticalPixels);
+        viewport_.requestRender();
+    }
+
+    [[nodiscard]] QMatrix4x4 frameViewProjectionForTesting() const
+    {
+        const FrameCamera frame = viewport_.currentFrameCamera();
+        return viewport_.frameViewProjection(frame);
+    }
+
     [[nodiscard]] std::size_t rasterResidentTilesForTesting() const noexcept
     {
         return viewport_.rasterLayerRenderer_.residentTileCount();

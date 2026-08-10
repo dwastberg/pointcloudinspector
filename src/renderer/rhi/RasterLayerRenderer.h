@@ -28,14 +28,20 @@ class QRhiTexture;
 namespace pci {
 
 struct alignas(16) RasterLayerUniform {
-    std::array<float, 16> mvp{};
+    std::array<float, 4> clipTopLeft{};
+    std::array<float, 4> clipTopRight{};
+    std::array<float, 4> clipBottomLeft{};
+    std::array<float, 4> clipBottomRight{};
     std::array<float, 4> uvRect{}; // minU, minV, maxU, maxV inside the gutter
     float opacity = 1.0F;
     std::array<float, 3> padding{};
 };
 static_assert(alignof(RasterLayerUniform) == 16);
 static_assert(std::is_standard_layout_v<RasterLayerUniform>);
-static_assert(offsetof(RasterLayerUniform, mvp) == 0);
+static_assert(offsetof(RasterLayerUniform, clipTopLeft) == 0);
+static_assert(offsetof(RasterLayerUniform, clipTopRight) == 16);
+static_assert(offsetof(RasterLayerUniform, clipBottomLeft) == 32);
+static_assert(offsetof(RasterLayerUniform, clipBottomRight) == 48);
 static_assert(offsetof(RasterLayerUniform, uvRect) == 64);
 static_assert(offsetof(RasterLayerUniform, opacity) == 80);
 static_assert(sizeof(RasterLayerUniform) == 96);
@@ -61,8 +67,8 @@ stageRasterLayerUniforms(std::span<const RasterLayerDraw> draws,
 // Maps the unit quad onto the layer's world footprint. Computed eye-relative
 // in double precision before narrowing, matching the convention the point and
 // vector renderers already use at large projected coordinates. Rotation and
-// skew from the geotransform are carried by the two edge vectors, so the
-// shader needs no second vertex attribute.
+// skew from the geotransform are carried by the two edge vectors. The viewport
+// projects the resulting four corners before narrowing them for the shader.
 struct RasterQuadTransform {
     Vec3d origin; // the unit (0,0) corner, relative to the camera eye
     Vec3d edgeU;  // unit (1,0) minus unit (0,0)
@@ -174,14 +180,12 @@ private:
     void destroyTile(GpuTile &tile) noexcept;
 
     QRhi *rhi_ = nullptr;
-    RhiResourcePtr<QRhiBuffer> vertexBuffer_;
     RhiResourcePtr<QRhiBuffer> uniformBuffer_;
     RhiResourcePtr<QRhiSampler> linearSampler_;
     RhiResourcePtr<QRhiSampler> nearestSampler_;
     RhiResourcePtr<QRhiShaderResourceBindings> pipelineBindings_;
     RhiResourcePtr<QRhiGraphicsPipeline> pipeline_;
     QRhiRenderPassDescriptor *pipelineRenderPass_ = nullptr;
-    bool quadUploaded_ = false;
     std::uint32_t uniformStride_ = 0;
     std::size_t uniformCapacity_ = 0;
     std::unordered_map<RasterCacheKey, GpuTile> tiles_;

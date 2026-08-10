@@ -1,5 +1,6 @@
 #include "import/gdal/GdalRasterSource.h"
 
+#include "foundation/CheckedArithmetic.h"
 #include "import/gdal/GdalRasterDataset.h"
 #include "import/gdal/GdalRuntime.h"
 
@@ -554,6 +555,49 @@ const RasterLayerMetadata &GdalRasterSource::metadata() const noexcept
 std::uint64_t GdalRasterSource::readCount() const noexcept
 {
     return readCount_.load(std::memory_order_relaxed);
+}
+
+std::uint64_t GdalRasterSource::readReservationBytes(
+    const RasterTileRequest &request) const
+{
+    if (request.key.levelIndex >= metadata_.levels.size()) {
+        throw RasterReadError("Raster tile names an unknown level");
+    }
+    const RasterLevel &level = metadata_.levels[request.key.levelIndex];
+    const TileWindow window = tileWindow(level, request.key);
+    const auto pixels = checkedMultiply<std::uint64_t>(
+        static_cast<std::uint64_t>(window.readWidth),
+        static_cast<std::uint64_t>(window.readHeight));
+    if (!pixels) {
+        throw RasterReadError("Raster tile scratch size overflows");
+    }
+
+    std::uint64_t bytes = sizeof(RasterTileData) + rasterStoredTileBytes;
+    const auto addPlane = [&](const std::uint64_t sampleBytes,
+                              const std::uint64_t count = 1) {
+        const auto samples = checkedMultiply(*pixels, sampleBytes);
+        const auto planes = samples ? checkedMultiply(*samples, count)
+                                    : std::nullopt;
+        const auto total = planes ? checkedAdd(bytes, *planes) : std::nullopt;
+        if (!total) {
+            throw RasterReadError("Raster tile scratch size overflows");
+        }
+        bytes = *total;
+    };
+
+    addPlane(selection_.byteColorBands ? 1U : sizeof(double),
+             selection_.colorBands.size());
+    if (selection_.alphaBand != 0) {
+        addPlane(selection_.byteAlphaBand ? 1U : sizeof(double));
+    }
+    if (level.maskBand) {
+        addPlane(1);
+    }
+    if (bytes > rasterMaximumTileReadReservationBytes) {
+        throw RasterReadError(
+            "Raster tile decode exceeds the bounded scratch allowance");
+    }
+    return bytes;
 }
 
 RasterTileData GdalRasterSource::readTile(const RasterTileRequest &request,

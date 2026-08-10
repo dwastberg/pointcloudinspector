@@ -781,6 +781,16 @@ RenderViewportWidget::streamRasterTiles(QRhiCommandBuffer *commandBuffer)
     // RasterFrameLayer.
     std::vector<std::pair<std::size_t, RasterLodPlan>> plans;
     plans.reserve(layers.size());
+    const std::size_t visibleRasterLayers = static_cast<std::size_t>(
+        std::ranges::count_if(layers, [](const RasterLayer &layer) {
+            return layer.visible && static_cast<bool>(layer.data);
+        }));
+    const std::size_t perLayerTileCapacity =
+        visibleRasterLayers == 0
+            ? 1
+            : std::max<std::size_t>(
+                  1,
+                  rasterLayerRenderer_.tileCapacity() / visibleRasterLayers);
 
     for (std::size_t index = 0; index < layers.size(); ++index) {
         const RasterLayer &layer = layers[index];
@@ -790,6 +800,13 @@ RenderViewportWidget::streamRasterTiles(QRhiCommandBuffer *commandBuffer)
         }
         liveSources.push_back(layer.data->sourceId);
         const RasterLayerMetadata &metadata = layer.data->metadata();
+        RasterDecodeState &decodeState = rasterDecodeStates_[layer.id];
+        if (!decodeState.parameters ||
+            decodeState.generation != layer.renderGeneration) {
+            decodeState.generation = layer.renderGeneration;
+            decodeState.parameters =
+                resolveRasterDecodeParameters(layer, *colorMaps_);
+        }
         // Registered even while hidden. A read that finished before the layer
         // was hidden is still queued for upload, and dropping it would strand
         // the tile CPU-resident but never uploaded: the planner would not ask
@@ -809,7 +826,11 @@ RenderViewportWidget::streamRasterTiles(QRhiCommandBuffer *commandBuffer)
         input.layer = layer;
         input.camera = frame;
         input.previousSelection = previousRasterSelection_[layer.id];
-        input.gpuCapacityTiles = rasterLayerRenderer_.tileCapacity();
+        // The renderer cache is shared by every raster layer. Giving each
+        // planner the full capacity lets N overlapping layers pin N times the
+        // budget; divide the target allowance across the visible set and keep
+        // the renderer's reserved quarter for fallbacks and uploads.
+        input.gpuCapacityTiles = perLayerTileCapacity;
         // Residency is answered against this layer's own cache keys, so two
         // layers cannot be mistaken for one another.
         const RasterSourceId sourceId = layer.data->sourceId;
@@ -838,35 +859,47 @@ RenderViewportWidget::streamRasterTiles(QRhiCommandBuffer *commandBuffer)
         for (const RasterTileKey key : plan.draw) {
             protectedTiles.push_back({sourceId, generation, key});
         }
-        for (const RasterTileKey key : plan.draw) {
+        // plan.draw is sorted fine-to-coarse. Reverse only this layer's range
+        // so its fallback parents paint first, while the outer layer loop
+        // preserves document painter order across layers with different LODs.
+        for (auto drawKey = plan.draw.rbegin(); drawKey != plan.draw.rend();
+             ++drawKey) {
+            const RasterTileKey key = *drawKey;
             const RasterCacheKey cacheKey{sourceId, generation, key};
             const RasterQuadTransform quad =
                 rasterTileQuadTransform(metadata, layer.style, key, frame.eye);
-            QMatrix4x4 model;
-            model.setColumn(0,
-                            QVector4D(static_cast<float>(quad.edgeU.x),
-                                      static_cast<float>(quad.edgeU.y),
-                                      0.0F,
-                                      0.0F));
-            model.setColumn(1,
-                            QVector4D(static_cast<float>(quad.edgeV.x),
-                                      static_cast<float>(quad.edgeV.y),
-                                      0.0F,
-                                      0.0F));
-            model.setColumn(2, QVector4D(0.0F, 0.0F, 1.0F, 0.0F));
-            model.setColumn(3,
-                            QVector4D(static_cast<float>(quad.origin.x),
-                                      static_cast<float>(quad.origin.y),
-                                      static_cast<float>(quad.origin.z),
-                                      1.0F));
-
             RasterLayerDraw draw;
             draw.layerId = layer.id;
             draw.tileKey = cacheKey;
-            const QMatrix4x4 mvp = viewProjection * model;
-            std::memcpy(draw.uniform.mvp.data(),
-                        mvp.constData(),
-                        sizeof(draw.uniform.mvp));
+            const QVector4D clipOrigin =
+                viewProjection *
+                QVector4D(static_cast<float>(quad.origin.x),
+                          static_cast<float>(quad.origin.y),
+                          static_cast<float>(quad.origin.z),
+                          1.0F);
+            const QVector4D clipEdgeU =
+                viewProjection *
+                    QVector4D(static_cast<float>(quad.origin.x + quad.edgeU.x),
+                              static_cast<float>(quad.origin.y + quad.edgeU.y),
+                              static_cast<float>(quad.origin.z + quad.edgeU.z),
+                              1.0F) -
+                clipOrigin;
+            const QVector4D clipEdgeV =
+                viewProjection *
+                    QVector4D(static_cast<float>(quad.origin.x + quad.edgeV.x),
+                              static_cast<float>(quad.origin.y + quad.edgeV.y),
+                              static_cast<float>(quad.origin.z + quad.edgeV.z),
+                              1.0F) -
+                clipOrigin;
+            const auto copyClip = [](std::array<float, 4> &destination,
+                                     const QVector4D value) {
+                destination = {value.x(), value.y(), value.z(), value.w()};
+            };
+            copyClip(draw.uniform.clipTopLeft, clipOrigin);
+            copyClip(draw.uniform.clipTopRight, clipOrigin + clipEdgeU);
+            copyClip(draw.uniform.clipBottomLeft, clipOrigin + clipEdgeV);
+            copyClip(draw.uniform.clipBottomRight,
+                     clipOrigin + clipEdgeU + clipEdgeV);
             // The level's last row and column are short, so the UV rect must
             // come from the tile's own valid extent rather than assuming a
             // full tile; otherwise an edge tile samples its replicated gutter
@@ -881,13 +914,6 @@ RenderViewportWidget::streamRasterTiles(QRhiCommandBuffer *commandBuffer)
         }
     }
 
-    // Coarse fallback ancestors draw first; because raster draws do not write
-    // depth, a finer tile replaces its parent by painter order.
-    std::ranges::stable_sort(
-        draws, [](const RasterLayerDraw &left, const RasterLayerDraw &right) {
-            return left.tileKey.tile.levelIndex > right.tileKey.tile.levelIndex;
-        });
-
     if (rasterFinestLevel_ == std::numeric_limits<std::uint32_t>::max()) {
         rasterFinestLevel_ = 0;
     }
@@ -895,10 +921,20 @@ RenderViewportWidget::streamRasterTiles(QRhiCommandBuffer *commandBuffer)
     // One reconciliation for the whole frame. Per-layer calls would make each
     // layer's cancellation sweep drop every other layer's queued reads.
     std::vector<RasterFrameLayer> frameLayers;
-    frameLayers.reserve(plans.size());
-    for (const auto &[index, plan] : plans) {
-        frameLayers.push_back(
-            RasterFrameLayer{.plan = &plan, .layer = &layers[index]});
+    frameLayers.reserve(layers.size());
+    for (std::size_t index = 0; index < layers.size(); ++index) {
+        const auto planned =
+            std::ranges::find_if(plans, [index](const auto &entry) {
+                return entry.first == index;
+            });
+        const auto decode = rasterDecodeStates_.find(layers[index].id);
+        frameLayers.push_back(RasterFrameLayer{
+            .plan = planned == plans.end() ? nullptr : &planned->second,
+            .layer = &layers[index],
+            .decode = decode == rasterDecodeStates_.end()
+                          ? nullptr
+                          : decode->second.parameters,
+        });
     }
     rasterTileStreamer_.reconcile(frameLayers);
 
@@ -916,24 +952,44 @@ RenderViewportWidget::streamRasterTiles(QRhiCommandBuffer *commandBuffer)
     knownRasterSources_ = std::move(liveSources);
 
     static_cast<void>(rasterTileStreamer_.drainCompletions(protectedTiles));
-    for (const RasterCacheKey &key :
-         rasterTileStreamer_.takeReadyUploads(rasterMaximumFrameUploads)) {
+    const std::vector<RasterCacheKey> readyUploads =
+        rasterTileStreamer_.takeReadyUploads(rasterMaximumFrameUploads);
+    std::vector<RasterCacheKey> attemptedUploads;
+    attemptedUploads.reserve(readyUploads.size());
+    for (const RasterCacheKey &key : readyUploads) {
         const auto target = uploadTargets.find(key.sourceId);
         if (target == uploadTargets.end()) {
+            continue;
+        }
+        const RasterTileData *tile = rasterTileStreamer_.tile(key);
+        if (!tile) {
             continue;
         }
         pending.push_back(RasterPendingUpload{
             .key = key,
             .layerId = target->second.layerId,
-            .tile = rasterTileStreamer_.tile(key),
+            .tile = tile,
             .nearest = target->second.nearest,
         });
+        attemptedUploads.push_back(key);
     }
     rasterLayerRenderer_.retainLayers(retained);
-    rasterUploadedTiles_ += rasterLayerRenderer_.uploadPending(
+    const std::size_t uploaded = rasterLayerRenderer_.uploadPending(
         commandBuffer, pending, protectedTiles, rasterFrameUploadBytes);
+    rasterUploadedTiles_ += uploaded;
+    std::vector<RasterCacheKey> retryUploads;
+    retryUploads.reserve(attemptedUploads.size() - uploaded);
+    for (const RasterCacheKey &key : attemptedUploads) {
+        if (!rasterLayerRenderer_.gpuResident(key)) {
+            retryUploads.push_back(key);
+        }
+    }
+    rasterTileStreamer_.requeueReadyUploads(retryUploads);
     rasterDrawnTiles_ = draws.size();
     std::erase_if(previousRasterSelection_, [&retained](const auto &entry) {
+        return std::ranges::find(retained, entry.first) == retained.end();
+    });
+    std::erase_if(rasterDecodeStates_, [&retained](const auto &entry) {
         return std::ranges::find(retained, entry.first) == retained.end();
     });
     return draws;

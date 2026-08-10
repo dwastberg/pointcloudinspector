@@ -6,7 +6,10 @@ layout(location = 0) out vec4 fragmentColor;
 
 layout(std140, binding = 0) uniform RasterTileData
 {
-    mat4 mvp;
+    vec4 clipTopLeft;
+    vec4 clipTopRight;
+    vec4 clipBottomLeft;
+    vec4 clipBottomRight;
     vec4 uvRect;
     float opacity;
 }
