@@ -243,6 +243,16 @@ bootstrapApplication(const ApplicationConfig &config,
                 return gdalBlockCacheUsedBytes();
             },
     });
+    const GdalCatalogCapabilities &capabilities = gdalCatalogCapabilities();
+    window->setGdalRuntimeInfo(GdalRuntimeInfo{
+        .version = QString::fromStdString(capabilities.version.release),
+        .tileIndexDriver = capabilities.tileIndex,
+        .virtualRasterDriver = capabilities.virtualRaster,
+        .geoPackageDriver = capabilities.geoPackage,
+        .flatGeobufDriver = capabilities.flatGeobuf,
+        .shapefileDriver = capabilities.shapefile,
+        .probed = true,
+    });
 #ifdef PCINSPECTOR_ENABLE_DIAGNOSTIC_UI
     if (config.qualification) {
         window->configureQualificationReport(

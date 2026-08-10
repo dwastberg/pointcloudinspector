@@ -2825,12 +2825,24 @@ TEST_CASE("main window archives native Release H metrics",
     const std::filesystem::path report =
         pci::qStringToPath(directory.path()) / "report.json";
     window.configureQualificationReport(report);
+    window.setGdalRuntimeInfo(pci::GdalRuntimeInfo{
+        .version = QStringLiteral("3.9.0"),
+        .tileIndexDriver = true,
+        .virtualRasterDriver = true,
+        .geoPackageDriver = false,
+        .flatGeobufDriver = true,
+        .shapefileDriver = false,
+        .probed = true,
+    });
     window.show();
 
     window.loadPointCloud("qualified.las");
+    static_cast<void>(window.importRasterLayer(
+        pci::RasterImportRequest{.sourcePath = "catalog.gti.gpkg"}));
     REQUIRE(waitFor([&] {
         return viewportPointer->document() &&
-               viewportPointer->document()->layerCount() == 1;
+               viewportPointer->document()->layerCount() == 1 &&
+               viewportPointer->document()->rasterLayerCount() == 1;
     }));
     viewportPointer->emitMetrics({
         .deviceName = QStringLiteral("Qualification GPU"),
@@ -2854,6 +2866,13 @@ TEST_CASE("main window archives native Release H metrics",
         .coveredLayerCount = 1,
         .processResidentBytes = 16'384,
         .peakProcessResidentBytes = 32'768,
+        .rasterCpuBytes = 2048,
+        .rasterGpuBytes = 1024,
+        .rasterTilesRequested = 9,
+        .rasterTilesCompleted = 8,
+        .rasterResidentTiles = 7,
+        .rasterFinestLevel = 1,
+        .rasterCoarsestLevel = 2,
     });
     viewportPointer->emitDisplayReady(
         viewportPointer->document()->pointLayers().front().id);
@@ -2880,11 +2899,46 @@ TEST_CASE("main window archives native Release H metrics",
     const QJsonObject layer =
         json.value(QStringLiteral("layers")).toArray().first().toObject();
     CHECK(layer.value(QStringLiteral("layer_id")).isDouble());
-    CHECK(layer.value(QStringLiteral("layer_id")).toInteger() == 1);
+    // Point and raster layers share one id space, so the reported id is
+    // checked against the document rather than against a fixed number.
+    CHECK(layer.value(QStringLiteral("layer_id")).toInteger() ==
+          static_cast<qint64>(
+              viewportPointer->document()->pointLayers().front().id.value()));
     CHECK(json.value(QStringLiteral("display_ready_ms")).toDouble() >= 0.0);
     CHECK(json.value(QStringLiteral("frame_ms_p95")).toDouble() ==
           Catch::Approx(7.5));
+
+    // A bug report has to distinguish "this build has no GTI" from "GTI is
+    // present and the catalog is broken", so drivers are reported one by one
+    // rather than collapsed into a single capability bit.
+    CHECK(json.value(QStringLiteral("gdal_probed")).toBool());
+    CHECK(json.value(QStringLiteral("gdal_version")).toString() ==
+          QStringLiteral("3.9.0"));
+    CHECK(json.value(QStringLiteral("gdal_driver_gti")).toBool());
+    CHECK(json.value(QStringLiteral("gdal_driver_vrt")).toBool());
+    CHECK_FALSE(json.value(QStringLiteral("gdal_driver_gpkg")).toBool());
+    CHECK(json.value(QStringLiteral("gdal_driver_flatgeobuf")).toBool());
+    // GTI plus one usable index format is enough, even without GPKG.
+    CHECK(json.value(QStringLiteral("catalog_import_available")).toBool());
+    CHECK(json.value(QStringLiteral("raster_cpu_bytes")).toInteger() == 2048);
+    CHECK(json.value(QStringLiteral("raster_gpu_bytes")).toInteger() == 1024);
+    CHECK(json.value(QStringLiteral("raster_tiles_requested")).toInteger() ==
+          9);
+    CHECK(json.value(QStringLiteral("raster_finest_level")).toInteger() == 1);
+
+    const QJsonArray rasters =
+        json.value(QStringLiteral("raster_layers")).toArray();
+    REQUIRE(rasters.size() == 1);
+    const QJsonObject raster = rasters.first().toObject();
+    CHECK(raster.value(QStringLiteral("layer_id")).isDouble());
+    CHECK(raster.value(QStringLiteral("width")).toInteger() > 0);
+    CHECK(raster.value(QStringLiteral("levels")).toInteger() >= 1);
+    // The warning that display quality is bounded by the source travels into
+    // the report, so a "looks wrong" bug can be triaged without the file.
+    CHECK(raster.contains(QStringLiteral("insufficient_overviews")));
+    CHECK(raster.contains(QStringLiteral("driver")));
 }
+
 #endif
 
 } // namespace

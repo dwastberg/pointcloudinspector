@@ -1,6 +1,7 @@
 #pragma once
 
 #include "app/GdalCacheControls.h"
+#include "app/GdalRuntimeInfo.h"
 #include "app/MemoryBudgetPolicy.h"
 #include "app/PerformanceSettings.h"
 #include "app/PointCloudLoadMode.h"
@@ -57,6 +58,7 @@ public:
     // Installed by the application layer, which owns the GDAL link. Applying
     // the current settings once installed is the caller's responsibility.
     void setGdalCacheControls(GdalCacheControls controls);
+    void setGdalRuntimeInfo(GdalRuntimeInfo info);
 #ifdef PCINSPECTOR_ENABLE_DIAGNOSTIC_UI
     void configureQualificationReport(std::filesystem::path outputPath,
                                       bool exitAfterWrite = false);
@@ -117,6 +119,7 @@ private:
     bool navigationHintDismissed_ = false;
     PerformanceSettings performanceSettings_;
     GdalCacheControls gdalCache_;
+    GdalRuntimeInfo gdalRuntimeInfo_;
 #ifdef PCINSPECTOR_ENABLE_DIAGNOSTIC_UI
     bool profileLoading_ = false;
     QualificationReporter qualificationReporter_;

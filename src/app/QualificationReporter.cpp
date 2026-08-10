@@ -36,6 +36,11 @@ bool QualificationReporter::configured() const noexcept
     return !outputPath_.empty();
 }
 
+void QualificationReporter::setGdalRuntimeInfo(GdalRuntimeInfo info)
+{
+    gdalRuntimeInfo_ = std::move(info);
+}
+
 void QualificationReporter::record(const RenderMetrics &metrics)
 {
     lastRenderMetrics_ = metrics;
@@ -106,6 +111,31 @@ QualificationWriteResult QualificationReporter::write(const QString &status,
             {QStringLiteral("index_bytes"),
              static_cast<qint64>(storage.persistentBytes)},
             {QStringLiteral("index_reused"), storage.reused},
+            {QStringLiteral("visible"), layer.visible},
+        });
+    }
+
+    QJsonArray rasterLayers;
+    for (const RasterLayer &layer : session.document()->rasterLayers()) {
+        const RasterLayerMetadata &raster = layer.data->metadata();
+        rasterLayers.append(QJsonObject{
+            {QStringLiteral("layer_id"), static_cast<qint64>(layer.id.value())},
+            {QStringLiteral("path"), pathToQString(raster.sourcePath)},
+            {QStringLiteral("driver"),
+             QString::fromStdString(raster.sourceDriver)},
+            {QStringLiteral("width"), static_cast<qint64>(raster.width)},
+            {QStringLiteral("height"), static_cast<qint64>(raster.height)},
+            {QStringLiteral("bands"), static_cast<qint64>(raster.bands.size())},
+            {QStringLiteral("levels"),
+             static_cast<qint64>(raster.levels.size())},
+            {QStringLiteral("coarsest_level_width"),
+             static_cast<qint64>(
+                 raster.levels.empty() ? 0U : raster.levels.back().width)},
+            {QStringLiteral("insufficient_overviews"),
+             raster.insufficientOverviews},
+            {QStringLiteral("crs_missing"), raster.crsMissing},
+            {QStringLiteral("crs_mismatch"), raster.crsMismatch},
+            {QStringLiteral("extent_disjoint"), raster.extentDisjointXY},
             {QStringLiteral("visible"), layer.visible},
         });
     }
@@ -189,8 +219,42 @@ QualificationWriteResult QualificationReporter::write(const QString &status,
          static_cast<qint64>(metrics.cacheEvictions)},
         {QStringLiteral("decode_cancelled"),
          static_cast<qint64>(metrics.decodeRequestsCancelled)},
+        {QStringLiteral("gdal_probed"), gdalRuntimeInfo_.probed},
+        {QStringLiteral("gdal_version"), gdalRuntimeInfo_.version},
+        // Driver availability is reported per driver rather than as one
+        // capability flag, so a failure report distinguishes a missing
+        // container from a missing index format.
+        {QStringLiteral("gdal_driver_gti"), gdalRuntimeInfo_.tileIndexDriver},
+        {QStringLiteral("gdal_driver_vrt"),
+         gdalRuntimeInfo_.virtualRasterDriver},
+        {QStringLiteral("gdal_driver_gpkg"), gdalRuntimeInfo_.geoPackageDriver},
+        {QStringLiteral("gdal_driver_flatgeobuf"),
+         gdalRuntimeInfo_.flatGeobufDriver},
+        {QStringLiteral("gdal_driver_shapefile"),
+         gdalRuntimeInfo_.shapefileDriver},
+        {QStringLiteral("catalog_import_available"),
+         gdalRuntimeInfo_.catalogImport()},
+        {QStringLiteral("raster_cpu_bytes"),
+         static_cast<qint64>(metrics.rasterCpuBytes)},
+        {QStringLiteral("raster_cpu_peak_bytes"),
+         static_cast<qint64>(metrics.rasterCpuPeakBytes)},
+        {QStringLiteral("raster_gpu_bytes"),
+         static_cast<qint64>(metrics.rasterGpuBytes)},
+        {QStringLiteral("raster_tiles_requested"),
+         static_cast<qint64>(metrics.rasterTilesRequested)},
+        {QStringLiteral("raster_tiles_completed"),
+         static_cast<qint64>(metrics.rasterTilesCompleted)},
+        {QStringLiteral("raster_tiles_failed"),
+         static_cast<qint64>(metrics.rasterTilesFailed)},
+        {QStringLiteral("raster_tiles_resident"),
+         static_cast<qint64>(metrics.rasterResidentTiles)},
+        {QStringLiteral("raster_finest_level"),
+         static_cast<qint64>(metrics.rasterFinestLevel)},
+        {QStringLiteral("raster_coarsest_level"),
+         static_cast<qint64>(metrics.rasterCoarsestLevel)},
         {QStringLiteral("sources"), sources},
         {QStringLiteral("layers"), layers},
+        {QStringLiteral("raster_layers"), rasterLayers},
     };
 
     QualificationWriteResult result{

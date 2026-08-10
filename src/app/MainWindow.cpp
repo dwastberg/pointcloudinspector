@@ -874,6 +874,14 @@ void MainWindow::setGdalCacheControls(GdalCacheControls controls)
     static_cast<void>(applyPerformanceSettings(performanceSettings_));
 }
 
+void MainWindow::setGdalRuntimeInfo(GdalRuntimeInfo info)
+{
+    gdalRuntimeInfo_ = std::move(info);
+#ifdef PCINSPECTOR_ENABLE_DIAGNOSTIC_UI
+    qualificationReporter_.setGdalRuntimeInfo(gdalRuntimeInfo_);
+#endif
+}
+
 LoadJobId MainWindow::importRasterLayer(RasterImportRequest request)
 {
     // Rasters draw through the same renderer path as points, so unlike vector
