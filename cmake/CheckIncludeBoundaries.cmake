@@ -43,7 +43,9 @@ foreach(source IN LISTS project_sources)
                relative STREQUAL
                    "tests/component/OgrVectorImportTests.cpp" OR
                relative STREQUAL
-                   "tests/component/GdalRasterImportTests.cpp")
+                   "tests/component/GdalRasterImportTests.cpp" OR
+               relative STREQUAL
+                   "tests/stress/RasterLargeSourceTests.cpp")
                 set(allowed TRUE)
             endif()
             if(NOT allowed)
@@ -60,7 +62,14 @@ foreach(source IN LISTS project_sources)
                relative MATCHES
                    "^tests/qt/(BackendPolicy|PointCloudRenderer|VectorLayerRenderer|RasterLayerRenderer|RasterTileStreamer|UploadScheduler|PointPickResult)Tests.cpp$" OR
                relative STREQUAL
-                   "tests/support/RenderViewportTestAccess.h")
+                   "tests/support/RenderViewportTestAccess.h" OR
+               # The large-source acceptance lane is cross-target on purpose:
+               # the bound it asserts spans the GDAL adapter, which issues the
+               # reads, and the streamer, which admits and evicts them. Testing
+               # either half alone could not show that reads stay proportional
+               # to requested tiles rather than to source size.
+               relative STREQUAL
+                   "tests/stress/RasterLargeSourceTests.cpp")
                 set(allowed TRUE)
             endif()
             if(NOT allowed)

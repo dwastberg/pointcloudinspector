@@ -132,6 +132,24 @@ pci_add_catch_test_target(pcinspector_import_gdal_tests
         pcinspector::import_gdal
         GDAL::GDAL)
 
+# The large-source acceptance lane. It links both the GDAL adapter and the
+# renderer's streaming code because the bound being asserted spans them: reads
+# come from the adapter, admission and eviction from the streamer.
+pci_add_catch_test_target(pcinspector_raster_stress_tests
+        WITH_MAIN
+        INTEGRATION
+        SOURCES
+        fixtures/GdalRasterFixtureFactory.cpp
+        stress/RasterLargeSourceTests.cpp
+        INCLUDE_DIRECTORIES
+        "${CMAKE_CURRENT_SOURCE_DIR}"
+        LIBRARIES
+        pcinspector::import_gdal
+        pcinspector::renderer
+        GDAL::GDAL
+        PROPERTIES
+        TIMEOUT 120)
+
 pci_add_catch_test_target(pcinspector_import_ogr_tests
         WITH_MAIN
         SOURCES
