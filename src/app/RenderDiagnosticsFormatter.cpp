@@ -5,7 +5,8 @@ namespace pci {
 QString RenderDiagnosticsFormatter::panelText(
     const RenderMetrics &metrics,
     const PointCloudLoadControllerMetrics &loadMetrics,
-    const std::optional<std::uint64_t> gdalCacheUsedBytes)
+    const std::optional<std::uint64_t> gdalCacheUsedBytes,
+    const std::optional<std::uint64_t> gdalCacheBudgetBytes)
 {
     constexpr double bytesPerMiB = 1024.0 * 1024.0;
     const auto mib = [](const std::uint64_t bytes) {
@@ -14,14 +15,21 @@ QString RenderDiagnosticsFormatter::panelText(
     // All three raster allocators on one line, because the point of budgeting
     // them is being able to see them together.
     const QString rasterMemory =
-        QStringLiteral("Raster memory: %1 MiB CPU (peak %2), %3 MiB GPU, %4 "
-                       "GDAL block cache")
+        QStringLiteral("Raster memory: CPU %1 / %2 MiB (peak %3), GPU %4 / "
+                       "%5 MiB (peak %6), GDAL block cache %7 / %8")
             .arg(mib(metrics.rasterCpuBytes), 0, 'f', 1)
+            .arg(mib(metrics.rasterCpuBudgetBytes), 0, 'f', 1)
             .arg(mib(metrics.rasterCpuPeakBytes), 0, 'f', 1)
             .arg(mib(metrics.rasterGpuBytes), 0, 'f', 1)
+            .arg(mib(metrics.rasterGpuBudgetBytes), 0, 'f', 1)
+            .arg(mib(metrics.rasterGpuPeakBytes), 0, 'f', 1)
             .arg(gdalCacheUsedBytes ? QStringLiteral("%1 MiB").arg(
                                           mib(*gdalCacheUsedBytes), 0, 'f', 1)
-                                    : QStringLiteral("unavailable"));
+                                    : QStringLiteral("unavailable"))
+            .arg(gdalCacheBudgetBytes
+                     ? QStringLiteral("%1 MiB").arg(
+                           mib(*gdalCacheBudgetBytes), 0, 'f', 1)
+                     : QStringLiteral("unavailable"));
     const QString rasterTiles =
         QStringLiteral("Raster tiles: %1 drawn / %2 selected / %3 resident, "
                        "%4 pending, levels %5-%6")

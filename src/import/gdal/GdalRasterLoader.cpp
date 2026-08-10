@@ -309,9 +309,24 @@ intersectBackedLevels(GDALDataset &dataset,
             level.rgbaBands[3] = RasterBandRef{selection.alphaBand, matched};
         }
         if (selection.usesDatasetMask) {
-            // Taken from the same overview band as the color, so its
-            // dimensions match by construction.
-            level.maskBand = level.rgbaBands[0];
+            // A color overview does not imply that an explicit dataset mask
+            // has a matching overview. Inspect the actual selected band and
+            // reject this level instead of reading a differently sized mask
+            // against it.
+            const RasterBandRef colorRef = level.rgbaBands[0];
+            GDALRasterBand *selected = dataset.GetRasterBand(colorRef.band);
+            if (selected != nullptr && colorRef.overview >= 0) {
+                selected = selected->GetOverview(colorRef.overview);
+            }
+            GDALRasterBand *mask =
+                selected == nullptr ? nullptr : selected->GetMaskBand();
+            if (selected == nullptr || mask == nullptr ||
+                (selected->GetMaskFlags() & GMF_ALL_VALID) != 0 ||
+                static_cast<std::uint32_t>(mask->GetXSize()) != width ||
+                static_cast<std::uint32_t>(mask->GetYSize()) != height) {
+                return std::nullopt;
+            }
+            level.maskBand = colorRef;
         }
         return level;
     };

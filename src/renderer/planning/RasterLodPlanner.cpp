@@ -354,13 +354,13 @@ RasterLodPlan planRasterTiles(const RasterLodPlanInput &input)
         const std::size_t remaining =
             occupied < effectiveCap ? effectiveCap - occupied : 0;
         bool childrenTruncated = false;
-        const std::vector<RasterTileKey> children = visibleCells(
-            metadata,
-            key.levelIndex - 1,
-            polygon,
-            tileBaseRect(metadata, key),
-            remaining,
-            &childrenTruncated);
+        const std::vector<RasterTileKey> children =
+            visibleCells(metadata,
+                         key.levelIndex - 1,
+                         polygon,
+                         tileBaseRect(metadata, key),
+                         remaining,
+                         &childrenTruncated);
         // Arbitrarily large gaps between overviews can turn one parent into
         // millions of child candidates, so the count is checked before the
         // children are materialized into the plan.
@@ -394,9 +394,14 @@ RasterLodPlan planRasterTiles(const RasterLodPlanInput &input)
             plan.protectedTiles.push_back(key);
             continue;
         }
-        if (!decoded(key)) {
+        const bool targetDecoded = decoded(key);
+        if (targetDecoded) {
+            plan.decodedUploads.push_back(key);
+            plan.protectedTiles.push_back(key);
+        } else {
             plan.requests.push_back(key);
         }
+        bool decodedFallbackAvailable = targetDecoded;
 
         const PixelRect cell = tileBaseRect(metadata, key);
         for (std::uint32_t level = key.levelIndex + 1;
@@ -405,22 +410,26 @@ RasterLodPlan planRasterTiles(const RasterLodPlanInput &input)
             // The ancestor relation is geometric, not x / 2: adjacent GDAL
             // levels may reduce by any ratio.
             bool found = false;
-            for (const RasterTileKey candidate : visibleCells(
-                     metadata,
-                     level,
-                     polygon,
-                     cell,
-                     effectiveCap)) {
+            for (const RasterTileKey candidate :
+                 visibleCells(metadata, level, polygon, cell, effectiveCap)) {
                 if (resident(candidate)) {
                     plan.draw.push_back(candidate);
                     plan.protectedTiles.push_back(candidate);
                     found = true;
                     break;
                 }
+                if (decoded(candidate)) {
+                    plan.decodedUploads.push_back(candidate);
+                    plan.protectedTiles.push_back(candidate);
+                    decodedFallbackAvailable = true;
+                    // Keep walking: an even coarser GPU-resident ancestor can
+                    // remain visible while this decoded fallback is uploaded.
+                    continue;
+                }
                 // Missing ancestors are requested as well as the detail tile.
                 // The final priority sort puts these coarser keys first, so an
                 // initially blank close view gains coverage before sharpness.
-                if (!decoded(candidate)) {
+                if (!decodedFallbackAvailable) {
                     plan.requests.push_back(candidate);
                 }
             }
@@ -435,6 +444,9 @@ RasterLodPlan planRasterTiles(const RasterLodPlanInput &input)
     std::ranges::sort(plan.protectedTiles);
     plan.protectedTiles.erase(std::ranges::unique(plan.protectedTiles).begin(),
                               plan.protectedTiles.end());
+    std::ranges::sort(plan.decodedUploads);
+    plan.decodedUploads.erase(std::ranges::unique(plan.decodedUploads).begin(),
+                              plan.decodedUploads.end());
     std::ranges::sort(plan.requests);
     plan.requests.erase(std::ranges::unique(plan.requests).begin(),
                         plan.requests.end());
@@ -447,19 +459,20 @@ RasterLodPlan planRasterTiles(const RasterLodPlanInput &input)
                                                   visibleBounds.minimumY,
                                                   visibleBounds.maximumX,
                                                   visibleBounds.maximumY});
-    std::ranges::sort(
-        plan.requests,
-        [&](const RasterTileKey left, const RasterTileKey right) {
-            if (left.levelIndex != right.levelIndex) {
-                return left.levelIndex > right.levelIndex;
-            }
-            const Vec3d leftCenter = tileCenterWorld(
-                metadata, input.layer.style, tileBaseRect(metadata, left));
-            const Vec3d rightCenter = tileCenterWorld(
-                metadata, input.layer.style, tileBaseRect(metadata, right));
-            return dot(leftCenter - focus, leftCenter - focus) <
-                   dot(rightCenter - focus, rightCenter - focus);
-        });
+    const auto priority = [&](const RasterTileKey left,
+                              const RasterTileKey right) {
+        if (left.levelIndex != right.levelIndex) {
+            return left.levelIndex > right.levelIndex;
+        }
+        const Vec3d leftCenter = tileCenterWorld(
+            metadata, input.layer.style, tileBaseRect(metadata, left));
+        const Vec3d rightCenter = tileCenterWorld(
+            metadata, input.layer.style, tileBaseRect(metadata, right));
+        return dot(leftCenter - focus, leftCenter - focus) <
+               dot(rightCenter - focus, rightCenter - focus);
+    };
+    std::ranges::sort(plan.requests, priority);
+    std::ranges::sort(plan.decodedUploads, priority);
 
     if (plan.selected.size() > effectiveCap) {
         plan.capacityLimited = true;

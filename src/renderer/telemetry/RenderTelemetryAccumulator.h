@@ -60,8 +60,11 @@ struct RenderUploadTelemetry {
 struct RenderResidencyTelemetry {
     std::uint64_t gpuVectorBytes = 0;
     std::uint64_t rasterCpuBytes = 0;
+    std::uint64_t rasterCpuBudgetBytes = 0;
     std::uint64_t rasterCpuPeakBytes = 0;
     std::uint64_t rasterGpuBytes = 0;
+    std::uint64_t rasterGpuBudgetBytes = 0;
+    std::uint64_t rasterGpuPeakBytes = 0;
     std::uint64_t rasterTilesRequested = 0;
     std::uint64_t rasterTilesCompleted = 0;
     std::uint64_t rasterTilesCancelled = 0;

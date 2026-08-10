@@ -39,6 +39,10 @@ struct RasterLodPlan {
     std::vector<RasterTileKey> selected; // target detail
     std::vector<RasterTileKey> draw;     // resident target or ancestors
     std::vector<RasterTileKey> requests; // priority order
+    // CPU-resident but GPU-missing target/fallback tiles. Keeping this
+    // separate from source reads lets a recreated QRhi repopulate residency
+    // without rereading GDAL.
+    std::vector<RasterTileKey> decodedUploads;
     std::vector<RasterTileKey> protectedTiles;
     bool insufficientOverviews = false;
     bool capacityLimited = false;

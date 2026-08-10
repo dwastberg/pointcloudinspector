@@ -6,16 +6,20 @@
 #include "pointcloud/PointColorMapCatalog.h"
 
 #include <QApplication>
+#include <QCoreApplication>
 #include <QDebug>
 #include <QIcon>
 #include <QTextStream>
 
 #include <exception>
 #include <memory>
+#include <optional>
+#include <string_view>
 
-int main(int argc, char *argv[])
+namespace {
+
+void configureApplicationMetadata()
 {
-    QApplication application(argc, argv);
     QCoreApplication::setApplicationName(
         QStringLiteral("Point Cloud Inspector"));
     QCoreApplication::setOrganizationName(
@@ -24,29 +28,67 @@ int main(int argc, char *argv[])
         QStringLiteral("pointcloudinspector.local"));
     QCoreApplication::setApplicationVersion(
         QStringLiteral(PCINSPECTOR_VERSION));
+}
+
+[[nodiscard]] bool requestsGdalCapabilities(const int argc, char *argv[])
+{
+    for (int index = 1; index < argc; ++index) {
+        if (std::string_view(argv[index]) == "--gdal-capabilities") {
+            return true;
+        }
+    }
+    return false;
+}
+
+[[nodiscard]] std::optional<int>
+writeEarlyExit(const pci::ApplicationInvocation &invocation)
+{
+    const auto *earlyExit = std::get_if<pci::ConfigEarlyExit>(&invocation);
+    if (earlyExit == nullptr) {
+        return std::nullopt;
+    }
+    QTextStream stream(earlyExit->writeToStandardError ? stderr : stdout);
+    stream << earlyExit->message;
+    if (!earlyExit->message.endsWith(QLatin1Char('\n'))) {
+        stream << '\n';
+    }
+    return earlyExit->exitCode;
+}
+
+} // namespace
+
+int main(int argc, char *argv[])
+{
+    // Packaging probes must not initialize a window-system plugin. On macOS,
+    // constructing QApplication alone registers a GUI process and can abort
+    // on a genuinely headless runner before command-line parsing begins.
+    if (requestsGdalCapabilities(argc, argv)) {
+        QCoreApplication application(argc, argv);
+        configureApplicationMetadata();
+        const pci::ApplicationInvocation invocation =
+            pci::parseApplicationInvocation(application.arguments());
+        if (const std::optional<int> earlyExit = writeEarlyExit(invocation)) {
+            return *earlyExit;
+        }
+        const pci::ApplicationConfig config =
+            std::get<pci::ApplicationConfig>(invocation);
+        return config.reportGdalCapabilities ? pci::reportGdalCapabilities()
+                                             : 1;
+    }
+
+    QApplication application(argc, argv);
+    configureApplicationMetadata();
     application.setWindowIcon(
         QIcon(QStringLiteral(":/icons/pcinspector-256.png")));
     pci::applyStrataTheme(application);
 
     const pci::ApplicationInvocation invocation =
         pci::parseApplicationInvocation(application.arguments());
-    if (const auto *earlyExit =
-            std::get_if<pci::ConfigEarlyExit>(&invocation)) {
-        QTextStream stream(earlyExit->writeToStandardError ? stderr : stdout);
-        stream << earlyExit->message;
-        if (!earlyExit->message.endsWith(QLatin1Char('\n'))) {
-            stream << '\n';
-        }
-        return earlyExit->exitCode;
+    if (const std::optional<int> earlyExit = writeEarlyExit(invocation)) {
+        return *earlyExit;
     }
     const pci::ApplicationConfig config =
         std::get<pci::ApplicationConfig>(invocation);
-    if (config.reportGdalCapabilities) {
-        // Answered before any window or renderer exists, so a packaged build
-        // can be checked on a headless machine.
-        return pci::reportGdalCapabilities();
-    }
-
     pci::PointColorMapCatalog colorMapCatalog;
     const pci::EmbeddedColorMapLoadResult colorMapLoad =
         pci::loadEmbeddedColorMaps(colorMapCatalog);

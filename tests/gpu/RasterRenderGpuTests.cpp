@@ -1,4 +1,6 @@
 #include "app/ApplicationOptions.h"
+#include "fixtures/GdalRasterFixtureFactory.h"
+#include "import/gdal/GdalRasterLoader.h"
 #include "renderer/rhi/RenderViewportWidget_p.h"
 #include "scene/PointCloudScene.h"
 #include "support/RenderViewportTestAccess.h"
@@ -10,10 +12,17 @@
 #include <QTest>
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <filesystem>
+#include <functional>
 #include <memory>
+#include <mutex>
+#include <optional>
 #include <stdexcept>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -50,11 +59,71 @@ struct Rgba {
 using LevelPainter = std::function<Rgba(
     std::uint32_t levelIndex, double basePixelX, double basePixelY)>;
 
+const pci::test::GdalRasterFixturePaths &gdalFixtures()
+{
+    static const pci::test::GdalRasterFixturePaths paths =
+        pci::test::writeGdalRasterFixtures(
+            std::filesystem::temp_directory_path() / "pci-raster-gpu");
+    return paths;
+}
+
+class RecordingRasterSource final : public pci::RasterTileSource {
+public:
+    explicit RecordingRasterSource(pci::RasterTileSourcePtr source)
+        : source_(std::move(source))
+    {
+    }
+
+    [[nodiscard]] const pci::RasterLayerMetadata &
+    metadata() const noexcept override
+    {
+        return source_->metadata();
+    }
+
+    [[nodiscard]] std::uint64_t
+    readReservationBytes(const pci::RasterTileRequest &request) const override
+    {
+        return source_->readReservationBytes(request);
+    }
+
+    [[nodiscard]] pci::RasterTileData
+    readTile(const pci::RasterTileRequest &request,
+             std::stop_token stop) const override
+    {
+        {
+            const std::scoped_lock lock(mutex_);
+            levels_.push_back(request.key.levelIndex);
+        }
+        return source_->readTile(request, stop);
+    }
+
+    [[nodiscard]] std::vector<std::uint32_t> levels() const
+    {
+        const std::scoped_lock lock(mutex_);
+        return levels_;
+    }
+
+    void clearLevels()
+    {
+        const std::scoped_lock lock(mutex_);
+        levels_.clear();
+    }
+
+private:
+    pci::RasterTileSourcePtr source_;
+    mutable std::mutex mutex_;
+    mutable std::vector<std::uint32_t> levels_;
+};
+
 class PatternSource final : public pci::RasterTileSource {
 public:
-    PatternSource(pci::RasterLayerMetadata metadata, LevelPainter painter)
+    PatternSource(pci::RasterLayerMetadata metadata,
+                  LevelPainter painter,
+                  const std::chrono::milliseconds readDelay =
+                      std::chrono::milliseconds{0})
         : metadata_(std::move(metadata))
         , painter_(std::move(painter))
+        , readDelay_(readDelay)
     {
     }
 
@@ -70,6 +139,13 @@ public:
     {
         if (stop.stop_requested()) {
             throw pci::RasterReadCancelled{};
+        }
+        ++reads;
+        if (readDelay_.count() > 0) {
+            std::this_thread::sleep_for(readDelay_);
+            if (stop.stop_requested()) {
+                throw pci::RasterReadCancelled{};
+            }
         }
         if (request.key.levelIndex >= metadata_.levels.size()) {
             throw pci::RasterReadError("unknown level");
@@ -88,7 +164,6 @@ public:
         tile.validWidth = static_cast<std::uint16_t>(extent.width);
         tile.validHeight = static_cast<std::uint16_t>(extent.height);
         tile.rgba.assign(pci::rasterStoredTileBytes, std::byte{0});
-        ++reads;
 
         const auto texelOrigin = [&](const std::uint32_t index,
                                      const double perTexel,
@@ -142,6 +217,7 @@ public:
 private:
     pci::RasterLayerMetadata metadata_;
     LevelPainter painter_;
+    std::chrono::milliseconds readDelay_;
 };
 
 [[nodiscard]] pci::RasterLayerMetadata
@@ -177,13 +253,14 @@ patternMetadata(const std::vector<std::uint32_t> &levelWidths)
     return metadata;
 }
 
-[[nodiscard]] pci::RasterLayerDataPtr
-patternLayer(const std::vector<std::uint32_t> &levelWidths,
-             LevelPainter painter,
-             std::shared_ptr<PatternSource> *sourceOut = nullptr)
+[[nodiscard]] pci::RasterLayerDataPtr patternLayer(
+    const std::vector<std::uint32_t> &levelWidths,
+    LevelPainter painter,
+    std::shared_ptr<PatternSource> *sourceOut = nullptr,
+    const std::chrono::milliseconds readDelay = std::chrono::milliseconds{0})
 {
-    auto source = std::make_shared<PatternSource>(patternMetadata(levelWidths),
-                                                  std::move(painter));
+    auto source = std::make_shared<PatternSource>(
+        patternMetadata(levelWidths), std::move(painter), readDelay);
     if (sourceOut) {
         *sourceOut = source;
     }
@@ -377,6 +454,44 @@ void frameWholeScene(pci::RenderViewportWidget &viewport)
     viewport.frameVisibleLayersTopDown();
 }
 
+[[nodiscard]] pci::VectorLayerDataPtr
+filledVectorRectangle(const float minimumX,
+                      const float minimumY,
+                      const float maximumX,
+                      const float maximumY)
+{
+    auto data = std::make_shared<pci::VectorLayerData>();
+    data->origin = {};
+    data->fillBatches.push_back({
+        .vertices =
+            {
+                {minimumX, minimumY},
+                {maximumX, minimumY},
+                {maximumX, maximumY},
+                {minimumX, maximumY},
+            },
+        .indices = {0, 1, 2, 0, 2, 3},
+    });
+    data->bounds = {
+        .minimum = {minimumX, minimumY, 0.0},
+        .maximum = {maximumX, maximumY, 0.0},
+    };
+    data->summary.polygonParts = 1;
+    data->featureCount = 1;
+    return data;
+}
+
+[[nodiscard]] pci::VectorLayerStyle greenVectorFill()
+{
+    pci::VectorLayerStyle style;
+    style.fill = {0.0F, 1.0F, 0.0F, 1.0F};
+    style.stroke.alpha = 0.0F;
+    style.marker.alpha = 0.0F;
+    style.opacity = 1.0F;
+    style.alwaysOnTop = true;
+    return style;
+}
+
 [[nodiscard]] std::unique_ptr<pci::RenderViewportWidget> makeViewport()
 {
     auto viewport = std::make_unique<pci::RenderViewportWidget>(
@@ -390,6 +505,171 @@ void frameWholeScene(pci::RenderViewportWidget &viewport)
 
 } // namespace
 
+TEST_CASE("GPU raster streaming wakes an otherwise idle viewport",
+          "[gpu][raster][streaming]")
+{
+    std::shared_ptr<PatternSource> source;
+    auto document = std::make_shared<pci::SceneDocument>();
+    static_cast<void>(document->addRasterLayer(patternLayer(
+        {256},
+        [](std::uint32_t, double, double) {
+            return Rgba{0, 0, 255};
+        },
+        &source,
+        std::chrono::milliseconds{300})));
+
+    auto viewport = makeViewport();
+    viewport->setDocument(document->snapshot(), true);
+    viewport->setEyeDomeLightingEnabled(false);
+    frameWholeScene(*viewport);
+    viewport->show();
+    REQUIRE(QTest::qWaitForWindowExposed(viewport.get(), 2000));
+
+    // The initial frame starts a deliberately delayed worker read. From this
+    // point onward the test only services the Qt event loop: completion must
+    // wake the viewport and upload progress must schedule the draw frame.
+    REQUIRE(QTest::qWaitFor(
+        [&] {
+            return source->reads.load() > 0 &&
+                   pci::testAccess(*viewport).renderedFrameCountForTesting() >
+                       0;
+        },
+        2000));
+    const std::uint64_t initialFrame =
+        pci::testAccess(*viewport).renderedFrameCountForTesting();
+
+    REQUIRE(QTest::qWaitFor(
+        [&] {
+            return pci::testAccess(*viewport).rasterResidentTilesForTesting() >
+                       0 &&
+                   pci::testAccess(*viewport).rasterDrawnTilesForTesting() > 0;
+        },
+        5000));
+    CHECK(pci::testAccess(*viewport).renderedFrameCountForTesting() >=
+          initialFrame + 2);
+    CHECK(countWhere(viewport->grabFramebuffer(), nearlyBlue) > 1000);
+}
+
+TEST_CASE("GPU raster resources recreate from decoded tiles without rereading",
+          "[gpu][raster][lifecycle]")
+{
+    std::shared_ptr<PatternSource> source;
+    auto document = std::make_shared<pci::SceneDocument>();
+    static_cast<void>(document->addRasterLayer(patternLayer(
+        {256},
+        [](std::uint32_t, double, double) {
+            return Rgba{255, 0, 0};
+        },
+        &source)));
+
+    auto viewport = makeViewport();
+    viewport->setDocument(document->snapshot(), true);
+    viewport->setEyeDomeLightingEnabled(false);
+    frameWholeScene(*viewport);
+    REQUIRE(renderUntil(*viewport, [](const QImage &image) {
+        return countWhere(image, nearlyRed) > 1000;
+    }));
+    const int readsBeforeRelease = source->reads.load();
+    REQUIRE(readsBeforeRelease > 0);
+
+    pci::testAccess(*viewport).releaseResourcesForTesting();
+    CHECK(pci::testAccess(*viewport).rasterGpuBytesForTesting() == 0);
+    CHECK(pci::testAccess(*viewport).rasterResidentTilesForTesting() == 0);
+    CHECK(pci::testAccess(*viewport).rasterDrawnTilesForTesting() == 0);
+
+    const std::uint64_t releasedFrame =
+        pci::testAccess(*viewport).renderedFrameCountForTesting();
+    viewport->requestRender();
+    REQUIRE(QTest::qWaitFor(
+        [&] {
+            return pci::testAccess(*viewport).rasterResidentTilesForTesting() >
+                       0 &&
+                   pci::testAccess(*viewport).rasterDrawnTilesForTesting() > 0;
+        },
+        5000));
+    CHECK(pci::testAccess(*viewport).renderedFrameCountForTesting() >=
+          releasedFrame + 2);
+    CHECK(source->reads.load() == readsBeforeRelease);
+    CHECK(countWhere(viewport->grabFramebuffer(), nearlyRed) > 1000);
+}
+
+TEST_CASE("GPU GTI catalog covers from an overview then reaches native pixels",
+          "[gpu][raster][catalog][stress]")
+{
+    pci::GdalRasterLoader loader;
+    pci::RasterImportRequest request;
+    request.sourcePath = gdalFixtures().catalog;
+    const pci::RasterImportPreflight inspected = loader.inspect(request);
+    REQUIRE(inspected.data);
+    REQUIRE(inspected.data->metadata().levels.size() > 1);
+
+    auto recording =
+        std::make_shared<RecordingRasterSource>(inspected.data->source);
+    auto data = std::make_shared<pci::RasterLayerData>(pci::RasterLayerData{
+        .sourceId = pci::nextRasterSourceId(),
+        .source = recording,
+    });
+    const pci::RasterLayerMetadata &metadata = data->metadata();
+    auto document = std::make_shared<pci::SceneDocument>();
+    static_cast<void>(document->addRasterLayer(std::move(data)));
+
+    constexpr std::uint64_t cpuBudget = 32ULL * 1024 * 1024;
+    constexpr std::uint64_t gpuBudget = 5ULL * 1024 * 1024;
+    auto viewport = makeViewport();
+    viewport->setDocument(document->snapshot(), false);
+    viewport->setEyeDomeLightingEnabled(false);
+    viewport->setRasterByteBudgets(cpuBudget, gpuBudget);
+
+    // The north-west member is fixed at 512 pixels square with 2 m pixels.
+    // Start far enough away that only a real backed overview is appropriate.
+    const pci::Vec3d memberCenter{metadata.bounds.minimum[0] + 512.0,
+                                  metadata.bounds.maximum[1] - 512.0,
+                                  0.0};
+    pci::testAccess(*viewport).frameTopDownAtForTesting(
+        memberCenter, 1500.0, 4.0);
+    const bool overviewVisible =
+        renderUntil(*viewport, [](const QImage &image) {
+            return countWhere(image, [](const QColor &color) {
+                       return !background(color);
+                   }) > 100;
+        });
+    const QImage overviewImage = viewport->grabFramebuffer();
+    const std::uint64_t overviewPixels =
+        countWhere(overviewImage, [](const QColor &color) {
+            return !background(color);
+        });
+    const std::vector<std::uint32_t> overviewReads = recording->levels();
+    CAPTURE(overviewPixels, overviewReads);
+    REQUIRE(overviewVisible);
+    REQUIRE_FALSE(overviewReads.empty());
+    CHECK(std::ranges::none_of(overviewReads, [](const std::uint32_t level) {
+        return level == 0;
+    }));
+    CHECK(pci::testAccess(*viewport).rasterGpuBytesForTesting() <= gpuBudget);
+    CHECK(pci::testAccess(*viewport).rasterGpuPeakBytesForTesting() <=
+          gpuBudget);
+
+    // At native scale the member's 2x2 checkerboard is visible as distinct
+    // dark and bright pixels. Its averaged overview is uniform, so this also
+    // proves the level-0 read made it through upload and draw.
+    recording->clearLevels();
+    pci::testAccess(*viewport).frameTopDownAtForTesting(
+        memberCenter, 1500.0, 0.10);
+    REQUIRE(renderUntil(*viewport, [&](const QImage &image) {
+        const std::vector<std::uint32_t> levels = recording->levels();
+        const bool readNative = std::ranges::find(levels, 0U) != levels.end();
+        const std::uint64_t dark = countWhere(image, [](const QColor &color) {
+            return color.red() >= 30 && color.red() < 100 &&
+                   color.green() >= 30 && color.green() < 100 &&
+                   color.blue() >= 30 && color.blue() < 100;
+        });
+        return readNative && dark > 100 && countWhere(image, nearlyWhite) > 100;
+    }));
+    CHECK(pci::testAccess(*viewport).rasterGpuBytesForTesting() <= gpuBudget);
+    CHECK(pci::testAccess(*viewport).rasterGpuPeakBytesForTesting() <=
+          gpuBudget);
+}
+
 TEST_CASE("GPU raster pixels land at their affine georeferenced coordinates",
           "[gpu][raster][placement]")
 {
@@ -399,8 +679,12 @@ TEST_CASE("GPU raster pixels land at their affine georeferenced coordinates",
     // A rotated and skewed parallelogram. Its four corners are deliberately
     // asymmetric so a center-only or north-up placement can not pass.
     metadata.geoTransform = {
-        -80.0, 200.0 / 256.0, 40.0 / 256.0,
-        60.0, 50.0 / 256.0, -160.0 / 256.0,
+        -80.0,
+        200.0 / 256.0,
+        40.0 / 256.0,
+        60.0,
+        50.0 / 256.0,
+        -160.0 / 256.0,
     };
     metadata.bounds = *pci::rasterPixelEdgeBounds(
         metadata.geoTransform, metadata.width, metadata.height);
@@ -415,18 +699,15 @@ TEST_CASE("GPU raster pixels land at their affine georeferenced coordinates",
     auto document = std::make_shared<pci::SceneDocument>();
     static_cast<void>(document->addRasterLayer(patternLayer(
         metadata,
-        [width = metadata.width,
-         height = metadata.height](std::uint32_t,
-                                   const double pixel,
-                                   const double line) -> Rgba {
+        [width = metadata.width, height = metadata.height](
+            std::uint32_t, const double pixel, const double line) -> Rgba {
             if (pixel < width * 0.5 && line < height * 0.5) {
                 return {255, 0, 0};
             }
             if (pixel >= width * 0.5 && line < height * 0.5) {
                 return {0, 255, 0};
             }
-            return pixel < width * 0.5 ? Rgba{0, 0, 255}
-                                       : Rgba{255, 255, 0};
+            return pixel < width * 0.5 ? Rgba{0, 0, 255} : Rgba{255, 255, 0};
         })));
 
     auto viewport = makeViewport();
@@ -435,10 +716,9 @@ TEST_CASE("GPU raster pixels land at their affine georeferenced coordinates",
     viewport->setOrthographic(true);
     frameWholeScene(*viewport);
 
-    const auto screenAtBasePixel = [&metadata, &viewport](
-                                       const QSize imageSize,
-                                       const double pixel,
-                                       const double line) {
+    const auto screenAtBasePixel = [&metadata, &viewport](const QSize imageSize,
+                                                          const double pixel,
+                                                          const double line) {
         const pci::RasterQuadTransform quad = pci::rasterTileQuadTransform(
             metadata,
             {},
@@ -476,12 +756,10 @@ TEST_CASE("GPU raster pixels land at their affine georeferenced coordinates",
             std::lround((1.0 - ndcY) * 0.5 * imageSize.height()));
         return QPoint{x, y};
     };
-    const auto sampleAtBasePixel = [&screenAtBasePixel](
-                                       const QImage &image,
-                                       const double pixel,
-                                       const double line) {
-        const QPoint position =
-            screenAtBasePixel(image.size(), pixel, line);
+    const auto sampleAtBasePixel = [&screenAtBasePixel](const QImage &image,
+                                                        const double pixel,
+                                                        const double line) {
+        const QPoint position = screenAtBasePixel(image.size(), pixel, line);
         return image.pixelColor(
             std::clamp(position.x(), 0, image.width() - 1),
             std::clamp(position.y(), 0, image.height() - 1));
@@ -582,7 +860,8 @@ TEST_CASE("GPU raster layers obey painter order and opacity",
     }));
 }
 
-TEST_CASE("GPU coplanar points remain visible over rasters through an EDL camera sweep",
+TEST_CASE("GPU coplanar points remain visible over rasters through an EDL "
+          "camera sweep",
           "[gpu][raster][edl][depth]")
 {
     auto document = std::make_shared<pci::SceneDocument>();
@@ -615,6 +894,96 @@ TEST_CASE("GPU coplanar points remain visible over rasters through an EDL camera
             CHECK(countWhere(image, nearlyWhite) > 50);
         }
     }
+}
+
+TEST_CASE("GPU mixed scenes preserve point raster vector painter order",
+          "[gpu][raster][vector][order]")
+{
+    auto document = std::make_shared<pci::SceneDocument>();
+    static_cast<void>(document->addLayer(coplanarPointGrid()));
+    static_cast<void>(document->addRasterLayer(
+        patternLayer({256}, [](std::uint32_t, double, double) {
+            return Rgba{0, 0, 200};
+        })));
+    const pci::SceneLayerId vectorId = document->addVectorLayer(
+        filledVectorRectangle(-40.0F, -40.0F, 40.0F, 40.0F));
+    REQUIRE(document->setVectorLayerStyle(vectorId, greenVectorFill()));
+
+    auto viewport = makeViewport();
+    viewport->setDocument(document->snapshot(), true);
+    viewport->setPointSizePixels(5);
+
+    for (const bool edl : {false, true}) {
+        viewport->setEyeDomeLightingEnabled(edl);
+        frameWholeScene(*viewport);
+        CAPTURE(edl);
+        REQUIRE(renderUntil(*viewport, [](const QImage &image) {
+            const Footprint footprint = renderedFootprint(image);
+            return footprint.valid() &&
+                   nearlyGreen(sampleWithin(image, footprint, 0.5, 0.5)) &&
+                   countWhere(image, nearlyGreen) > 1000 &&
+                   countWhere(image, nearlyBlue) > 1000 &&
+                   countWhere(image, nearlyWhite) > 50;
+        }));
+    }
+}
+
+TEST_CASE("GPU raster pixels are excluded from picking and measurement",
+          "[gpu][raster][picking][measurement]")
+{
+    auto document = std::make_shared<pci::SceneDocument>();
+    static_cast<void>(document->addRasterLayer(
+        patternLayer({256}, [](std::uint32_t, double, double) {
+            return Rgba{0, 0, 255};
+        })));
+
+    auto viewport = makeViewport();
+    viewport->setDocument(document->snapshot(), true);
+    viewport->setEyeDomeLightingEnabled(false);
+    frameWholeScene(*viewport);
+    QString failure;
+    viewport->setFailureCallback([&failure](const QString &message) {
+        failure = message;
+    });
+    REQUIRE(renderUntil(*viewport, [](const QImage &image) {
+        return countWhere(image, nearlyBlue) > 1000;
+    }));
+
+    bool pickCompleted = false;
+    std::optional<std::uint32_t> picked;
+    const QPoint center(viewport->width() / 2, viewport->height() / 2);
+    pci::testAccess(*viewport).requestRawPickForTesting(
+        center, [&](const std::optional<std::uint32_t> id) {
+            pickCompleted = true;
+            picked = id;
+        });
+    REQUIRE(QTest::qWaitFor(
+        [&] {
+            return pickCompleted || !failure.isEmpty();
+        },
+        5000));
+    REQUIRE(failure.isEmpty());
+    CHECK_FALSE(picked.has_value());
+
+    viewport->setActiveTool(pci::ViewportTool::Measure);
+    for (const QPoint position :
+         {center, QPoint(viewport->width() / 3, viewport->height() / 3)}) {
+        const std::uint64_t previous =
+            pci::testAccess(*viewport).renderedFrameCountForTesting();
+        QTest::mouseClick(
+            viewport.get(), Qt::LeftButton, Qt::NoModifier, position);
+        REQUIRE(QTest::qWaitFor(
+            [&] {
+                return !failure.isEmpty() ||
+                       pci::testAccess(*viewport)
+                               .renderedFrameCountForTesting() > previous;
+            },
+            5000));
+        QTest::qWait(50);
+    }
+    REQUIRE(failure.isEmpty());
+    CHECK_FALSE(pci::testAccess(*viewport).measurementHasAnchorForTesting());
+    CHECK_FALSE(pci::testAccess(*viewport).measurementForTesting());
 }
 
 TEST_CASE("GPU raster textures stay inside the configured budget",
@@ -650,4 +1019,14 @@ TEST_CASE("GPU raster textures stay inside the configured budget",
         CHECK(pci::testAccess(*viewport).rasterCpuBytesForTesting() <=
               cpuBudget);
     }
+
+    pci::testAccess(*viewport).frameTopDownForTesting(0.05);
+    static_cast<void>(renderFrames(*viewport, 3));
+    const std::uint64_t beforeShrink =
+        pci::testAccess(*viewport).rasterGpuBytesForTesting();
+    REQUIRE(beforeShrink > 1);
+    const std::uint64_t loweredBudget = beforeShrink - 1;
+    viewport->setRasterByteBudgets(cpuBudget, loweredBudget);
+    CHECK(pci::testAccess(*viewport).rasterGpuBytesForTesting() <=
+          loweredBudget);
 }

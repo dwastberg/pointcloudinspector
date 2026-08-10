@@ -50,8 +50,10 @@ void QualificationReporter::record(const RenderMetrics &metrics)
     }
 }
 
-QualificationWriteResult QualificationReporter::write(const QString &status,
-                                                      SceneSession &session)
+QualificationWriteResult
+QualificationReporter::write(const QString &status,
+                             SceneSession &session,
+                             const QualificationGdalCacheSnapshot gdalCache)
 {
     if (!configured() || reportWritten_) {
         return {};
@@ -236,10 +238,20 @@ QualificationWriteResult QualificationReporter::write(const QString &status,
          gdalRuntimeInfo_.catalogImport()},
         {QStringLiteral("raster_cpu_bytes"),
          static_cast<qint64>(metrics.rasterCpuBytes)},
+        {QStringLiteral("raster_cpu_budget_bytes"),
+         static_cast<qint64>(metrics.rasterCpuBudgetBytes)},
         {QStringLiteral("raster_cpu_peak_bytes"),
          static_cast<qint64>(metrics.rasterCpuPeakBytes)},
         {QStringLiteral("raster_gpu_bytes"),
          static_cast<qint64>(metrics.rasterGpuBytes)},
+        {QStringLiteral("raster_gpu_budget_bytes"),
+         static_cast<qint64>(metrics.rasterGpuBudgetBytes)},
+        {QStringLiteral("raster_gpu_peak_bytes"),
+         static_cast<qint64>(metrics.rasterGpuPeakBytes)},
+        {QStringLiteral("gdal_cache_budget_bytes"),
+         static_cast<qint64>(gdalCache.budgetBytes)},
+        {QStringLiteral("gdal_cache_used_bytes"),
+         static_cast<qint64>(gdalCache.usedBytes.value_or(0))},
         {QStringLiteral("raster_tiles_requested"),
          static_cast<qint64>(metrics.rasterTilesRequested)},
         {QStringLiteral("raster_tiles_completed"),

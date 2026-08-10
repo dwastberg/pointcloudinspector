@@ -103,6 +103,7 @@ public:
     void setWakeCallback(WakeCallback wake);
     void setCpuByteBudget(std::uint64_t bytes,
                           std::span<const RasterCacheKey> protectedKeys);
+    [[nodiscard]] std::uint64_t cpuByteBudget() const noexcept;
 
     // Render thread only. Cancels queued work outside the frame's plans and
     // schedules their requests in priority order. Every visible layer must be
@@ -167,8 +168,8 @@ private:
     void notifyWake();
     void releaseCompletionReservation(std::uint64_t bytes);
     void updateCpuPeak(std::uint64_t reservedBytes) noexcept;
-    [[nodiscard]] std::uint64_t readPoolCapacity(
-        std::uint64_t totalBudget) const noexcept;
+    [[nodiscard]] std::uint64_t
+    readPoolCapacity(std::uint64_t totalBudget) const noexcept;
 
     mutable std::mutex mutex_;
     std::condition_variable_any queueReady_;

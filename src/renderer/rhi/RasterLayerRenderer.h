@@ -151,6 +151,8 @@ public:
 
     [[nodiscard]] bool ready() const noexcept;
     [[nodiscard]] std::uint64_t gpuBytes() const noexcept;
+    [[nodiscard]] std::uint64_t gpuByteBudget() const noexcept;
+    [[nodiscard]] std::uint64_t peakGpuBytes() const noexcept;
 
 private:
     struct GpuTile {
@@ -190,6 +192,7 @@ private:
     std::size_t uniformCapacity_ = 0;
     std::unordered_map<RasterCacheKey, GpuTile> tiles_;
     std::uint64_t gpuBytes_ = 0;
+    std::uint64_t peakGpuBytes_ = 0;
     std::uint64_t gpuByteBudget_ = 0;
     std::uint64_t frameCounter_ = 0;
 };

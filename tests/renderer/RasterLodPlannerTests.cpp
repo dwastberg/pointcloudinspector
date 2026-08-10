@@ -279,6 +279,95 @@ TEST_CASE("raster planner falls back to a resident coarse ancestor",
     CHECK_FALSE(plan.requests.empty());
 }
 
+TEST_CASE("raster planner reuploads decoded target tiles without rereading",
+          "[renderer][raster][lod][residency]")
+{
+    const pci::RasterLayer layer = plannerLayer();
+    pci::RasterLodPlanInput input = planInput(layer, overheadCamera(300.0));
+    input.cpuResident = [](const pci::RasterTileKey key) {
+        return key.levelIndex == 0;
+    };
+
+    const pci::RasterLodPlan plan = pci::planRasterTiles(input);
+    REQUIRE_FALSE(plan.selected.empty());
+    CHECK(plan.requests.empty());
+    CHECK(plan.decodedUploads == plan.selected);
+    for (const pci::RasterTileKey key : plan.decodedUploads) {
+        CHECK(std::ranges::find(plan.protectedTiles, key) !=
+              plan.protectedTiles.end());
+    }
+}
+
+TEST_CASE("raster planner keeps a resident fallback while reuploading detail",
+          "[renderer][raster][lod][residency]")
+{
+    const pci::RasterLayer layer = plannerLayer();
+    pci::RasterLodPlanInput input = planInput(layer, overheadCamera(300.0));
+    input.cpuResident = [](const pci::RasterTileKey key) {
+        return key.levelIndex == 0;
+    };
+    input.gpuResident = [](const pci::RasterTileKey key) {
+        return key.levelIndex == 1;
+    };
+
+    const pci::RasterLodPlan plan = pci::planRasterTiles(input);
+    REQUIRE_FALSE(plan.decodedUploads.empty());
+    REQUIRE_FALSE(plan.draw.empty());
+    CHECK(plan.requests.empty());
+    CHECK(std::ranges::all_of(plan.decodedUploads,
+                              [](const pci::RasterTileKey key) {
+                                  return key.levelIndex == 0;
+                              }));
+    CHECK(std::ranges::all_of(plan.draw, [](const pci::RasterTileKey key) {
+        return key.levelIndex == 1;
+    }));
+}
+
+TEST_CASE(
+    "raster planner reuploads the nearest decoded arbitrary-ratio ancestor",
+    "[renderer][raster][lod][residency]")
+{
+    const pci::RasterLayer layer = plannerLayer();
+    pci::RasterLodPlanInput input = planInput(layer, overheadCamera(300.0));
+    input.cpuResident = [](const pci::RasterTileKey key) {
+        return key.levelIndex == 1;
+    };
+
+    const pci::RasterLodPlan plan = pci::planRasterTiles(input);
+    REQUIRE_FALSE(plan.decodedUploads.empty());
+    CHECK(std::ranges::all_of(plan.decodedUploads,
+                              [](const pci::RasterTileKey key) {
+                                  return key.levelIndex == 1;
+                              }));
+    CHECK(std::ranges::none_of(plan.requests, [](const pci::RasterTileKey key) {
+        return key.levelIndex > 1;
+    }));
+}
+
+TEST_CASE("raster planner draws a resident ancestor beyond a decoded fallback",
+          "[renderer][raster][lod][residency]")
+{
+    const pci::RasterLayer layer = plannerLayer();
+    pci::RasterLodPlanInput input = planInput(layer, overheadCamera(300.0));
+    input.cpuResident = [](const pci::RasterTileKey key) {
+        return key.levelIndex == 1;
+    };
+    input.gpuResident = [](const pci::RasterTileKey key) {
+        return key.levelIndex == 2;
+    };
+
+    const pci::RasterLodPlan plan = pci::planRasterTiles(input);
+    REQUIRE_FALSE(plan.decodedUploads.empty());
+    REQUIRE_FALSE(plan.draw.empty());
+    CHECK(std::ranges::all_of(plan.decodedUploads,
+                              [](const pci::RasterTileKey key) {
+                                  return key.levelIndex == 1;
+                              }));
+    CHECK(std::ranges::all_of(plan.draw, [](const pci::RasterTileKey key) {
+        return key.levelIndex == 2;
+    }));
+}
+
 TEST_CASE("raster planner requests coarse coverage before detail",
           "[renderer][raster][lod]")
 {
@@ -310,10 +399,8 @@ TEST_CASE("raster planner bounds enumeration across an enormous overview gap",
     metadata.bounds = *pci::rasterPixelEdgeBounds(
         metadata.geoTransform, metadata.width, metadata.height);
     metadata.levels = {
-        makeLevel(metadata.width,
-                  metadata.height,
-                  metadata.width,
-                  metadata.height),
+        makeLevel(
+            metadata.width, metadata.height, metadata.width, metadata.height),
         makeLevel(1, 1, metadata.width, metadata.height),
     };
 

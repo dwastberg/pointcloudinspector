@@ -301,6 +301,19 @@ RenderViewportWidget::RenderViewportWidget(
                 },
                 Qt::QueuedConnection);
         });
+    rasterTileStreamer_.setWakeCallback([viewport] {
+        if (!viewport) {
+            return;
+        }
+        static_cast<void>(QMetaObject::invokeMethod(
+            viewport.data(),
+            [viewport] {
+                if (viewport) {
+                    viewport->queueSceneInvalidation();
+                }
+            },
+            Qt::QueuedConnection));
+    });
     navigationTimer_.start();
     measurementOverlay_ = new MeasurementOverlay(this);
     measurementOverlay_->setGeometry(rect());
@@ -326,6 +339,10 @@ RenderViewportWidget::RenderViewportWidget(
 
 RenderViewportWidget::~RenderViewportWidget()
 {
+    // Workers may otherwise enqueue a wake while the QObject and its retained
+    // scene sources are being dismantled. shutdown() is idempotent and the
+    // streamer's member destructor repeats it defensively.
+    rasterTileStreamer_.shutdown();
     clearFullDetailPlan();
     sceneSnapshotCache_.clear();
 }
@@ -744,7 +761,7 @@ RenderViewportWidget::frameDuration(QRhiCommandBuffer *commandBuffer)
 // One frame of raster streaming: plan the visible tiles, reconcile the read
 // queue, admit finished reads, upload what the frame's budget allows, and
 // build the draws for whatever is resident.
-std::vector<RasterLayerDraw>
+RenderViewportWidget::RasterFrameResult
 RenderViewportWidget::streamRasterTiles(QRhiCommandBuffer *commandBuffer)
 {
     const SceneDocumentSnapshotPtr &document = sceneSnapshotCache_.document();
@@ -776,6 +793,7 @@ RenderViewportWidget::streamRasterTiles(QRhiCommandBuffer *commandBuffer)
     std::vector<RasterCacheKey> protectedTiles;
     std::vector<RasterLayerDraw> draws;
     std::vector<RasterPendingUpload> pending;
+    std::vector<RasterCacheKey> decodedUploads;
     std::unordered_map<RasterSourceId, UploadTarget> uploadTargets;
     // Plans outlive the loop because reconciliation is frame-global; see
     // RasterFrameLayer.
@@ -789,8 +807,7 @@ RenderViewportWidget::streamRasterTiles(QRhiCommandBuffer *commandBuffer)
         visibleRasterLayers == 0
             ? 1
             : std::max<std::size_t>(
-                  1,
-                  rasterLayerRenderer_.tileCapacity() / visibleRasterLayers);
+                  1, rasterLayerRenderer_.tileCapacity() / visibleRasterLayers);
 
     for (std::size_t index = 0; index < layers.size(); ++index) {
         const RasterLayer &layer = layers[index];
@@ -856,8 +873,11 @@ RenderViewportWidget::streamRasterTiles(QRhiCommandBuffer *commandBuffer)
                 std::max(rasterCoarsestLevel_, key.levelIndex);
         }
 
-        for (const RasterTileKey key : plan.draw) {
+        for (const RasterTileKey key : plan.protectedTiles) {
             protectedTiles.push_back({sourceId, generation, key});
+        }
+        for (const RasterTileKey key : plan.decodedUploads) {
+            decodedUploads.push_back({sourceId, generation, key});
         }
         // plan.draw is sorted fine-to-coarse. Reverse only this layer's range
         // so its fallback parents paint first, while the outer layer loop
@@ -872,11 +892,10 @@ RenderViewportWidget::streamRasterTiles(QRhiCommandBuffer *commandBuffer)
             draw.layerId = layer.id;
             draw.tileKey = cacheKey;
             const QVector4D clipOrigin =
-                viewProjection *
-                QVector4D(static_cast<float>(quad.origin.x),
-                          static_cast<float>(quad.origin.y),
-                          static_cast<float>(quad.origin.z),
-                          1.0F);
+                viewProjection * QVector4D(static_cast<float>(quad.origin.x),
+                                           static_cast<float>(quad.origin.y),
+                                           static_cast<float>(quad.origin.z),
+                                           1.0F);
             const QVector4D clipEdgeU =
                 viewProjection *
                     QVector4D(static_cast<float>(quad.origin.x + quad.edgeU.x),
@@ -952,6 +971,7 @@ RenderViewportWidget::streamRasterTiles(QRhiCommandBuffer *commandBuffer)
     knownRasterSources_ = std::move(liveSources);
 
     static_cast<void>(rasterTileStreamer_.drainCompletions(protectedTiles));
+    rasterTileStreamer_.requeueReadyUploads(decodedUploads);
     const std::vector<RasterCacheKey> readyUploads =
         rasterTileStreamer_.takeReadyUploads(rasterMaximumFrameUploads);
     std::vector<RasterCacheKey> attemptedUploads;
@@ -992,7 +1012,12 @@ RenderViewportWidget::streamRasterTiles(QRhiCommandBuffer *commandBuffer)
     std::erase_if(rasterDecodeStates_, [&retained](const auto &entry) {
         return std::ranges::find(retained, entry.first) == retained.end();
     });
-    return draws;
+    return RasterFrameResult{
+        .draws = std::move(draws),
+        // Plans are built before upload. A successful upload becomes drawable
+        // only after the next plan observes it as GPU-resident.
+        .requiresContinuation = uploaded > 0,
+    };
 }
 
 void RenderViewportWidget::recordScene(
@@ -1089,6 +1114,7 @@ void RenderViewportWidget::render(QRhiCommandBuffer *commandBuffer)
     std::size_t uploaded = 0;
     bool uploadsNeedAnotherFrame = false;
     bool planNeedsAnotherFrame = false;
+    bool rasterNeedsAnotherFrame = false;
     const bool frameStartedWithPick =
         input_.pendingPick().has_value() || pointPicker_.inFlight();
     std::chrono::nanoseconds snapshotTime{};
@@ -1253,7 +1279,9 @@ void RenderViewportWidget::render(QRhiCommandBuffer *commandBuffer)
             vectorLayerRenderer_.updateUniforms(commandBuffer, vectorDraws);
             // Uploads, texture creation, layer pruning, and uniform updates
             // must all complete before beginPass().
-            rasterDraws = streamRasterTiles(commandBuffer);
+            RasterFrameResult rasterFrame = streamRasterTiles(commandBuffer);
+            rasterDraws = std::move(rasterFrame.draws);
+            rasterNeedsAnotherFrame = rasterFrame.requiresContinuation;
             rasterLayerRenderer_.updateUniforms(commandBuffer, rasterDraws);
             submitPendingPick(commandBuffer, draws);
             if (eyeDomeLightingActive_) {
@@ -1458,7 +1486,8 @@ void RenderViewportWidget::render(QRhiCommandBuffer *commandBuffer)
         .movement = input_.hasMovement() || dragMode_ != DragMode::None,
         .pendingPick = input_.pendingPick().has_value(),
         .pickReadback = pointPicker_.inFlight(),
-        .pendingUploads = uploadsNeedAnotherFrame || planNeedsAnotherFrame,
+        .pendingUploads = uploadsNeedAnotherFrame || planNeedsAnotherFrame ||
+                          rasterNeedsAnotherFrame,
         .sceneInvalidation = sceneInvalidationPending_,
         .pendingSmokeFrames = smokeTest_ && telemetry_.frameCount() < 3,
     });
@@ -2201,8 +2230,11 @@ void RenderViewportWidget::publishMetrics(const bool force)
         telemetry->residency = {
             .gpuVectorBytes = vectorLayerRenderer_.gpuBytes(),
             .rasterCpuBytes = rasterStreamerMetrics.cpuBytes,
+            .rasterCpuBudgetBytes = rasterTileStreamer_.cpuByteBudget(),
             .rasterCpuPeakBytes = rasterStreamerMetrics.cpuPeakBytes,
             .rasterGpuBytes = rasterLayerRenderer_.gpuBytes(),
+            .rasterGpuBudgetBytes = rasterLayerRenderer_.gpuByteBudget(),
+            .rasterGpuPeakBytes = rasterLayerRenderer_.peakGpuBytes(),
             .rasterTilesRequested = rasterStreamerMetrics.requested,
             .rasterTilesCompleted = rasterStreamerMetrics.completed,
             .rasterTilesCancelled = rasterStreamerMetrics.cancelled,
@@ -2315,6 +2347,8 @@ void RenderViewportWidget::releaseResources()
 {
     pointPicker_.releaseResources();
     vectorLayerRenderer_.releaseResources();
+    rasterLayerRenderer_.releaseResources();
+    rasterDrawnTiles_ = 0;
     pointCloudRenderer_.releaseResources();
     eyeDomeLightingPass_.releaseResources();
     uploadScheduler_.releaseResources();

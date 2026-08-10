@@ -18,7 +18,8 @@ public:
     [[nodiscard]] static QString
     panelText(const RenderMetrics &metrics,
               const PointCloudLoadControllerMetrics &loadMetrics,
-              std::optional<std::uint64_t> gdalCacheUsedBytes = std::nullopt);
+              std::optional<std::uint64_t> gdalCacheUsedBytes = std::nullopt,
+              std::optional<std::uint64_t> gdalCacheBudgetBytes = std::nullopt);
     [[nodiscard]] static QString
     statusText(const RenderMetrics &metrics,
                std::optional<double> timeToFirstPointsMilliseconds);

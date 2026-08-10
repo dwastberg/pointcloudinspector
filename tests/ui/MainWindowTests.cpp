@@ -2822,6 +2822,13 @@ TEST_CASE("main window archives native Release H metrics",
     FakeViewport *viewportPointer = viewport.get();
     auto services = makeTestImportServices(std::make_shared<ImmediateLoader>());
     pci::MainWindow window(std::move(viewport), std::move(services), 100);
+    window.setGdalCacheControls(pci::GdalCacheControls{
+        .setByteBudget = [](std::uint64_t) {},
+        .usedBytes =
+            [] {
+                return std::uint64_t{512};
+            },
+    });
     const std::filesystem::path report =
         pci::qStringToPath(directory.path()) / "report.json";
     window.configureQualificationReport(report);
@@ -2867,7 +2874,11 @@ TEST_CASE("main window archives native Release H metrics",
         .processResidentBytes = 16'384,
         .peakProcessResidentBytes = 32'768,
         .rasterCpuBytes = 2048,
+        .rasterCpuBudgetBytes = 8192,
+        .rasterCpuPeakBytes = 4096,
         .rasterGpuBytes = 1024,
+        .rasterGpuBudgetBytes = 4096,
+        .rasterGpuPeakBytes = 2048,
         .rasterTilesRequested = 9,
         .rasterTilesCompleted = 8,
         .rasterResidentTiles = 7,
@@ -2921,7 +2932,19 @@ TEST_CASE("main window archives native Release H metrics",
     // GTI plus one usable index format is enough, even without GPKG.
     CHECK(json.value(QStringLiteral("catalog_import_available")).toBool());
     CHECK(json.value(QStringLiteral("raster_cpu_bytes")).toInteger() == 2048);
+    CHECK(json.value(QStringLiteral("raster_cpu_budget_bytes")).toInteger() ==
+          8192);
+    CHECK(json.value(QStringLiteral("raster_cpu_peak_bytes")).toInteger() ==
+          4096);
     CHECK(json.value(QStringLiteral("raster_gpu_bytes")).toInteger() == 1024);
+    CHECK(json.value(QStringLiteral("raster_gpu_budget_bytes")).toInteger() ==
+          4096);
+    CHECK(json.value(QStringLiteral("raster_gpu_peak_bytes")).toInteger() ==
+          2048);
+    CHECK(json.value(QStringLiteral("gdal_cache_budget_bytes")).toInteger() ==
+          128LL * 1024 * 1024);
+    CHECK(json.value(QStringLiteral("gdal_cache_used_bytes")).toInteger() ==
+          512);
     CHECK(json.value(QStringLiteral("raster_tiles_requested")).toInteger() ==
           9);
     CHECK(json.value(QStringLiteral("raster_finest_level")).toInteger() == 1);

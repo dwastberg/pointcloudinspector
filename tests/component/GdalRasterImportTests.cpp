@@ -234,8 +234,7 @@ TEST_CASE("raster tile reads are 1:1 windows with a replicated gutter",
     request.key = pci::RasterTileKey{0, 0, 0};
     request.decode = std::make_shared<pci::RasterDecodeParameters>(
         data->metadata().defaultDisplay);
-    const std::uint64_t reserved =
-        data->source->readReservationBytes(request);
+    const std::uint64_t reserved = data->source->readReservationBytes(request);
     const pci::RasterTileData tile =
         data->source->readTile(request, std::stop_token{});
     CHECK(reserved >= tile.byteSize());
@@ -285,6 +284,34 @@ TEST_CASE("raster tile reads compose transparency before premultiplying",
 
     const std::array<std::byte, 4> opaque = texel(tile, 30, 4);
     CHECK(opaque[3] == std::byte{255});
+}
+
+TEST_CASE("raster tile reads apply an explicit dataset mask",
+          "[component][gdal][mask]")
+{
+    const pci::RasterLayerDataPtr data = load(fixtures().masked);
+    REQUIRE(data->metadata().levels.size() == 1);
+    REQUIRE(data->metadata().levels.front().maskBand.has_value());
+    const pci::RasterTileData tile = readFirstTile(*data);
+
+    const std::array<std::byte, 4> invalid = texel(tile, 4, 20);
+    CHECK(invalid[0] == std::byte{0});
+    CHECK(invalid[1] == std::byte{0});
+    CHECK(invalid[2] == std::byte{0});
+    CHECK(invalid[3] == std::byte{0});
+    CHECK(texel(tile, 40, 20)[3] == std::byte{255});
+}
+
+TEST_CASE("raster levels reject a color overview without a matching mask",
+          "[component][gdal][mask][overview]")
+{
+    const pci::RasterLayerDataPtr data =
+        load(fixtures().mismatchedMaskOverviews);
+    const pci::RasterLayerMetadata &metadata = data->metadata();
+    REQUIRE(metadata.levels.size() == 1);
+    CHECK(metadata.levels.front().width == metadata.width);
+    CHECK(metadata.levels.front().maskBand.has_value());
+    CHECK_THROWS_AS(readFirstTile(*data, 1), pci::RasterReadError);
 }
 
 TEST_CASE("raster nodata becomes transparency, not a color",
@@ -350,12 +377,30 @@ TEST_CASE("raster rotation and negative pixel height are placed correctly",
     }
     CHECK(metadata.bounds.maximum[0] > metadata.bounds.minimum[0]);
     CHECK(metadata.nativePixelSize[0] ==
-          Catch::Approx(std::hypot(metadata.geoTransform[1],
-                                   metadata.geoTransform[4])));
+          Catch::Approx(
+              std::hypot(metadata.geoTransform[1], metadata.geoTransform[4])));
     CHECK(metadata.nativePixelSize[1] ==
-          Catch::Approx(std::hypot(metadata.geoTransform[2],
-                                   metadata.geoTransform[5])));
+          Catch::Approx(
+              std::hypot(metadata.geoTransform[2], metadata.geoTransform[5])));
     CHECK_NOTHROW(readFirstTile(*data));
+}
+
+TEST_CASE("raster placement is derived from a world-file sidecar",
+          "[component][gdal][world-file]")
+{
+    const pci::RasterLayerDataPtr data = load(fixtures().worldFile);
+    const pci::RasterLayerMetadata &metadata = data->metadata();
+    CHECK(metadata.crsMissing);
+    CHECK(metadata.geoTransform[0] == Catch::Approx(674000.0));
+    CHECK(metadata.geoTransform[1] == Catch::Approx(2.0));
+    CHECK(metadata.geoTransform[2] == Catch::Approx(0.0));
+    CHECK(metadata.geoTransform[3] == Catch::Approx(6580000.0));
+    CHECK(metadata.geoTransform[4] == Catch::Approx(0.0));
+    CHECK(metadata.geoTransform[5] == Catch::Approx(-2.0));
+    CHECK(metadata.bounds.minimum[0] == Catch::Approx(674000.0));
+    CHECK(metadata.bounds.maximum[0] == Catch::Approx(674032.0));
+    CHECK(metadata.bounds.maximum[1] == Catch::Approx(6580000.0));
+    CHECK(metadata.bounds.minimum[1] == Catch::Approx(6579976.0));
 }
 
 TEST_CASE("raster import rejects an antimeridian crossing by name",
@@ -523,15 +568,17 @@ TEST_CASE("GTI catalog opens without enumerating its members",
     CHECK(metadata.bands.size() == 3);
 }
 
-TEST_CASE("large sources report insufficient overviews rather than pretending",
+TEST_CASE("large sources report whether backed overviews can cover cheaply",
           "[component][gdal][catalog]")
 {
     const pci::GdalRasterLoader loader;
 
-    // The catalog has no overviews at all: covering it needs level-0 tiles.
+    // The catalog's fixed external overview reduces whole-source coverage to
+    // a bounded tile set, so it is sufficient despite the 40-billion-pixel
+    // logical base.
     const pci::RasterLayerDataPtr catalog = load(fixtures().catalog, loader);
-    REQUIRE(catalog->metadata().levels.size() == 1);
-    CHECK(catalog->metadata().insufficientOverviews);
+    REQUIRE(catalog->metadata().levels.size() == 2);
+    CHECK_FALSE(catalog->metadata().insufficientOverviews);
 
     // The mosaic does have overviews, and is still flagged. The warning is
     // about whether any level can cover the view cheaply, not about whether

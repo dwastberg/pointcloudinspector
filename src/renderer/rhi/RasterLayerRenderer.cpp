@@ -170,6 +170,16 @@ std::uint64_t RasterLayerRenderer::gpuBytes() const noexcept
     return gpuBytes_;
 }
 
+std::uint64_t RasterLayerRenderer::gpuByteBudget() const noexcept
+{
+    return gpuByteBudget_;
+}
+
+std::uint64_t RasterLayerRenderer::peakGpuBytes() const noexcept
+{
+    return peakGpuBytes_;
+}
+
 void RasterLayerRenderer::ensureResources(QRhi *rhi,
                                           QRhiRenderPassDescriptor *renderPass)
 {
@@ -382,6 +392,7 @@ std::size_t RasterLayerRenderer::uploadPending(
                            .validHeight = entry.tile->validHeight,
                        });
         gpuBytes_ += bytes;
+        peakGpuBytes_ = std::max(peakGpuBytes_, gpuBytes_);
         spent += bytes;
         ++uploaded;
     }

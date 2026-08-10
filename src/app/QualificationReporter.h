@@ -20,6 +20,11 @@ struct QualificationWriteResult {
     QString error;
 };
 
+struct QualificationGdalCacheSnapshot {
+    std::uint64_t budgetBytes = 0;
+    std::optional<std::uint64_t> usedBytes;
+};
+
 class QualificationReporter final {
 public:
     void configure(std::filesystem::path outputPath,
@@ -28,8 +33,10 @@ public:
     // Installed by the application layer, which owns the GDAL link.
     void setGdalRuntimeInfo(GdalRuntimeInfo info);
     void record(const RenderMetrics &metrics);
-    [[nodiscard]] QualificationWriteResult write(const QString &status,
-                                                 SceneSession &session);
+    [[nodiscard]] QualificationWriteResult
+    write(const QString &status,
+          SceneSession &session,
+          QualificationGdalCacheSnapshot gdalCache = {});
 
 private:
     std::filesystem::path outputPath_;

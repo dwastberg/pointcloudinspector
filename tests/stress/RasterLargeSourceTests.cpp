@@ -2,15 +2,18 @@
 #include "import/gdal/GdalRasterLoader.h"
 #include "import/gdal/GdalRasterSource.h"
 #include "import/gdal/GdalRuntime.h"
+#include "platform/ProcessMemory.h"
 #include "renderer/planning/RasterLodPlanner.h"
 #include "renderer/rhi/RasterTileStreamer.h"
 
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <vector>
 
 namespace {
 
@@ -86,6 +89,13 @@ const pci::test::GdalRasterFixturePaths &fixtures()
 TEST_CASE("a huge catalog plans and reads a bounded amount of work",
           "[component][raster][stress]")
 {
+    constexpr std::uint64_t cpuBudget = 64ULL * 1024 * 1024;
+    constexpr std::uint64_t gdalBudget = 32ULL * 1024 * 1024;
+    constexpr std::uint64_t allocatorAllowance = 256ULL * 1024 * 1024;
+
+    // Establish the third allocator's exact limit before inspection or tile
+    // reads, then take RSS only after fixture creation and GDAL registration.
+    pci::setGdalBlockCacheBytes(gdalBudget);
     const pci::GdalRasterLoader loader;
     const pci::RasterLayer layer = layerFor(load(fixtures().catalog, loader));
     const pci::RasterLayerMetadata &metadata = layer.data->metadata();
@@ -108,29 +118,37 @@ TEST_CASE("a huge catalog plans and reads a bounded amount of work",
         (metadata.bounds.minimum[1] + metadata.bounds.maximum[1]) * 0.5,
         0.0};
 
-    pci::RasterTileStreamer streamer(64ULL * 1024 * 1024, 2);
+    pci::RasterTileStreamer streamer(cpuBudget, 2);
+    const std::uint64_t rssBaseline = pci::processMemoryMetrics().residentBytes;
     const std::uint64_t readsBeforePlanning = source->readCount();
 
-    // Whole-catalog view. The planner's own ceiling has to hold here: the
-    // coarsest level still needs hundreds of thousands of tiles to cover.
+    // Whole-catalog view. A real external overview makes the request count
+    // small and explicitly backed instead of falling through to base pixels.
     const pci::RasterLodPlan wide =
         planRasterTiles(planInput(layer, overheadCamera(center, 900000.0)));
-    // The cap binds exactly rather than merely not being exceeded: a plan
-    // that quietly selected nothing would also satisfy an upper bound.
-    CHECK(wide.selected.size() == 512);
-    CHECK(wide.capacityLimited);
-    CHECK(wide.insufficientOverviews);
+    REQUIRE_FALSE(wide.selected.empty());
+    CHECK(wide.selected.size() <= 512);
+    CHECK_FALSE(wide.capacityLimited);
+    CHECK_FALSE(wide.insufficientOverviews);
+    const std::uint32_t coarsest =
+        static_cast<std::uint32_t>(metadata.levels.size() - 1);
+    CHECK(std::ranges::all_of(wide.selected,
+                              [coarsest](const pci::RasterTileKey key) {
+                                  return key.levelIndex == coarsest;
+                              }));
     // Planning reads nothing; it is arithmetic over the level table.
     CHECK(source->readCount() == readsBeforePlanning);
 
     streamer.reconcile(wide, layer);
     streamer.waitForIdle();
-    static_cast<void>(streamer.drainCompletions({}));
+    static_cast<void>(
+        streamer.drainCompletions({}, pci::rasterMaximumPendingRequests));
+    static_cast<void>(
+        streamer.takeReadyUploads(pci::rasterMaximumPendingRequests));
 
-    const pci::RasterStreamerMetrics metrics = streamer.metrics();
-    CHECK(metrics.cpuBytes <= 64ULL * 1024 * 1024);
-    // The queue ceiling binds too: 512 wanted tiles become 256 accepted.
-    CHECK(metrics.requested == pci::rasterMaximumPendingRequests);
+    pci::RasterStreamerMetrics metrics = streamer.metrics();
+    CHECK(metrics.cpuBytes <= cpuBudget);
+    CHECK(metrics.requested == wide.requests.size());
     CHECK(metrics.completed > 0);
     // One window per band per requested tile, and nothing else. This is the
     // assertion that fails if anything starts scanning the catalog: it is an
@@ -138,10 +156,68 @@ TEST_CASE("a huge catalog plans and reads a bounded amount of work",
     CHECK(source->readCount() - readsBeforePlanning ==
           metrics.requested * metadata.bands.size());
 
-    // GDAL's own cache stays inside the limit the application set, which is
-    // the third allocator the accounting would otherwise miss.
-    pci::setGdalBlockCacheBytes(32ULL * 1024 * 1024);
-    CHECK(pci::gdalBlockCacheUsedBytes() <= 32ULL * 1024 * 1024);
+    CHECK(pci::gdalBlockCacheUsedBytes() <= gdalBudget);
+
+    // Churn between disjoint catalog regions after the cache is already full.
+    // Source size must not leak into the request queues or resident envelope,
+    // and the allocator high-water should settle rather than grow each pass.
+    const double width =
+        metadata.bounds.maximum[0] - metadata.bounds.minimum[0];
+    const double height =
+        metadata.bounds.maximum[1] - metadata.bounds.minimum[1];
+    constexpr std::array<double, 4> targetFractions{0.12, 0.38, 0.62, 0.88};
+    std::array<pci::Vec3d, 16> targets{};
+    std::size_t targetIndex = 0;
+    for (const double y : targetFractions) {
+        for (const double x : targetFractions) {
+            targets[targetIndex++] = {
+                metadata.bounds.minimum[0] + width * x,
+                metadata.bounds.minimum[1] + height * y,
+                0.0,
+            };
+        }
+    }
+    std::vector<std::uint64_t> residentSamples;
+    residentSamples.reserve(targets.size());
+    for (std::size_t pass = 0; pass < targets.size(); ++pass) {
+        const pci::RasterLodPlan churn = planRasterTiles(planInput(
+            layer, overheadCamera(targets[pass % targets.size()], 1500.0)));
+        CAPTURE(pass);
+        REQUIRE_FALSE(churn.selected.empty());
+        CHECK(churn.selected.size() <= 512);
+
+        streamer.reconcile(churn, layer);
+        streamer.waitForIdle();
+        static_cast<void>(
+            streamer.drainCompletions({}, pci::rasterMaximumPendingRequests));
+        static_cast<void>(
+            streamer.takeReadyUploads(pci::rasterMaximumPendingRequests));
+
+        metrics = streamer.metrics();
+        CHECK(metrics.cpuBytes <= cpuBudget);
+        CHECK(metrics.cpuPeakBytes <= cpuBudget);
+        CHECK(metrics.pending == 0);
+        CHECK(metrics.queued == 0);
+        CHECK(metrics.pendingUploads == 0);
+        CHECK(pci::gdalBlockCacheUsedBytes() <= gdalBudget);
+
+        const std::uint64_t resident =
+            pci::processMemoryMetrics().residentBytes;
+        residentSamples.push_back(resident);
+        if (rssBaseline > 0 && resident > rssBaseline) {
+            CHECK(resident - rssBaseline <=
+                  cpuBudget + gdalBudget + allocatorAllowance);
+        }
+    }
+
+    REQUIRE(residentSamples.size() == targets.size());
+    const auto warmBegin = residentSamples.end() - 4;
+    const auto [warmMinimum, warmMaximum] =
+        std::minmax_element(warmBegin, residentSamples.end());
+    CHECK(*warmMaximum - *warmMinimum <= 64ULL * 1024 * 1024);
+    CHECK(metrics.cacheEvictions > 0);
+    CHECK(source->readCount() - readsBeforePlanning ==
+          metrics.requested * metadata.bands.size());
 }
 
 TEST_CASE("zooming into a catalog member reaches its native pixels",

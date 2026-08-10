@@ -557,8 +557,8 @@ std::uint64_t GdalRasterSource::readCount() const noexcept
     return readCount_.load(std::memory_order_relaxed);
 }
 
-std::uint64_t GdalRasterSource::readReservationBytes(
-    const RasterTileRequest &request) const
+std::uint64_t
+GdalRasterSource::readReservationBytes(const RasterTileRequest &request) const
 {
     if (request.key.levelIndex >= metadata_.levels.size()) {
         throw RasterReadError("Raster tile names an unknown level");
@@ -576,8 +576,8 @@ std::uint64_t GdalRasterSource::readReservationBytes(
     const auto addPlane = [&](const std::uint64_t sampleBytes,
                               const std::uint64_t count = 1) {
         const auto samples = checkedMultiply(*pixels, sampleBytes);
-        const auto planes = samples ? checkedMultiply(*samples, count)
-                                    : std::nullopt;
+        const auto planes =
+            samples ? checkedMultiply(*samples, count) : std::nullopt;
         const auto total = planes ? checkedAdd(bytes, *planes) : std::nullopt;
         if (!total) {
             throw RasterReadError("Raster tile scratch size overflows");

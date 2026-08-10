@@ -66,11 +66,25 @@ public:
         return viewport_.measurementController_.state().measurement;
     }
 
+    [[nodiscard]] bool measurementHasAnchorForTesting() const noexcept
+    {
+        return viewport_.measurementController_.state().anchor.has_value();
+    }
+
     // Re-frames top-down at a chosen distance so a test can sweep zoom levels
     // without synthesizing wheel events. The scene extent must already be set,
     // which frameVisibleLayersTopDown() does.
     void frameTopDownForTesting(const double distanceMultiplier)
     {
+        viewport_.camera_.frameTopDown(distanceMultiplier);
+        viewport_.requestRender();
+    }
+
+    void frameTopDownAtForTesting(const Vec3d center,
+                                  const double sceneDiameter,
+                                  const double distanceMultiplier)
+    {
+        viewport_.camera_.setScene(center, sceneDiameter);
         viewport_.camera_.frameTopDown(distanceMultiplier);
         viewport_.requestRender();
     }
@@ -93,14 +107,29 @@ public:
         return viewport_.rasterLayerRenderer_.residentTileCount();
     }
 
+    [[nodiscard]] std::size_t rasterDrawnTilesForTesting() const noexcept
+    {
+        return viewport_.rasterDrawnTiles_;
+    }
+
     [[nodiscard]] std::uint64_t rasterGpuBytesForTesting() const noexcept
     {
         return viewport_.rasterLayerRenderer_.gpuBytes();
     }
 
+    [[nodiscard]] std::uint64_t rasterGpuPeakBytesForTesting() const noexcept
+    {
+        return viewport_.rasterLayerRenderer_.peakGpuBytes();
+    }
+
     [[nodiscard]] std::uint64_t rasterCpuBytesForTesting() const noexcept
     {
         return viewport_.rasterTileStreamer_.metrics().cpuBytes;
+    }
+
+    void releaseResourcesForTesting()
+    {
+        viewport_.releaseResources();
     }
 
 private:

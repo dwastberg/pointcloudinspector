@@ -1257,7 +1257,10 @@ void MainWindow::showMetrics(const RenderMetrics &metrics)
             gdalCacheUsedBytes = gdalCache_.usedBytes();
         }
         diagnosticsDock_->setDiagnostics(RenderDiagnosticsFormatter::panelText(
-            metrics, loadMetrics, gdalCacheUsedBytes));
+            metrics,
+            loadMetrics,
+            gdalCacheUsedBytes,
+            mebibytesToBytes(performanceSettings_.raster.gdalCacheMebibytes)));
     }
     if (!session_->loading()) {
         statusBar()->showMessage(RenderDiagnosticsFormatter::statusText(
@@ -1267,8 +1270,17 @@ void MainWindow::showMetrics(const RenderMetrics &metrics)
 
 void MainWindow::writeQualificationReport(const QString &status)
 {
-    const QualificationWriteResult result =
-        qualificationReporter_.write(status, *session_);
+    const QualificationWriteResult result = qualificationReporter_.write(
+        status,
+        *session_,
+        QualificationGdalCacheSnapshot{
+            .budgetBytes = mebibytesToBytes(
+                performanceSettings_.raster.gdalCacheMebibytes),
+            .usedBytes =
+                gdalCache_.usedBytes
+                    ? std::optional<std::uint64_t>{gdalCache_.usedBytes()}
+                    : std::nullopt,
+        });
     if (!result.error.isEmpty()) {
         statusBar()->showMessage(result.error);
         return;

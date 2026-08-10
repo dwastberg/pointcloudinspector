@@ -1492,6 +1492,137 @@ Exit: the large-source acceptance test meets the read-count and memory bounds,
 the packaged app reports GTI available, and zooming reaches native source
 pixels in a selected catalog tile.
 
+### Gate 4 — Integration closure and release evidence
+
+This gate closes defects and acceptance gaps found after Gate 3. It adds no
+new raster capability. Complete it in the order below because the device-loss
+test depends on event-driven progress, and the final qualification run depends
+on the corrected metrics.
+
+Implementation status (2026-08-10): complete and locally qualified. Steps 1–5
+are implemented, the full development and validation-enabled native-GPU suites
+pass, and the package build's headless capability smoke reports GTI, VRT, and
+supported index drivers. Step 6's Linux, Windows, DMG, MSI, and Flatpak URLs
+must be recorded after these changes have a candidate commit SHA; that is
+release evidence for the exact commit, not remaining feature code.
+
+1. **Make asynchronous raster progress drive the viewport.**
+   - In `RenderViewportWidget`'s constructor, connect
+     `RasterTileStreamer::setWakeCallback()` to a `QPointer`-guarded,
+     `Qt::QueuedConnection` invocation of `queueSceneInvalidation()`. The
+     callback runs on a raster worker; it must never call `QRhiWidget::update()`
+     directly from that thread. Keep the streamer's existing atomic wake
+     coalescing as the single owner of burst suppression.
+   - Return a private frame result from `streamRasterTiles()` containing the
+     draw list and whether a successful upload requires one follow-up frame.
+     Planning happens before upload, so a newly uploaded tile cannot enter the
+     current draw list. Feed that flag into `shouldContinueRendering()`.
+   - Do not continuously render merely because reads are pending: worker
+     completion supplies the wake. Continue after actual upload progress, but
+     stop when an upload cannot fit or every candidate is protected, avoiding
+     a permanent busy loop under pressure.
+   - Add a native GPU regression that submits exactly the initial frame for a
+     raster-only document, then waits through the Qt event loop without calling
+     `requestRender()` again. Assert that a worker completion causes residency
+     and the upload-follow-up frame causes a visible draw. The test must fail
+     if either the wake or the extra frame is removed.
+
+2. **Make QRhi teardown deterministic and recoverable.**
+   - Add `rasterLayerRenderer_.releaseResources()` to the viewport's general
+     `releaseResources()` path, before `resourceRhi_` is cleared. Retain the
+     existing targeted release before an EDL render-pass replacement.
+   - Stop the raster streamer and clear its wake callback explicitly in the
+     viewport destructor before scene/source state is cleared. Do not stop it
+     from `releaseResources()`, because QRhi resources can be recreated while
+     the viewport and its CPU tile cache remain alive.
+   - Add `decodedUploads` to `RasterLodPlan`. It contains CPU-resident,
+     GPU-missing selected tiles and fallback ancestors in the same
+     coarse-first priority order as read requests, and those keys also enter
+     `protectedTiles` until upload is attempted. Translate these tile keys to
+     cache keys in the viewport and pass them through
+     `RasterTileStreamer::requeueReadyUploads()`. This lets a recreated device
+     re-upload retained decoded tiles instead of stranding them or rereading
+     GDAL.
+   - Unit-test `decodedUploads` for target and arbitrary-ratio ancestor cases.
+     Add a validation-enabled GPU lifecycle test that makes tiles resident,
+     invokes the viewport resource-release path, recreates the renderer, and
+     reaches the same image with an unchanged source read count. Assert that
+     GPU bytes and resident records fall to zero at release.
+
+3. **Close the GDAL fixture and mask-level gaps.**
+   - In `intersectBackedLevels()`, when a dataset/per-band mask is required,
+     inspect `GetMaskBand()` on the actual selected base or overview band and
+     require its dimensions to equal the candidate level. Do not assume that a
+     color overview implies a matching mask overview. Reject an incompatible
+     overview; reject the import if even the base has no common readable
+     color/mask dimensions.
+   - Add a real dataset-mask GeoTIFF and verify invalid texels decode to zero
+     premultiplied RGBA. Add a fixture where the color bands expose an overview
+     that the mask does not; assert that level is absent and cannot be
+     requested.
+   - Add an image with no internal geotransform and a sidecar world file.
+     Assert the GDAL-derived six-term affine and pixel-edge bounds, including
+     the world-file pixel-center to GDAL pixel-edge conversion. Missing CRS may
+     remain a warning for this fixture.
+
+4. **Add the remaining interaction and painter-order regressions.**
+   - In a native GPU mixed scene, overlap a point layer, raster, and vector and
+     assert the documented order `points -> rasters -> vectors` with EDL both
+     disabled and enabled. Preserve the existing multi-raster opacity test.
+   - Submit a raw pick against a raster-only pixel and assert no point result;
+     repeat through the measurement tool and assert that no anchor or
+     measurement is created. These tests document that rasters remain
+     intentionally non-pickable rather than relying on an incidental lack of
+     raster code in `PointPicker`.
+   - Fill the GPU raster cache, lower its live budget below current residency,
+     and assert bytes drop below the new budget synchronously, before another
+     admission or render frame. The CPU cache already has the paired test.
+
+5. **Make qualification prove the complete memory envelope.**
+   - Add raster CPU/GPU budget bytes and raster GPU peak bytes to
+     `RenderMetrics`. Expose read-only budget/peak accessors from the streamer
+     and raster renderer and populate them in `publishMetrics()` without
+     introducing a GDAL dependency into the renderer.
+   - Pass a GDAL cache snapshot from `MainWindow` to
+     `QualificationReporter`, using the existing cache controls. Emit
+     `raster_cpu_budget_bytes`, `raster_cpu_peak_bytes`,
+     `raster_gpu_budget_bytes`, `raster_gpu_peak_bytes`,
+     `gdal_cache_budget_bytes`, and `gdal_cache_used_bytes`; retain process RSS
+     and peak RSS in the same report. Extend diagnostics and JSON projection
+     tests for every field.
+   - Extend the fixed-size headless GTI/BigTIFF stress test with repeated
+     camera churn. Take its RSS baseline after fixture creation and GDAL
+     registration, assert CPU and GDAL counters against their exact limits,
+     assert queues settle, and require the observed RSS delta to stay below
+     `C + D + 256 MiB` and to plateau rather than grow each pass. The allowance
+     is fixed, not derived from host memory.
+   - Add a native-GPU catalog acceptance case using the real GTI fixture. Aim
+     the camera at a known member, prove visible backed-overview coverage first
+     and level-0 pixels after zoom, and assert current and peak GPU bytes never
+     exceed `G`. Together with the headless test this covers CPU, GPU, GDAL,
+     RSS, read count, progressive coverage, and native detail without making a
+     headless test depend on QRhi.
+
+6. **Execute and record the packaging matrix.**
+   - Run normal Linux and Windows CI for the exact candidate commit, including
+     `gdal_capability_smoke`.
+   - Dispatch the macOS DMG, Windows MSI, and Linux Flatpak workflows for that
+     same commit. Each installed artifact must run `--gdal-capabilities`, exit
+     zero, report GTI and VRT, and report at least one supported index driver.
+   - Record the commit SHA and successful workflow/artifact URLs in the release
+     or pull-request qualification record. Workflow definitions alone do not
+     satisfy this item.
+
+Exit: a raster-only idle viewport progresses from queued read to visible tile
+without manual frame pumping; QRhi release/recreation is validation-clean and
+reuses decoded tiles; world-file and mismatched-mask fixtures pass; mixed
+overlay and non-picking behavior are covered; the fixed large-source tests
+prove read, CPU, GPU, GDAL, queue, and RSS bounds; the qualification JSON
+contains the complete three-allocator envelope; and every supported CI/package
+lane reports catalog capability for the exact candidate commit. Then run the
+targeted, full, native-GPU, and packaging verification described below before
+marking the raster feature complete.
+
 ## Pitfalls
 
 The failure modes below are specific to this design and are the ones most

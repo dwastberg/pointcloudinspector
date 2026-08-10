@@ -123,8 +123,11 @@ TEST_CASE("render diagnostics report all three raster allocators",
 {
     const pci::RenderMetrics metrics{
         .rasterCpuBytes = 6U * 1024U * 1024U,
+        .rasterCpuBudgetBytes = 16U * 1024U * 1024U,
         .rasterCpuPeakBytes = 9U * 1024U * 1024U,
         .rasterGpuBytes = 4U * 1024U * 1024U,
+        .rasterGpuBudgetBytes = 8U * 1024U * 1024U,
+        .rasterGpuPeakBytes = 5U * 1024U * 1024U,
         .rasterTilesRequested = 40,
         .rasterTilesCompleted = 32,
         .rasterTilesCancelled = 5,
@@ -141,10 +144,13 @@ TEST_CASE("render diagnostics report all three raster allocators",
     const pci::PointCloudLoadControllerMetrics loadMetrics{};
 
     const QString panel = pci::RenderDiagnosticsFormatter::panelText(
-        metrics, loadMetrics, std::uint64_t{12} * 1024 * 1024);
+        metrics,
+        loadMetrics,
+        std::uint64_t{12} * 1024 * 1024,
+        std::uint64_t{32} * 1024 * 1024);
     CHECK(panel.contains(QStringLiteral(
-        "Raster memory: 6.0 MiB CPU (peak 9.0), 4.0 MiB GPU, 12.0 MiB GDAL "
-        "block cache")));
+        "Raster memory: CPU 6.0 / 16.0 MiB (peak 9.0), GPU 4.0 / 8.0 MiB "
+        "(peak 5.0), GDAL block cache 12.0 MiB / 32.0 MiB")));
     CHECK(panel.contains(QStringLiteral(
         "Raster tiles: 26 drawn / 24 selected / 28 resident, 2 pending, "
         "levels 1-3")));
@@ -157,5 +163,5 @@ TEST_CASE("render diagnostics report all three raster allocators",
     const QString withoutGdal =
         pci::RenderDiagnosticsFormatter::panelText(metrics, loadMetrics);
     CHECK(withoutGdal.contains(QStringLiteral("unavailable")));
-    CHECK_FALSE(withoutGdal.contains(QStringLiteral("0.0 MiB GDAL")));
+    CHECK_FALSE(withoutGdal.contains(QStringLiteral("GDAL block cache 0.0")));
 }

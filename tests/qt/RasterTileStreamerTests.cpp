@@ -64,9 +64,8 @@ struct Fixture {
     pci::RasterLayer layer;
 };
 
-[[nodiscard]] Fixture makeFixture(
-    const pci::RasterSampleKind sampleKind =
-        pci::RasterSampleKind::ContinuousColor)
+[[nodiscard]] Fixture makeFixture(const pci::RasterSampleKind sampleKind =
+                                      pci::RasterSampleKind::ContinuousColor)
 {
     pci::RasterLayerMetadata metadata;
     metadata.width = 1024;
@@ -130,7 +129,8 @@ TEST_CASE("raster decode parameters apply the edited scalar range and ramp",
     REQUIRE(registration);
     const pci::PointColorMapCatalogSnapshotPtr maps = catalog.freeze();
 
-    const auto decode = pci::resolveRasterDecodeParameters(fixture.layer, *maps);
+    const auto decode =
+        pci::resolveRasterDecodeParameters(fixture.layer, *maps);
     REQUIRE(decode != nullptr);
     REQUIRE(decode->displayRange.has_value());
     CHECK(decode->displayRange->minimum == 20.0);
@@ -169,9 +169,8 @@ TEST_CASE("raster CPU accounting includes active reads and completions",
     pci::RasterTileStreamer streamer(budget, 2);
     fixture.source->blocked = true;
 
-    streamer.reconcile(
-        planFor({{0, 0, 0}, {0, 1, 0}, {0, 2, 0}, {0, 3, 0}}),
-        fixture.layer);
+    streamer.reconcile(planFor({{0, 0, 0}, {0, 1, 0}, {0, 2, 0}, {0, 3, 0}}),
+                       fixture.layer);
     while (fixture.source->reads.load() == 0) {
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
@@ -392,8 +391,7 @@ TEST_CASE("raster streamer retries uploads rejected by temporary GPU pressure",
     streamer.waitForIdle();
     static_cast<void>(streamer.drainCompletions({}));
 
-    const std::vector<pci::RasterCacheKey> first =
-        streamer.takeReadyUploads(1);
+    const std::vector<pci::RasterCacheKey> first = streamer.takeReadyUploads(1);
     REQUIRE(first.size() == 1);
     streamer.requeueReadyUploads(first);
     CHECK(streamer.metrics().pendingUploads == 1);

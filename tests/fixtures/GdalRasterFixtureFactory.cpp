@@ -129,6 +129,61 @@ void buildOverviews(const std::filesystem::path &path,
     }
 }
 
+void writeTextFile(const std::filesystem::path &path,
+                   const std::string &contents)
+{
+    VSILFILE *file = VSIFOpenL(path.string().c_str(), "wb");
+    if (file == nullptr) {
+        throw std::runtime_error("could not write " + path.string());
+    }
+    const std::size_t written =
+        VSIFWriteL(contents.data(), 1, contents.size(), file);
+    VSIFCloseL(file);
+    if (written != contents.size()) {
+        throw std::runtime_error("could not finish " + path.string());
+    }
+}
+
+void addDatasetMask(const std::filesystem::path &path,
+                    const int width,
+                    const int height)
+{
+    DatasetPtr dataset{
+        GDALDataset::FromHandle(GDALOpen(path.string().c_str(), GA_Update))};
+    if (!dataset) {
+        throw std::runtime_error("could not reopen masked fixture");
+    }
+    GDALRasterBand *color = dataset->GetRasterBand(1);
+    if (color == nullptr || color->CreateMaskBand(GMF_PER_DATASET) != CE_None) {
+        throw std::runtime_error("could not create dataset mask");
+    }
+    GDALRasterBand *mask = color->GetMaskBand();
+    if (mask == nullptr) {
+        throw std::runtime_error("dataset mask is unavailable");
+    }
+    std::vector<unsigned char> validity(
+        static_cast<std::size_t>(width) * height, 255);
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width / 4; ++x) {
+            validity[static_cast<std::size_t>(y) * width + x] = 0;
+        }
+    }
+    if (mask->RasterIO(GF_Write,
+                       0,
+                       0,
+                       width,
+                       height,
+                       validity.data(),
+                       width,
+                       height,
+                       GDT_Byte,
+                       0,
+                       0,
+                       nullptr) != CE_None) {
+        throw std::runtime_error("could not write dataset mask");
+    }
+}
+
 // A diagonal ramp with distinct corner colors, so a mirrored, rotated, or
 // half-pixel-shifted placement is visible rather than plausible.
 void writeRgb(GDALDataset &dataset, const int width, const int height)
@@ -174,8 +229,7 @@ writePositionalRgbFixture(const std::filesystem::path &path)
     {
         DatasetPtr dataset = create(source, width, height, 3, GDT_Byte);
         applyProjectedReference(*dataset);
-        applyTransform(*dataset,
-                       {674000.0, 2.0, 0.0, 6580000.0, 0.0, -2.0});
+        applyTransform(*dataset, {674000.0, 2.0, 0.0, 6580000.0, 0.0, -2.0});
         writeRgb(*dataset, width, height);
     }
 
@@ -249,6 +303,38 @@ std::filesystem::path writeRgbaFixture(const std::filesystem::path &path)
     return path;
 }
 
+std::filesystem::path writeMaskedFixture(const std::filesystem::path &path)
+{
+    constexpr int width = 64;
+    constexpr int height = 48;
+    std::error_code cleanupError;
+    std::filesystem::remove(path.string() + ".msk", cleanupError);
+    {
+        DatasetPtr dataset = create(path, width, height, 3, GDT_Byte);
+        applyProjectedReference(*dataset);
+        applyTransform(*dataset, {674000.0, 1.0, 0.0, 6580000.0, 0.0, -1.0});
+        writeRgb(*dataset, width, height);
+    }
+    addDatasetMask(path, width, height);
+    return path;
+}
+
+std::filesystem::path writeWorldFileFixture(const std::filesystem::path &path)
+{
+    constexpr int width = 16;
+    constexpr int height = 12;
+    {
+        DatasetPtr dataset = create(path, width, height, 3, GDT_Byte);
+        writeRgb(*dataset, width, height);
+    }
+    std::filesystem::path worldFile = path;
+    worldFile.replace_extension(".tfw");
+    // World files name the center of the upper-left pixel. GDAL converts this
+    // to the pixel-edge origin 674000,6580000 in its six-term transform.
+    writeTextFile(worldFile, "2.0\n0.0\n0.0\n-2.0\n674001.0\n6579999.0\n");
+    return path;
+}
+
 std::filesystem::path writeGrayFixture(const std::filesystem::path &path)
 {
     constexpr int width = 32;
@@ -306,8 +392,7 @@ std::filesystem::path writeTerrainFixture(const std::filesystem::path &path)
     {
         DatasetPtr dataset = create(path, width, height, 1, GDT_Float32);
         applyProjectedReference(*dataset);
-        applyTransform(
-            *dataset, {674000.0, 1.0, 0.0, 6580000.0, 0.0, -1.0});
+        applyTransform(*dataset, {674000.0, 1.0, 0.0, 6580000.0, 0.0, -1.0});
 
         std::vector<float> elevation(static_cast<std::size_t>(width) * height);
         for (int y = 0; y < height; ++y) {
@@ -537,6 +622,54 @@ writeCatalogFixture(const std::filesystem::path &path,
     return path;
 }
 
+// A catalog does not automatically publish the overviews stored inside its
+// members. Supply a small, real external overview for the logical catalog so
+// tests can prove progressive coverage without asking GDAL to resample the
+// 40-billion-pixel virtual base during fixture setup.
+void writeCatalogOverview(const std::filesystem::path &catalog)
+{
+    constexpr int baseExtent = 200512;
+    constexpr int reduction = 128;
+    constexpr int overviewExtent = (baseExtent + reduction - 1) / reduction;
+    constexpr int memberBaseExtent = 512;
+    constexpr int memberBaseSpacing = 200000;
+
+    std::filesystem::path overview = catalog;
+    overview += ".ovr";
+    std::error_code removeError;
+    std::filesystem::remove(overview, removeError);
+
+    const std::array<const char *, 4> options{
+        "TILED=YES", "SPARSE_OK=TRUE", "BLOCKXSIZE=256", nullptr};
+    DatasetPtr dataset = create(
+        overview, overviewExtent, overviewExtent, 3, GDT_Byte, options.data());
+    std::vector<std::uint8_t> pixels(
+        static_cast<std::size_t>(overviewExtent) * overviewExtent, 0);
+    for (int member = 0; member < 4; ++member) {
+        const int baseX = (member % 2) * memberBaseSpacing;
+        const int baseY = (member / 2) * memberBaseSpacing;
+        const int firstX = baseX / reduction;
+        const int firstY = baseY / reduction;
+        const int lastX =
+            (baseX + memberBaseExtent + reduction - 1) / reduction;
+        const int lastY =
+            (baseY + memberBaseExtent + reduction - 1) / reduction;
+        for (int y = firstY; y < lastY; ++y) {
+            for (int x = firstX; x < lastX; ++x) {
+                pixels[static_cast<std::size_t>(y) * overviewExtent + x] = 127;
+            }
+        }
+    }
+    for (int band = 1; band <= 3; ++band) {
+        writeBand(*dataset, band, GDT_Byte, pixels);
+        dataset->GetRasterBand(band)->SetColorInterpretation(
+            band == 1   ? GCI_RedBand
+            : band == 2 ? GCI_GreenBand
+                        : GCI_BlueBand);
+    }
+    dataset->GetRasterBand(1)->SetMetadataItem("RESAMPLING", "AVERAGE");
+}
+
 std::filesystem::path writeSparseHugeFixture(const std::filesystem::path &path)
 {
     // Enormous logically, empty physically. Inspecting it must cost the sample
@@ -618,6 +751,70 @@ std::filesystem::path writeOverviewImage(const std::filesystem::path &path)
     return path;
 }
 
+std::filesystem::path writeMaskImage(const std::filesystem::path &path)
+{
+    constexpr int width = 64;
+    constexpr int height = 48;
+    DatasetPtr dataset = create(path, width, height, 1, GDT_Byte);
+    std::vector<unsigned char> mask(static_cast<std::size_t>(width) * height,
+                                    255);
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width / 4; ++x) {
+            mask[static_cast<std::size_t>(y) * width + x] = 0;
+        }
+    }
+    writeBand(*dataset, 1, GDT_Byte, mask);
+    return path;
+}
+
+std::filesystem::path
+writeMismatchedMaskOverviewFixture(const std::filesystem::path &path,
+                                   const std::filesystem::path &source,
+                                   const std::filesystem::path &overview,
+                                   const std::filesystem::path &mask)
+{
+    const auto band = [&](const int number, const char *interpretation) {
+        return "  <VRTRasterBand dataType=\"Byte\" band=\"" +
+               std::to_string(number) + "\">\n    <ColorInterp>" +
+               interpretation +
+               "</ColorInterp>\n"
+               "    <SimpleSource>\n"
+               "      <SourceFilename relativeToVRT=\"0\">" +
+               source.string() +
+               "</SourceFilename>\n"
+               "      <SourceBand>" +
+               std::to_string(number) +
+               "</SourceBand>\n"
+               "    </SimpleSource>\n"
+               "    <Overview>\n"
+               "      <SourceFilename relativeToVRT=\"0\">" +
+               overview.string() +
+               "</SourceFilename>\n"
+               "      <SourceBand>1</SourceBand>\n"
+               "    </Overview>\n"
+               "  </VRTRasterBand>\n";
+    };
+    const std::string document =
+        "<VRTDataset rasterXSize=\"64\" rasterYSize=\"48\">\n"
+        "  <SRS>EPSG:3006</SRS>\n"
+        "  <GeoTransform>674000.0, 2.0, 0.0, 6580000.0, 0.0, -2.0"
+        "</GeoTransform>\n" +
+        band(1, "Red") + band(2, "Green") + band(3, "Blue") +
+        "  <MaskBand>\n"
+        "    <VRTRasterBand dataType=\"Byte\">\n"
+        "      <SimpleSource>\n"
+        "        <SourceFilename relativeToVRT=\"0\">" +
+        mask.string() +
+        "</SourceFilename>\n"
+        "        <SourceBand>1</SourceBand>\n"
+        "      </SimpleSource>\n"
+        "    </VRTRasterBand>\n"
+        "  </MaskBand>\n"
+        "</VRTDataset>\n";
+    writeTextFile(path, document);
+    return path;
+}
+
 } // namespace
 
 GdalRasterFixturePaths
@@ -633,19 +830,21 @@ writeGdalRasterFixtures(const std::filesystem::path &directory)
     paths.rgbNonPowerOfTwoOverviews =
         writeOverviewFixture(directory / "rgb-overviews.tif");
     paths.rgba = writeRgbaFixture(directory / "rgba.tif");
+    paths.masked = writeMaskedFixture(directory / "masked.tif");
     paths.gray = writeGrayFixture(directory / "gray.tif");
     paths.palette = writePaletteFixture(directory / "palette.tif");
     paths.terrain = writeTerrainFixture(directory / "terrain.tif");
     paths.unsigned16 = writeUnsigned16Fixture(directory / "uint16.tif");
     paths.rotated = writeRotatedFixture(directory / "rotated.tif");
+    paths.worldFile = writeWorldFileFixture(directory / "world-file.tif");
     paths.antimeridian =
         writeAntimeridianFixture(directory / "antimeridian.tif");
     paths.midSizeNoOverviews = writeMidSizeFixture(directory / "mid-size.tif");
     paths.sparseHuge = writeSparseHugeFixture(directory / "sparse-huge.tif");
 
     // Members are 512x512 at 2 m, placed on a grid 400 km apart, so the
-    // catalog's logical extent is about 1.2 million metres across: 600000
-    // pixels on a side, far beyond anything that could be read whole.
+    // catalog's logical extent is about 401 km across: just over 200000
+    // pixels on a side and 40 billion pixels in total.
     constexpr double memberPixelSize = 2.0;
     constexpr int memberExtent = 512;
     constexpr double memberSpacing = 400000.0;
@@ -664,11 +863,17 @@ writeGdalRasterFixtures(const std::filesystem::path &directory)
         writeVrtMosaicFixture(directory / "mosaic.vrt", paths.catalogMembers);
     paths.catalog = writeCatalogFixture(directory / "catalog.gti.gpkg",
                                         paths.catalogMembers);
+    writeCatalogOverview(paths.catalog);
 
     paths.mismatchedOverviews = writeMismatchedOverviewFixture(
         directory / "mismatched-overviews.vrt",
         paths.rgb,
         writeOverviewImage(directory / "red-overview.tif"));
+    paths.mismatchedMaskOverviews = writeMismatchedMaskOverviewFixture(
+        directory / "mismatched-mask-overviews.vrt",
+        paths.rgb,
+        writeOverviewImage(directory / "mask-mismatch-overview.tif"),
+        writeMaskImage(directory / "mask-source.tif"));
     return paths;
 }
 

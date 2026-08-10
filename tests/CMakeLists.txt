@@ -425,6 +425,7 @@ if(TARGET pcinspector)
             COMMAND $<TARGET_FILE:pcinspector> --gdal-capabilities)
     set_tests_properties(gdal_capability_smoke PROPERTIES
             LABELS "component;gdal;packaging"
+            PASS_REGULAR_EXPRESSION "driver_gti: yes"
             TIMEOUT 60)
 endif()
 
@@ -433,17 +434,20 @@ if(PCINSPECTOR_ENABLE_GPU_TESTS)
             INTEGRATION
             SOURCES
             support/CatchGpuMain.cpp
+            fixtures/GdalRasterFixtureFactory.cpp
             gpu/PointPickerGpuTests.cpp
             gpu/RasterRenderGpuTests.cpp
             gpu/VectorRenderGpuTests.cpp
             LIBRARIES
             pcinspector::app_config
+            pcinspector::import_gdal
             pcinspector::renderer
+            GDAL::GDAL
             Qt6::GuiPrivate
             Qt6::Test
             PROPERTIES
             RUN_SERIAL TRUE
-            TIMEOUT 10)
+            TIMEOUT 30)
     target_compile_definitions(pcinspector_gpu_tests PRIVATE
             "PCINSPECTOR_GPU_TEST_GRAPHICS_API=\"${PCINSPECTOR_GPU_TEST_GRAPHICS_API}\""
             "PCINSPECTOR_GPU_TEST_VALIDATION=$<BOOL:${PCINSPECTOR_GPU_TEST_VALIDATION}>")

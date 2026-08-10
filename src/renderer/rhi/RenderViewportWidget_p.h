@@ -128,7 +128,11 @@ private:
     [[nodiscard]] std::vector<BlockDraw>
     buildDrawList(const PointFramePlan &plan);
     [[nodiscard]] std::vector<VectorLayerDraw> buildVectorDrawList() const;
-    [[nodiscard]] std::vector<RasterLayerDraw>
+    struct RasterFrameResult {
+        std::vector<RasterLayerDraw> draws;
+        bool requiresContinuation = false;
+    };
+    [[nodiscard]] RasterFrameResult
     streamRasterTiles(QRhiCommandBuffer *commandBuffer);
     [[nodiscard]] QMatrix4x4
     frameViewProjection(const FrameCamera &frame) const;

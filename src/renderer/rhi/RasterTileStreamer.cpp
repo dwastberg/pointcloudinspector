@@ -25,10 +25,10 @@ resolveRasterDecodeParameters(const RasterLayer &layer,
         return decode;
     }
 
-    const auto definition = std::ranges::find(
-        colorMaps.definitions(),
-        std::string_view(layer.style.colorRampKey),
-        &PointColorMapDefinition::key);
+    const auto definition =
+        std::ranges::find(colorMaps.definitions(),
+                          std::string_view(layer.style.colorRampKey),
+                          &PointColorMapDefinition::key);
     if (definition != colorMaps.definitions().end() &&
         definition->kind == PointColorMapKind::Continuous &&
         !definition->stops.empty()) {
@@ -91,6 +91,12 @@ void RasterTileStreamer::setCpuByteBudget(
     memoryReady_.notify_all();
 }
 
+std::uint64_t RasterTileStreamer::cpuByteBudget() const noexcept
+{
+    const std::scoped_lock lock(mutex_);
+    return totalCpuByteBudget_;
+}
+
 std::uint64_t RasterTileStreamer::readPoolCapacity(
     const std::uint64_t totalBudget) const noexcept
 {
@@ -106,15 +112,12 @@ void RasterTileStreamer::updateCpuPeak(
     const std::uint64_t current = saturatingAdd(
         cacheResidentBytes_.load(std::memory_order_relaxed), reservedBytes);
     std::uint64_t peak = cpuPeakBytes_.load(std::memory_order_relaxed);
-    while (peak < current &&
-           !cpuPeakBytes_.compare_exchange_weak(peak,
-                                                current,
-                                                std::memory_order_relaxed)) {
+    while (peak < current && !cpuPeakBytes_.compare_exchange_weak(
+                                 peak, current, std::memory_order_relaxed)) {
     }
 }
 
-void RasterTileStreamer::releaseCompletionReservation(
-    const std::uint64_t bytes)
+void RasterTileStreamer::releaseCompletionReservation(const std::uint64_t bytes)
 {
     if (bytes == 0) {
         return;
@@ -216,8 +219,7 @@ void RasterTileStreamer::workerLoop(std::stop_token stop)
                 } else {
                     const std::uint64_t extra = actual - reservation;
                     if (reservedReadBytes_ > readPoolByteCapacity_ ||
-                        extra >
-                            readPoolByteCapacity_ - reservedReadBytes_) {
+                        extra > readPoolByteCapacity_ - reservedReadBytes_) {
                         completion.tile.reset();
                         completion.error =
                             "Raster source exceeded its read reservation";
@@ -228,8 +230,7 @@ void RasterTileStreamer::workerLoop(std::stop_token stop)
                 }
             }
             if (!completion.tile) {
-                reservedReadBytes_ -=
-                    std::min(reservedReadBytes_, reservation);
+                reservedReadBytes_ -= std::min(reservedReadBytes_, reservation);
                 reservation = 0;
             }
             completion.reservedBytes = reservation;
@@ -246,8 +247,7 @@ void RasterTileStreamer::workerLoop(std::stop_token stop)
 void RasterTileStreamer::reconcile(const RasterLodPlan &plan,
                                    const RasterLayer &layer)
 {
-    const RasterFrameLayer single{
-        .plan = &plan, .layer = &layer, .decode = {}};
+    const RasterFrameLayer single{.plan = &plan, .layer = &layer, .decode = {}};
     reconcile(std::span{&single, 1});
 }
 
@@ -572,9 +572,9 @@ RasterStreamerMetrics RasterTileStreamer::metrics() const
         const std::scoped_lock lock(mutex_);
         result.pending = pendingKeys_.size();
         result.queued = queue_.size();
-        result.cpuBytes = saturatingAdd(
-            cacheResidentBytes_.load(std::memory_order_relaxed),
-            reservedReadBytes_);
+        result.cpuBytes =
+            saturatingAdd(cacheResidentBytes_.load(std::memory_order_relaxed),
+                          reservedReadBytes_);
     }
     result.cpuPeakBytes = cpuPeakBytes_.load(std::memory_order_relaxed);
     result.pendingUploads = pendingUploads_.size();
