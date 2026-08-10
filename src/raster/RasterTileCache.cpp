@@ -3,6 +3,7 @@
 #include "foundation/Hash.h"
 
 #include <algorithm>
+#include <unordered_set>
 #include <utility>
 
 std::size_t std::hash<pci::RasterCacheKey>::operator()(
@@ -77,11 +78,21 @@ bool RasterTileCache::makeRoom(
     if (incoming > byteBudget_) {
         return false;
     }
+    if (residentBytes_ <= byteBudget_ - incoming) {
+        return true; // the common case touches nothing
+    }
+
+    // Hashed once per call rather than scanned per candidate. The pathological
+    // case is a full cache whose resident tiles are all on screen: the walk
+    // below then reaches the end of the recency list, and a linear membership
+    // test inside it would make that walk quadratic in the protected set on
+    // every admission.
+    const std::unordered_set<RasterCacheKey> protectedSet(protectedKeys.begin(),
+                                                          protectedKeys.end());
     while (residentBytes_ > byteBudget_ - incoming) {
         const auto victim = std::ranges::find_if(
-            recency_, [protectedKeys](const RasterCacheKey &candidate) {
-                return std::ranges::find(protectedKeys, candidate) ==
-                       protectedKeys.end();
+            recency_, [&protectedSet](const RasterCacheKey &candidate) {
+                return !protectedSet.contains(candidate);
             });
         if (victim == recency_.end()) {
             return false;

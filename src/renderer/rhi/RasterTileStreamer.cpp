@@ -167,10 +167,12 @@ void RasterTileStreamer::reconcile(
         if (pendingKeys_.size() >= rasterMaximumPendingRequests) {
             break;
         }
-        if (pendingKeys_.contains(request.key) ||
-            std::ranges::any_of(queue_, [&request](const Request &pending) {
-                return pending.key == request.key;
-            })) {
+        // pendingKeys_ is the whole dedupe answer: a key enters it at enqueue
+        // and leaves at completion, so anything in the queue is already in it.
+        // Scanning the queue as well was a linear check per scheduled request,
+        // which at catalog scale is a few hundred thousand comparisons a frame
+        // for an answer the hash set already holds.
+        if (pendingKeys_.contains(request.key)) {
             continue;
         }
         pendingKeys_.insert(request.key);

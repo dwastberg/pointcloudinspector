@@ -12,6 +12,7 @@
 #include <span>
 #include <type_traits>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 class QRhi;
@@ -156,11 +157,20 @@ private:
         std::uint16_t validHeight = 0;
     };
 
+    // Eviction candidates in least-recently-used order, computed once per
+    // upload pass. Rebuilding it per evicted tile made a full cache cost a
+    // scan of every resident tile for every admission.
+    struct EvictionPlan {
+        std::vector<RasterCacheKey> order;
+        std::size_t next = 0;
+    };
+    [[nodiscard]] EvictionPlan buildEvictionPlan(
+        const std::unordered_set<RasterCacheKey> &protectedKeys) const;
+
     void createUniformBuffer(std::size_t drawCapacity);
     void ensureUniformCapacity(std::size_t drawCount);
     void createPipeline(QRhiRenderPassDescriptor *renderPass);
-    [[nodiscard]] bool makeRoom(std::uint64_t incoming,
-                                std::span<const RasterCacheKey> protectedKeys);
+    [[nodiscard]] bool makeRoom(std::uint64_t incoming, EvictionPlan &plan);
     void destroyTile(GpuTile &tile) noexcept;
 
     QRhi *rhi_ = nullptr;

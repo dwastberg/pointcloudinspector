@@ -340,6 +340,11 @@ std::size_t RasterLayerRenderer::uploadPending(
         quadUploaded_ = true;
     }
 
+    // Hashed and ordered once for the whole pass rather than per tile.
+    const std::unordered_set<RasterCacheKey> protectedSet(protectedKeys.begin(),
+                                                          protectedKeys.end());
+    EvictionPlan eviction = buildEvictionPlan(protectedSet);
+
     std::uint64_t spent = 0;
     std::size_t uploaded = 0;
     RhiResourceUpdateBatchPtr updates(rhi_->nextResourceUpdateBatch());
@@ -353,7 +358,7 @@ std::size_t RasterLayerRenderer::uploadPending(
         if (spent + bytes > frameByteBudget && uploaded > 0) {
             break;
         }
-        if (!makeRoom(bytes, protectedKeys)) {
+        if (!makeRoom(bytes, eviction)) {
             continue;
         }
 
@@ -409,9 +414,29 @@ std::size_t RasterLayerRenderer::uploadPending(
     return uploaded;
 }
 
-bool RasterLayerRenderer::makeRoom(
-    const std::uint64_t incoming,
-    const std::span<const RasterCacheKey> protectedKeys)
+RasterLayerRenderer::EvictionPlan RasterLayerRenderer::buildEvictionPlan(
+    const std::unordered_set<RasterCacheKey> &protectedKeys) const
+{
+    EvictionPlan plan;
+    plan.order.reserve(tiles_.size());
+    for (const auto &[key, tile] : tiles_) {
+        if (!protectedKeys.contains(key)) {
+            plan.order.push_back(key);
+        }
+    }
+    // Least recently used first. Tiles uploaded during this pass are never in
+    // the plan, which is correct: they are the most recent by construction.
+    std::ranges::sort(
+        plan.order,
+        [this](const RasterCacheKey &left, const RasterCacheKey &right) {
+            return tiles_.at(left).lastUsedFrame <
+                   tiles_.at(right).lastUsedFrame;
+        });
+    return plan;
+}
+
+bool RasterLayerRenderer::makeRoom(const std::uint64_t incoming,
+                                   EvictionPlan &plan)
 {
     // The same underflow-safe form the decoded cache uses: guard first, then
     // subtract, so a live budget decrease cannot wrap the comparison.
@@ -419,22 +444,14 @@ bool RasterLayerRenderer::makeRoom(
         return false;
     }
     while (gpuBytes_ > gpuByteBudget_ - incoming) {
-        auto victim = tiles_.end();
-        std::uint64_t oldest = std::numeric_limits<std::uint64_t>::max();
-        for (auto entry = tiles_.begin(); entry != tiles_.end(); ++entry) {
-            if (std::ranges::find(protectedKeys, entry->first) !=
-                protectedKeys.end()) {
-                continue;
-            }
-            if (entry->second.lastUsedFrame < oldest) {
-                oldest = entry->second.lastUsedFrame;
-                victim = entry;
-            }
-        }
-        if (victim == tiles_.end()) {
-            // Everything resident is on screen this frame; decline rather than
-            // evict what is being drawn.
+        if (plan.next >= plan.order.size()) {
+            // Everything left resident is on screen this frame; decline rather
+            // than evict what is being drawn.
             return false;
+        }
+        const auto victim = tiles_.find(plan.order[plan.next++]);
+        if (victim == tiles_.end()) {
+            continue;
         }
         destroyTile(victim->second);
         tiles_.erase(victim);
@@ -478,7 +495,10 @@ void RasterLayerRenderer::setGpuByteBudget(
     const std::span<const RasterCacheKey> protectedKeys)
 {
     gpuByteBudget_ = bytes;
-    static_cast<void>(makeRoom(0, protectedKeys));
+    const std::unordered_set<RasterCacheKey> protectedSet(protectedKeys.begin(),
+                                                          protectedKeys.end());
+    EvictionPlan eviction = buildEvictionPlan(protectedSet);
+    static_cast<void>(makeRoom(0, eviction));
 }
 
 std::size_t RasterLayerRenderer::residentTileCount() const noexcept

@@ -175,3 +175,42 @@ TEST_CASE("raster tile cache clears to an empty accounting", "[unit][raster]")
 }
 
 } // namespace
+
+namespace {
+
+TEST_CASE("raster tile cache admission stays cheap when everything is pinned",
+          "[unit][raster][scale]")
+{
+    // The steady state of a large view: the cache is full and every resident
+    // tile is on screen. Each admission then has to walk the whole recency
+    // list and find no victim. With a linear membership test inside that walk
+    // the cost is quadratic in the protected set, which at this size is
+    // billions of comparisons; hashing the set once per call keeps it linear.
+    constexpr std::uint32_t residentTiles = 2000;
+    pci::RasterTileCache cache(entryBytes() * residentTiles);
+
+    std::vector<pci::RasterCacheKey> onScreen;
+    onScreen.reserve(residentTiles);
+    for (std::uint32_t index = 0; index < residentTiles; ++index) {
+        REQUIRE(cache.insert(key(index), tile(), {}));
+        onScreen.push_back(key(index));
+    }
+    REQUIRE(cache.size() == residentTiles);
+
+    for (std::uint32_t attempt = 0; attempt < 500; ++attempt) {
+        // Declined rather than evicting what is being drawn, every time.
+        CHECK_FALSE(
+            cache.insert(key(residentTiles + attempt), tile(), onScreen));
+    }
+    CHECK(cache.size() == residentTiles);
+    CHECK(cache.evictions() == 0);
+    CHECK(cache.residentBytes() <= cache.byteBudget());
+
+    // Releasing the pin lets the same admissions succeed by recency.
+    CHECK(cache.insert(key(residentTiles), tile(), {}));
+    CHECK(cache.size() == residentTiles);
+    CHECK(cache.evictions() == 1);
+    CHECK_FALSE(cache.contains(key(0)));
+}
+
+} // namespace
