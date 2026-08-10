@@ -33,6 +33,40 @@ TEST_CASE("GDAL driver availability is probed, not inferred",
     CHECK_FALSE(pci::gdalDriverAvailable(""));
 }
 
+TEST_CASE("GDAL catalog capabilities are measured once", "[component][gdal]")
+{
+    const pci::GdalCatalogCapabilities &capabilities =
+        pci::gdalCatalogCapabilities();
+
+    // GTI plus at least one index format is what the supported lane promises,
+    // and this assertion is the thing that fails if a packaged build drops to
+    // a stripped GDAL.
+    CHECK(capabilities.tileIndex);
+    CHECK(capabilities.virtualRaster);
+    CHECK(capabilities.catalogImport());
+    CHECK((capabilities.geoPackage || capabilities.flatGeobuf ||
+           capabilities.shapefile));
+    CHECK(capabilities.version.major >= 3);
+
+    // Repeated calls return the same probe rather than re-querying GDAL.
+    CHECK(&capabilities == &pci::gdalCatalogCapabilities());
+}
+
+TEST_CASE("catalog capability requires an index format", "[unit][gdal]")
+{
+    // GTI alone cannot open a catalog whose index lives in a format the build
+    // lacks, so the capability is the conjunction rather than the GTI probe.
+    pci::GdalCatalogCapabilities capabilities;
+    capabilities.tileIndex = true;
+    CHECK_FALSE(capabilities.catalogImport());
+
+    capabilities.flatGeobuf = true;
+    CHECK(capabilities.catalogImport());
+
+    capabilities.tileIndex = false;
+    CHECK_FALSE(capabilities.catalogImport());
+}
+
 TEST_CASE("GDAL block cache limit is explicit and observable",
           "[component][gdal]")
 {

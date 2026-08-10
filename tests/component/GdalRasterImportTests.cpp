@@ -1,4 +1,5 @@
 #include "fixtures/GdalRasterFixtureFactory.h"
+#include "import/gdal/GdalRasterDataset.h"
 #include "import/gdal/GdalRasterLoader.h"
 #include "import/gdal/GdalRasterSource.h"
 
@@ -415,4 +416,35 @@ TEST_CASE("raster source above the coverage limit reports missing overviews",
     CHECK(data->metadata().insufficientOverviews);
     CHECK(pci::rasterRequiresTiledRendering(data->metadata()));
     CHECK(source->readCount() == before);
+}
+
+TEST_CASE("raster source drivers come from the path, not its contents",
+          "[unit][gdal][catalog]")
+{
+    const auto drivers = [](const char *name) {
+        return pci::rasterSourceDriversFor(std::filesystem::path(name));
+    };
+
+    CHECK(drivers("mosaic.vrt").container == "VRT");
+    CHECK(drivers("mosaic.vrt").index.empty());
+
+    // A tile index names its storage format in its own extension, so the
+    // required index driver is known without opening anything. That is what
+    // keeps import cost independent of how many members a catalog holds.
+    CHECK(drivers("tiles.gti.gpkg").container == "GTI");
+    CHECK(drivers("tiles.gti.gpkg").index == "GPKG");
+    CHECK(drivers("tiles.gti.fgb").index == "FlatGeobuf");
+    CHECK(drivers("tiles.gti.shp").index == "ESRI Shapefile");
+    CHECK(drivers("tiles.gti").container == "GTI");
+    CHECK(drivers("tiles.gti").index.empty());
+
+    // Case and directories must not change the answer.
+    CHECK(drivers("/data/Archive/TILES.GTI.GPKG").index == "GPKG");
+
+    // An ordinary raster implies nothing, so its failures keep reporting the
+    // driver's own message.
+    CHECK(drivers("scene.tif").container.empty());
+    CHECK(drivers("scene.tif").index.empty());
+    // A plain GeoPackage raster is not a tile index.
+    CHECK(drivers("scene.gpkg").container.empty());
 }

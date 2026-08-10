@@ -42,6 +42,32 @@ struct GdalRuntimeVersion {
 // inferred from the version.
 [[nodiscard]] bool gdalDriverAvailable(std::string_view driverName);
 
+// What this build can actually open, probed once. A user's bug report needs to
+// distinguish "GTI missing" from "GTI broken", which a version number alone
+// cannot do.
+//
+// Index drivers are listed separately from GTI because a catalog names its
+// index in its own file: GTI can be present while the format holding the index
+// is not, and that failure must name the missing index driver rather than look
+// like a broken catalog.
+struct GdalCatalogCapabilities {
+    GdalRuntimeVersion version;
+    bool tileIndex = false;     // GTI
+    bool virtualRaster = false; // VRT
+    bool geoPackage = false;    // GPKG
+    bool flatGeobuf = false;    // FlatGeobuf
+    bool shapefile = false;     // ESRI Shapefile
+
+    // Ordinary GeoTIFF and VRT import stays available without GTI; only
+    // catalog import depends on it.
+    [[nodiscard]] bool catalogImport() const noexcept
+    {
+        return tileIndex && (geoPackage || flatGeobuf || shapefile);
+    }
+};
+
+[[nodiscard]] const GdalCatalogCapabilities &gdalCatalogCapabilities();
+
 // GDAL's block cache defaults to 5% of physical RAM, is process-global, and is
 // invisible to the application's own byte accounting. Setting it explicitly is
 // what makes the documented memory envelope true rather than aspirational.

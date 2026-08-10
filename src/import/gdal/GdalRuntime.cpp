@@ -86,6 +86,25 @@ bool gdalDriverAvailable(const std::string_view driverName)
     return GDALGetDriverByName(name.c_str()) != nullptr;
 }
 
+const GdalCatalogCapabilities &gdalCatalogCapabilities()
+{
+    // Probed once: driver registration cannot change after startup, and a
+    // per-import probe would put a lookup on the import path for an answer
+    // that never varies.
+    static const GdalCatalogCapabilities capabilities = [] {
+        ensureGdalRegistered();
+        return GdalCatalogCapabilities{
+            .version = gdalRuntimeVersion(),
+            .tileIndex = gdalDriverAvailable("GTI"),
+            .virtualRaster = gdalDriverAvailable("VRT"),
+            .geoPackage = gdalDriverAvailable("GPKG"),
+            .flatGeobuf = gdalDriverAvailable("FlatGeobuf"),
+            .shapefile = gdalDriverAvailable("ESRI Shapefile"),
+        };
+    }();
+    return capabilities;
+}
+
 void setGdalBlockCacheBytes(const std::uint64_t bytes)
 {
     ensureGdalRegistered();
