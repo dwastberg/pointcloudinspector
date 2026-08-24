@@ -31,6 +31,11 @@ public:
         // fails without changing the reservation when the document budget is
         // already exhausted.
         [[nodiscard]] bool tryResize(std::uint64_t bytes);
+        // Creates a separately owned reservation against the same budget.
+        // This is used for transactional staging when the owner of an existing
+        // allocation must remain live until an atomic swap completes.
+        [[nodiscard]] std::optional<std::shared_ptr<Reservation>>
+        tryReserveSibling(std::uint64_t bytes) const;
 
     private:
         friend class PointMemoryBudget;

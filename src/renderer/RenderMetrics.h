@@ -107,6 +107,10 @@ struct RenderMetrics {
     std::uint64_t persistentIndexBytes = 0;
     std::uint64_t localPersistentSources = 0;
     std::uint64_t reusedPersistentSources = 0;
+    std::uint64_t activeColorTableBytes = 0;
+    std::uint64_t flatDisplacedColorBytes = 0;
+    std::uint64_t retainedSourceRootBytes = 0;
+    std::uint64_t retainedColoredRootBytes = 0;
     std::uint64_t visibleLayerCount = 0;
     std::uint64_t coveredLayerCount = 0;
     std::uint64_t processResidentBytes = 0;

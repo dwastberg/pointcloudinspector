@@ -154,6 +154,71 @@ void DecodedPageCache::removeSource(const PointCloudSourceId sourceId)
     sources_.erase(sourceId);
 }
 
+void DecodedPageCache::replaceSourceRoot(
+    const PointCloudSourceId sourceId,
+    PointCloudNodePayloadPtr root,
+    const std::span<const PointCloudNodeId> pins)
+{
+    if (sourceId == PointCloudSourceId{} || !root ||
+        root->nodeId != rootPointCloudNode) {
+        throw std::invalid_argument(
+            "decoded page replacement requires a source root");
+    }
+    const std::uint64_t rootBytes = pointCloudNodePayloadBytes(*root);
+    const std::uint64_t rootPoints = pointCloudNodePayloadPoints(*root);
+
+    const std::scoped_lock lock(mutex_);
+    auto entries = entries_;
+    auto pinned = pinned_;
+    auto sources = sources_;
+    std::uint64_t residentBytes = residentBytes_;
+    std::uint64_t residentPoints = residentPoints_;
+
+    for (auto current = entries.begin(); current != entries.end();) {
+        if (current->first.sourceId == sourceId) {
+            residentBytes -= current->second.bytes;
+            residentPoints -= current->second.points;
+            current = entries.erase(current);
+        } else {
+            ++current;
+        }
+    }
+    for (auto current = pinned.begin(); current != pinned.end();) {
+        if (current->sourceId == sourceId) {
+            current = pinned.erase(current);
+        } else {
+            ++current;
+        }
+    }
+    sources.erase(sourceId);
+
+    SourceState state;
+    state.insertions = 1;
+    state.residentBytes = rootBytes;
+    state.peakResidentBytes = rootBytes;
+    state.residentPoints = rootPoints;
+    sources.emplace(sourceId, state);
+    entries.emplace(DecodedPageKey{sourceId, rootPointCloudNode},
+                    Entry{.payload = std::move(root),
+                          .bytes = rootBytes,
+                          .points = rootPoints,
+                          .lastUsed = clock_ + 1});
+    for (const PointCloudNodeId id : pins) {
+        pinned.insert({sourceId, id});
+    }
+    residentBytes += rootBytes;
+    residentPoints += rootPoints;
+
+    entries_.swap(entries);
+    pinned_.swap(pinned);
+    sources_.swap(sources);
+    residentBytes_ = residentBytes;
+    residentPoints_ = residentPoints;
+    peakResidentBytes_ = std::max(peakResidentBytes_, residentBytes_);
+    ++clock_;
+    ++insertions_;
+}
+
 void DecodedPageCache::clear()
 {
     const std::scoped_lock lock(mutex_);

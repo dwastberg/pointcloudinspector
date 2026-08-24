@@ -40,6 +40,13 @@ struct PointCloudStorageMetrics {
     bool reused = false;
 };
 
+struct PointCloudStoredNode {
+    PointCloudNodeId id;
+    Bounds3d bounds;
+    std::uint64_t pointCount = 0;
+    std::uint64_t localityKey = 0;
+};
+
 class PointCloudDataSourceCancelled final : public std::runtime_error {
 public:
     PointCloudDataSourceCancelled()
@@ -76,6 +83,11 @@ public:
     // no value; the renderer then keeps normal screen-space LOD behavior.
     [[nodiscard]] virtual std::optional<PointCloudFullDetailInfo>
     fullDetailInfo() const
+    {
+        return std::nullopt;
+    }
+    [[nodiscard]] virtual std::optional<std::vector<PointCloudStoredNode>>
+    storedNodeIndex() const
     {
         return std::nullopt;
     }

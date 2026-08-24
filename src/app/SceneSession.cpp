@@ -6,6 +6,7 @@
 #include "platform/QtPath.h"
 #include "platform/SystemMemoryInfo.h"
 #include "pointcloud/PointColorPolicy.h"
+#include "scene/RasterLayerDisplay.h"
 
 #include <QThread>
 
@@ -21,6 +22,20 @@ namespace {
 void assertOwnerThread(const QObject &object)
 {
     Q_ASSERT(object.thread() == QThread::currentThread());
+}
+
+[[nodiscard]] QString pointLayerName(const PointCloudLayer &layer)
+{
+    return layer.scene->metadata().sourcePath.empty()
+               ? QStringLiteral("Point cloud %1").arg(layer.id.value())
+               : displayPathName(layer.scene->metadata().sourcePath);
+}
+
+[[nodiscard]] QString rasterLayerName(const RasterLayer &layer)
+{
+    return layer.data->metadata().sourcePath.empty()
+               ? QStringLiteral("Raster layer %1").arg(layer.id.value())
+               : displayPathName(layer.data->metadata().sourcePath);
 }
 
 } // namespace
@@ -83,6 +98,7 @@ SceneSession::SceneSession(
     connectController();
     connectVectorController();
     connectRasterController();
+    connectColorizeController();
 }
 
 SceneSession::~SceneSession()
@@ -121,6 +137,11 @@ RasterLoadController &SceneSession::rasterLoadController() noexcept
     return *importServices_.raster;
 }
 
+PointCloudColorizeController &SceneSession::colorizeController() noexcept
+{
+    return *importServices_.colorize;
+}
+
 const std::shared_ptr<const PointCloudStatisticsProvider> &
 SceneSession::statisticsProvider() const noexcept
 {
@@ -145,6 +166,35 @@ bool SceneSession::hasActiveVectorLoads() const noexcept
 bool SceneSession::hasActiveRasterLoads() const noexcept
 {
     return importServices_.raster->hasActiveJobs();
+}
+
+bool SceneSession::hasActiveColorizeJobs() const noexcept
+{
+    return importServices_.colorize->hasActiveJobs();
+}
+
+bool SceneSession::hasActiveColorizeJob(
+    const PointCloudLayerId layerId) const noexcept
+{
+    return importServices_.colorize->hasActiveJob(layerId);
+}
+
+bool SceneSession::colorizeCommitInProgress(
+    const PointCloudLayerId layerId) const noexcept
+{
+    return importServices_.colorize->isCommitInProgress(layerId);
+}
+
+PointCloudColorizeControllerMetrics
+SceneSession::colorizeMetrics() const noexcept
+{
+    return importServices_.colorize->metrics();
+}
+
+const std::shared_ptr<const SpatialReferenceComparator> &
+SceneSession::spatialReferenceComparator() const noexcept
+{
+    return importServices_.spatialReferences;
 }
 
 SceneSessionTimings SceneSession::timings() const noexcept
@@ -196,7 +246,7 @@ bool SceneSession::setDecodedByteBudget(
     if (!memoryBudget_->setByteBudget(byteBudget)) {
         return false;
     }
-    automaticMemoryBudget_ = std::move(automaticParameters);
+    automaticMemoryBudget_ = automaticParameters;
     decodedByteBudget_ = byteBudget;
     document_->syncResidencyBudgets();
     publishDocument();
@@ -384,6 +434,110 @@ void SceneSession::connectRasterController()
             });
 }
 
+void SceneSession::connectColorizeController()
+{
+    PointCloudColorizeController &controller = colorizeController();
+    connect(&controller,
+            &PointCloudColorizeController::prepared,
+            this,
+            [this](const LoadJobId jobId,
+                   const RasterColorizeCommitToken token,
+                   RasterColorizePreparedPtr prepared,
+                   RasterPointColorBinding binding) {
+                assertOwnerThread(*this);
+                const auto point = document_->layer(token.pointLayerId);
+                const auto raster = document_->rasterLayer(token.rasterLayerId);
+                if (!point || !raster || point->scene != token.scene ||
+                    point->colorGeneration != token.pointColorGeneration ||
+                    raster->data->sourceId != token.rasterSourceId ||
+                    raster->renderGeneration != token.rasterRenderGeneration) {
+                    colorizeController().finishCommit(
+                        jobId,
+                        false,
+                        QStringLiteral("Layer state changed while colors were "
+                                       "being prepared; try again"));
+                    document_->syncResidencyBudgets();
+                    publishTaskRows();
+                    return;
+                }
+                RasterPointColorApplyOutcome outcome;
+                try {
+                    outcome = point->scene->applyRasterPointColors(
+                        std::move(prepared));
+                } catch (const std::exception &error) {
+                    colorizeController().finishCommit(
+                        jobId, false, QString::fromUtf8(error.what()));
+                    document_->syncResidencyBudgets();
+                    publishTaskRows();
+                    return;
+                }
+                if (outcome != RasterPointColorApplyOutcome::Applied) {
+                    colorizeController().finishCommit(jobId, false);
+                    document_->syncResidencyBudgets();
+                    publishTaskRows();
+                    return;
+                }
+                if (!document_->setLayerRasterColors(token.pointLayerId,
+                                                     std::move(binding))) {
+                    throw std::logic_error("Applied point colors could not be "
+                                           "recorded in the document");
+                }
+                static_cast<void>(document_->setLayerColorMode(
+                    token.pointLayerId,
+                    PointColorMode{.source = PointColorSource::Rgb,
+                                   .colorMap = PointColorMap::Rgb,
+                                   .manualRange = std::nullopt}));
+                colorizeController().finishCommit(jobId, true);
+                document_->syncResidencyBudgets();
+                publishDocument();
+                publishTaskRows();
+                const auto completed = colorizeController().jobState(jobId);
+                const QString targetName =
+                    completed && !completed->pointLayerName.isEmpty()
+                        ? completed->pointLayerName
+                        : pointLayerName(*point);
+                const QString sourceName =
+                    completed && !completed->rasterLayerName.isEmpty()
+                        ? completed->rasterLayerName
+                        : rasterLayerName(*raster);
+                emit statusChanged(
+                    QStringLiteral("Colorized %1 from %2. %3")
+                        .arg(targetName,
+                             sourceName,
+                             completed ? completed->detail : QString{}));
+            });
+    connect(&controller,
+            &PointCloudColorizeController::failed,
+            this,
+            [this](const LoadJobId, const QString &message) {
+                document_->syncResidencyBudgets();
+                emit statusChanged(
+                    QStringLiteral("Point-cloud colorization failed: %1")
+                        .arg(message));
+                publishTaskRows();
+            });
+    connect(
+        &controller,
+        &PointCloudColorizeController::cancelled,
+        this,
+        [this](const LoadJobId jobId) {
+            document_->syncResidencyBudgets();
+            const auto state = colorizeController().jobState(jobId);
+            emit statusChanged(
+                state && !state->pointLayerName.isEmpty()
+                    ? QStringLiteral("Colorization of %1 cancelled.")
+                          .arg(state->pointLayerName)
+                    : QStringLiteral("Point-cloud colorization cancelled."));
+            publishTaskRows();
+        });
+    connect(&controller,
+            &PointCloudColorizeController::jobStateChanged,
+            this,
+            [this](const LoadJobId) {
+                publishTaskRows();
+            });
+}
+
 void SceneSession::publishTaskRows()
 {
     LoadJobRows rows = pointLoadController().jobRows();
@@ -395,6 +549,10 @@ void SceneSession::publishTaskRows()
     rows.insert(rows.end(),
                 std::make_move_iterator(rasterRows.begin()),
                 std::make_move_iterator(rasterRows.end()));
+    LoadJobRows colorizeRows = colorizeController().jobRows();
+    rows.insert(rows.end(),
+                std::make_move_iterator(colorizeRows.begin()),
+                std::make_move_iterator(colorizeRows.end()));
     emit taskRowsChanged(std::move(rows));
 }
 
@@ -671,12 +829,102 @@ LoadJobId SceneSession::startRasterImport(RasterImportRequest request)
     return rasterLoadController().startImport(std::move(request));
 }
 
+LoadJobId
+SceneSession::colorizePointCloudFromRaster(const PointCloudLayerId pointLayerId,
+                                           const SceneLayerId rasterLayerId,
+                                           RasterColorizeOptions options)
+{
+    assertOwnerThread(*this);
+    const auto point = document_->layer(pointLayerId);
+    const auto raster = document_->rasterLayer(rasterLayerId);
+    if (!point || !raster) {
+        throw std::invalid_argument(
+            "Colorization requires an attached point cloud and raster");
+    }
+    if (options.temporaryDirectory.empty()) {
+        options.temporaryDirectory = std::filesystem::temp_directory_path();
+    }
+    std::optional<SpatialReferenceRelation> relation;
+    if (importServices_.spatialReferences) {
+        relation = importServices_.spatialReferences->compare(
+            point->scene->metadata().spatialReferenceWkt,
+            raster->data->metadata().spatialReferenceWkt);
+    }
+    const auto decode =
+        resolveRasterDecodeParameters(*raster, *document_->colorMaps());
+    const QString targetName = pointLayerName(*point);
+    const QString sourceName = rasterLayerName(*raster);
+    LoadJobId jobId;
+    try {
+        jobId = colorizeController().startColorize(
+            {
+                .token =
+                    RasterColorizeCommitToken{
+                        .pointLayerId = pointLayerId,
+                        .scene = point->scene,
+                        .pointColorGeneration = point->colorGeneration,
+                        .rasterLayerId = rasterLayerId,
+                        .rasterSourceId = raster->data->sourceId,
+                        .rasterRenderGeneration = raster->renderGeneration,
+                    },
+                .raster = raster->data->source,
+                .decode = decode,
+                .options = std::move(options),
+                .memoryBudget = memoryBudget_,
+                .crsRelation = relation,
+                .pointLayerName = targetName,
+                .rasterLayerName = sourceName,
+            },
+            [this] {
+                document_->syncResidencyBudgets();
+            });
+    } catch (...) {
+        document_->syncResidencyBudgets();
+        throw;
+    }
+    publishTaskRows();
+    emit showTasksRequested();
+    emit statusChanged(
+        QStringLiteral("Colorizing %1 from %2…").arg(targetName, sourceName));
+    return jobId;
+}
+
+bool SceneSession::revertPointCloudColors(const PointCloudLayerId pointLayerId)
+{
+    assertOwnerThread(*this);
+    const auto point = document_->layer(pointLayerId);
+    if (!point || !point->rasterColors) {
+        return false;
+    }
+    const QString targetName = pointLayerName(*point);
+    colorizeController().cancelAndWaitForPointLayer(pointLayerId);
+    if (point->scene->revertPointColors() !=
+        RasterPointColorApplyOutcome::Applied) {
+        return false;
+    }
+    static_cast<void>(document_->clearLayerRasterColors(pointLayerId));
+    if (!point->scene->metadata().hasColor &&
+        point->colorMode.source == PointColorSource::Rgb) {
+        static_cast<void>(document_->setLayerColorMode(
+            pointLayerId,
+            defaultPointColorMode(*document_->colorMaps(),
+                                  point->scene->metadata())));
+    }
+    document_->syncResidencyBudgets();
+    publishDocument();
+    publishTaskRows();
+    emit statusChanged(
+        QStringLiteral("Restored source colors for %1.").arg(targetName));
+    return true;
+}
+
 void SceneSession::cancelAllLoads()
 {
     assertOwnerThread(*this);
     cancelAll();
     vectorLoadController().cancelAll();
     rasterLoadController().cancelAll();
+    colorizeController().cancelAll();
 }
 
 // Each keyed operation below names every job kind. Treating "not a point
@@ -695,6 +943,9 @@ void SceneSession::cancelJob(const LoadJobKey key)
     case LoadJobKind::Raster:
         rasterLoadController().cancel(key.id);
         break;
+    case LoadJobKind::Colorize:
+        colorizeController().cancel(key.id);
+        break;
     }
 }
 
@@ -710,6 +961,11 @@ void SceneSession::retryJob(const LoadJobKey key)
         break;
     case LoadJobKind::Raster:
         static_cast<void>(rasterLoadController().retry(key.id));
+        break;
+    case LoadJobKind::Colorize:
+        if (!colorizeController().retry(key.id)) {
+            document_->syncResidencyBudgets();
+        }
         break;
     }
 }
@@ -738,6 +994,11 @@ void SceneSession::dismissJob(const LoadJobKey key)
         break;
     case LoadJobKind::Raster:
         if (rasterLoadController().dismiss(key.id)) {
+            publishTaskRows();
+        }
+        break;
+    case LoadJobKind::Colorize:
+        if (colorizeController().dismiss(key.id)) {
             publishTaskRows();
         }
         break;
@@ -788,8 +1049,10 @@ void SceneSession::setAllLayerColors(PointColorMode mode)
     if (layers.empty() ||
         !std::ranges::all_of(
             layers, [this, &mode](const PointCloudLayer &layer) {
-                return pointColorModeAvailable(
-                    *document_->colorMaps(), layer.scene->metadata(), mode);
+                return pointColorModeAvailable(*document_->colorMaps(),
+                                               layer.scene->metadata(),
+                                               mode,
+                                               layer.rasterColors.has_value());
             })) {
         return;
     }
@@ -841,6 +1104,12 @@ void SceneSession::setLayerClassificationFilter(
 void SceneSession::removeLayer(const SceneLayerId layerId)
 {
     assertOwnerThread(*this);
+    if (document_->layer(layerId)) {
+        colorizeController().cancelForPointLayer(layerId);
+    }
+    if (document_->rasterLayer(layerId)) {
+        colorizeController().cancelForRasterLayer(layerId);
+    }
     if (ActiveLoad *load = activeLoadByLayerId(layerId)) {
         load->admitted = false;
         load->layerId.reset();

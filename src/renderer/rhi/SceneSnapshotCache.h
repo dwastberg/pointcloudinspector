@@ -18,6 +18,7 @@ public:
 
     struct RefreshResult {
         std::vector<PointCloudLayerId> invalidatedRootPayloads;
+        std::vector<PointCloudLayerId> invalidatedColors;
     };
 
     struct LayerChanges {
@@ -50,6 +51,7 @@ private:
     struct CachedSceneSnapshot {
         PointCloudScenePtr scene;
         PointCloudSceneSnapshot snapshot;
+        std::uint64_t colorGeneration = 0;
     };
 
     struct SceneSubscription {

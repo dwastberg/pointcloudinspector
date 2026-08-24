@@ -58,6 +58,9 @@ public:
 
     [[nodiscard]] const RasterLayerMetadata &metadata() const noexcept override;
 
+    [[nodiscard]] RasterTileSourcePtr
+    detachedReader(std::uint32_t maximumHandles) const override;
+
     [[nodiscard]] std::uint64_t
     readReservationBytes(const RasterTileRequest &request) const override;
 

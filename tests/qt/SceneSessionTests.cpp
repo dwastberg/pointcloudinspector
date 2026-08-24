@@ -175,11 +175,30 @@ public:
         return metadata_;
     }
 
-    [[nodiscard]] pci::RasterTileData readTile(const pci::RasterTileRequest &,
-                                               std::stop_token) const override
+    [[nodiscard]] pci::RasterTileData
+    readTile(const pci::RasterTileRequest &request,
+             const std::stop_token stop) const override
     {
-        throw pci::RasterReadError("the session fixture holds no pixels");
+        if (stop.stop_requested()) {
+            throw pci::RasterReadCancelled();
+        }
+        ++reads;
+        pci::RasterTileData tile;
+        tile.key = request.key;
+        tile.renderGeneration = request.renderGeneration;
+        tile.validWidth = static_cast<std::uint16_t>(metadata_.width);
+        tile.validHeight = static_cast<std::uint16_t>(metadata_.height);
+        tile.rgba.resize(pci::rasterStoredTileBytes);
+        for (std::size_t offset = 0; offset < tile.rgba.size(); offset += 4) {
+            tile.rgba[offset + 0] = std::byte{0x11};
+            tile.rgba[offset + 1] = std::byte{0x22};
+            tile.rgba[offset + 2] = std::byte{0x33};
+            tile.rgba[offset + 3] = std::byte{0xff};
+        }
+        return tile;
     }
+
+    mutable std::atomic_uint64_t reads = 0;
 
 private:
     pci::RasterLayerMetadata metadata_;
@@ -239,6 +258,8 @@ makeServices(const std::shared_ptr<const pci::PointCloudLoader> &loader)
         std::make_shared<UnavailableVectorLoader>(), *services.scheduler);
     services.raster = std::make_unique<pci::RasterLoadController>(
         std::make_shared<UnavailableRasterLoader>(), *services.scheduler);
+    services.colorize = std::make_unique<pci::PointCloudColorizeController>(
+        *services.scheduler);
     services.statistics = std::make_shared<UnavailableStatistics>();
     return services;
 }
@@ -575,4 +596,106 @@ TEST_CASE("scene session reports a failed raster without adding a layer",
         QStringLiteral("stub raster failure")));
     CHECK(session.document()->rasterLayerCount() == 0);
     CHECK_FALSE(session.hasActiveRasterLoads());
+}
+
+TEST_CASE("scene session commits and reverts raster point colors",
+          "[scene-session][raster][colorize]")
+{
+    auto pointLoader = std::make_shared<SessionLoader>();
+    pci::SceneSession session(makeServices(pointLoader),
+                              100,
+                              32ULL * 1024 * 1024,
+                              std::nullopt,
+                              {},
+                              pci::test::createTestPointColorMapCatalog());
+    QSignalSpy status(&session, &pci::SceneSession::statusChanged);
+    pci::LoadJobRows latestRows;
+    QObject::connect(&session,
+                     &pci::SceneSession::taskRowsChanged,
+                     [&latestRows](pci::LoadJobRows rows) {
+                         latestRows = std::move(rows);
+                     });
+
+    pci::PointCloudMetadata pointMetadata;
+    pointMetadata.sourcePath = "target.laz";
+    pointMetadata.sourcePointCount = 1;
+    pointMetadata.sourceBounds = {
+        .minimum = {0.0, 0.0, 0.0},
+        .maximum = {0.0, 0.0, 0.0},
+    };
+    auto scene =
+        std::make_shared<pci::PointCloudScene>(std::move(pointMetadata));
+    auto block = std::make_shared<pci::PointBlock>();
+    block->origin = {0.0, 0.0, 0.0};
+    block->scale = 1.0;
+    block->bounds = {.minimum = {0.0, 0.0, 0.0}, .maximum = {0.0, 0.0, 0.0}};
+    block->points.push_back({.rgba = 0xffabcdefU});
+    scene->addBlock(block);
+    scene->markLoadingComplete();
+    const pci::PointCloudLayerId pointId = session.document()->addLayer(scene);
+
+    pci::RasterLayerMetadata rasterMetadata;
+    rasterMetadata.sourcePath = "colors.tif";
+    rasterMetadata.width = 4;
+    rasterMetadata.height = 4;
+    rasterMetadata.geoTransform = {0.0, 1.0, 0.0, 0.0, 0.0, 1.0};
+    rasterMetadata.bounds =
+        *pci::rasterPixelEdgeBounds(rasterMetadata.geoTransform,
+                                    rasterMetadata.width,
+                                    rasterMetadata.height);
+    rasterMetadata.levels.push_back({.width = rasterMetadata.width,
+                                     .height = rasterMetadata.height,
+                                     .channelCount = 3});
+    auto rasterSource =
+        std::make_shared<StubRasterSource>(std::move(rasterMetadata));
+    auto rasterData =
+        std::make_shared<pci::RasterLayerData>(pci::RasterLayerData{
+            .sourceId = pci::nextRasterSourceId(),
+            .source = rasterSource,
+        });
+    const pci::SceneLayerId rasterId =
+        session.document()->addRasterLayer(rasterData);
+
+    const pci::LoadJobId job =
+        session.colorizePointCloudFromRaster(pointId, rasterId);
+    REQUIRE(waitFor([&] {
+        const auto layer = session.document()->layer(pointId);
+        return layer && layer->rasterColors.has_value();
+    }));
+    REQUIRE(waitFor([&latestRows] {
+        return latestRows.size() == 1 && latestRows.front().terminal;
+    }));
+    CHECK(latestRows.front().title == QStringLiteral("Colorize target.laz"));
+    CHECK(
+        latestRows.front().detail.contains(QStringLiteral("From colors.tif")));
+    CHECK(latestRows.front().detail.contains(
+        QStringLiteral("kept source color")));
+    REQUIRE_FALSE(status.empty());
+    CHECK(status.front().at(0).toString() ==
+          QStringLiteral("Colorizing target.laz from colors.tif…"));
+    CHECK(status.back().at(0).toString().contains(
+        QStringLiteral("Colorized target.laz from colors.tif")));
+    const auto colored = session.document()->layer(pointId);
+    REQUIRE(colored.has_value());
+    REQUIRE(colored->rasterColors.has_value());
+    CHECK(colored->rasterColors->rasterLayerId == rasterId);
+    CHECK(colored->rasterColors->rasterSourceId == rasterData->sourceId);
+    CHECK(colored->colorGeneration == 1);
+    CHECK(colored->colorMode.source == pci::PointColorSource::Rgb);
+    CHECK(scene->blockEntries().front().block->points.front().rgba ==
+          0xff332211U);
+    CHECK(rasterSource->reads.load() == 1);
+
+    const auto rows = session.colorizeMetrics();
+    CHECK(rows.activeColorTableBytes == 0);
+    CHECK(session.revertPointCloudColors(pointId));
+    CHECK_FALSE(session.document()->layer(pointId)->rasterColors.has_value());
+    CHECK(session.document()->layer(pointId)->colorGeneration == 2);
+    CHECK(scene->blockEntries().front().block->points.front().rgba ==
+          0xffabcdefU);
+    CHECK(status.back().at(0).toString() ==
+          QStringLiteral("Restored source colors for target.laz."));
+    CHECK_FALSE(session.revertPointCloudColors(pointId));
+
+    session.dismissJob({.kind = pci::LoadJobKind::Colorize, .id = job});
 }

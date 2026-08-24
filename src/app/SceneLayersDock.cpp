@@ -1,6 +1,8 @@
 #include "app/SceneLayersDock.h"
 
+#include "app/RasterColorizeUiState.h"
 #include "app/SceneLayerListModel.h"
+#include "app/ToolbarIcons.h"
 
 #include <QAbstractItemView>
 #include <QAction>
@@ -29,20 +31,51 @@ protected:
                const QStyleOptionViewItem &option,
                const QModelIndex &index) const override
     {
-        QStyledItemDelegate::paint(painter, option, index);
         const QString count =
             index.data(SceneLayerListModel::SummaryRole).toString();
-        if (count.isEmpty()) {
-            return;
-        }
         QStyleOptionViewItem styled = option;
         initStyleOption(&styled, index);
+        const bool rasterColors =
+            index.data(SceneLayerListModel::RasterColorsRole).toBool();
+        QFontMetrics metrics(styled.font);
+        const int countWidth =
+            count.isEmpty() ? 0 : metrics.horizontalAdvance(count) + 12;
+        constexpr int badgeWidth = 48;
+        constexpr int itemGap = 5;
+        const int badgeSpace = rasterColors ? badgeWidth + itemGap : 0;
+        styled.rect.adjust(0, 0, -(countWidth + badgeSpace), 0);
+        QStyledItemDelegate::paint(painter, styled, index);
+
         painter->save();
-        painter->setPen(
-            styled.palette.color(QPalette::Disabled, QPalette::Text));
-        painter->drawText(styled.rect.adjusted(0, 0, -8, 0),
-                          Qt::AlignRight | Qt::AlignVCenter,
-                          count);
+        if (rasterColors) {
+            QRect badgeRect(option.rect.right() - countWidth - badgeWidth,
+                            option.rect.center().y() - 8,
+                            badgeWidth,
+                            16);
+            QColor badge = styled.palette.color(QPalette::Highlight);
+            badge.setAlpha(210);
+            painter->setPen(Qt::NoPen);
+            painter->setBrush(badge);
+            painter->drawRoundedRect(badgeRect, 4.0, 4.0);
+            QFont badgeFont = styled.font;
+            badgeFont.setPixelSize(9);
+            badgeFont.setBold(true);
+            painter->setFont(badgeFont);
+            painter->setPen(styled.palette.color(QPalette::HighlightedText));
+            painter->drawText(
+                badgeRect, Qt::AlignCenter, QStringLiteral("Raster"));
+        }
+        if (!count.isEmpty()) {
+            painter->setFont(styled.font);
+            painter->setPen(
+                styled.palette.color(QPalette::Disabled, QPalette::Text));
+            const QRect countRect(option.rect.right() - countWidth,
+                                  option.rect.top(),
+                                  countWidth - 6,
+                                  option.rect.height());
+            painter->drawText(
+                countRect, Qt::AlignRight | Qt::AlignVCenter, count);
+        }
         painter->restore();
     }
 };
@@ -105,6 +138,19 @@ SceneLayersDock::SceneLayersDock(QWidget *parent)
         "Show coordinate, density, attribute, and outlier statistics "
         "for the selected layer"));
     statisticsAction_->setEnabled(false);
+    colorizeAction_ =
+        new QAction(QStringLiteral("Colorize from &Raster…"), this);
+    colorizeAction_->setObjectName(QStringLiteral("colorizeFromRasterAction"));
+    colorizeAction_->setIcon(
+        toolbarIcon(ToolbarIcon::ColorizeRaster, palette()));
+    revertColorsAction_ =
+        new QAction(QStringLiteral("Revert to Source &Colors"), this);
+    revertColorsAction_->setObjectName(
+        QStringLiteral("revertRasterColorsAction"));
+    revertColorsAction_->setIcon(
+        toolbarIcon(ToolbarIcon::RevertColors, palette()));
+    colorizeAction_->setEnabled(false);
+    revertColorsAction_->setEnabled(false);
 
     connect(
         add, &QPushButton::clicked, this, &SceneLayersDock::addLayerRequested);
@@ -116,6 +162,16 @@ SceneLayersDock::SceneLayersDock(QWidget *parent)
             &QAction::triggered,
             this,
             &SceneLayersDock::showCurrentLayerStatistics);
+    connect(colorizeAction_, &QAction::triggered, this, [this] {
+        if (const auto id = currentLayerId()) {
+            emit colorizeRequested(*id);
+        }
+    });
+    connect(revertColorsAction_, &QAction::triggered, this, [this] {
+        if (const auto id = currentLayerId()) {
+            emit revertColorsRequested(*id);
+        }
+    });
     connect(model_,
             &SceneLayerListModel::visibilityEditRequested,
             this,
@@ -138,6 +194,7 @@ void SceneLayersDock::setDocumentSnapshot(SceneDocumentSnapshotPtr snapshot)
         throw std::invalid_argument("document snapshot must not be null");
     }
     const std::optional<SceneLayerId> selected = currentLayerId();
+    snapshot_ = snapshot;
     model_->setSnapshot(std::move(snapshot));
     if (selected) {
         if (const auto row = model_->rowForId(*selected)) {
@@ -166,6 +223,27 @@ std::optional<SceneLayerId> SceneLayersDock::currentLayerId() const
 QAction *SceneLayersDock::statisticsAction() const noexcept
 {
     return statisticsAction_;
+}
+
+QAction *SceneLayersDock::colorizeAction() const noexcept
+{
+    return colorizeAction_;
+}
+
+QAction *SceneLayersDock::revertColorsAction() const noexcept
+{
+    return revertColorsAction_;
+}
+
+void SceneLayersDock::setColorizeJobState(const bool active,
+                                          const bool committing)
+{
+    if (colorizeJobActive_ == active && colorizeJobCommitting_ == committing) {
+        return;
+    }
+    colorizeJobActive_ = active;
+    colorizeJobCommitting_ = committing;
+    publishSelection();
 }
 
 void SceneLayersDock::selectAllLayers()
@@ -210,6 +288,20 @@ void SceneLayersDock::publishSelection()
 {
     const SceneLayerId id = currentLayerId().value_or(SceneLayerId{});
     statisticsAction_->setEnabled(id.value() != 0 && currentLayerIsPoint());
+    const auto point = snapshot_ && id.value() != 0
+                           ? snapshot_->layer(id)
+                           : std::optional<PointCloudLayer>{};
+    const RasterColorizeUiState state =
+        rasterColorizeUiState(point ? &*point : nullptr,
+                              snapshot_ ? snapshot_->rasterLayerCount() : 0,
+                              colorizeJobActive_,
+                              colorizeJobCommitting_);
+    colorizeAction_->setText(state.startText);
+    colorizeAction_->setToolTip(state.startToolTip);
+    colorizeAction_->setEnabled(state.startEnabled);
+    revertColorsAction_->setVisible(state.revertVisible);
+    revertColorsAction_->setEnabled(state.revertEnabled);
+    revertColorsAction_->setToolTip(state.revertToolTip);
     emit selectionChanged(id);
 }
 
@@ -232,6 +324,8 @@ void SceneLayersDock::showContextMenu(const QPoint &position)
     }
     menu.addSeparator();
     menu.addAction(statisticsAction_);
+    menu.addAction(colorizeAction_);
+    menu.addAction(revertColorsAction_);
     menu.addSeparator();
     QAction *remove = menu.addAction(QStringLiteral("Remove layer"));
     QAction *chosen = menu.exec(list_->viewport()->mapToGlobal(position));

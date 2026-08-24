@@ -54,13 +54,6 @@ struct RasterStreamerMetrics {
     std::size_t negativeEntries = 0;
 };
 
-// Combines immutable source defaults with the scene style for one render
-// generation. Scalar ramps are resolved by stable catalog key and copied once
-// into shared storage that remains alive until every worker using it exits.
-[[nodiscard]] std::shared_ptr<const RasterDecodeParameters>
-resolveRasterDecodeParameters(const RasterLayer &layer,
-                              const PointColorMapCatalogSnapshot &colorMaps);
-
 // One visible layer's contribution to a frame's reconciliation.
 //
 // The read queue is frame-global, so reconciliation must see every visible

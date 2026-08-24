@@ -175,6 +175,26 @@ void applyStrataTheme(QApplication &application)
             background: #397cc4;
             border-color: #74a8ff;
         }
+        QLabel[notice="info"], QLabel[notice="warning"],
+        QLabel[notice="error"] {
+            padding: 8px;
+            border-radius: 4px;
+        }
+        QLabel[notice="info"] {
+            background: #1c2b39;
+            border: 1px solid #355979;
+            color: #bfd9f2;
+        }
+        QLabel[notice="warning"] {
+            background: #332b1c;
+            border: 1px solid #6f5826;
+            color: #f0d79a;
+        }
+        QLabel[notice="error"] {
+            background: #392124;
+            border: 1px solid #7a3d43;
+            color: #f3bdc1;
+        }
         QCheckBox {
             spacing: 6px;
         }

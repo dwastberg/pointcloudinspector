@@ -22,6 +22,8 @@ public:
     [[nodiscard]] PointCloudScalarRanges scalarRanges() const override;
     [[nodiscard]] std::optional<PointCloudFullDetailInfo>
     fullDetailInfo() const override;
+    [[nodiscard]] std::optional<std::vector<PointCloudStoredNode>>
+    storedNodeIndex() const override;
 
     [[nodiscard]] std::uint8_t maximumLevel() const noexcept;
     [[nodiscard]] std::filesystem::path storeDirectory() const;

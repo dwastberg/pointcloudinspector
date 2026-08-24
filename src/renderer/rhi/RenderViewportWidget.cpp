@@ -5,6 +5,7 @@
 #include "renderer/PointColorMapAtlas.h"
 #include "renderer/planning/FrustumCuller.h"
 #include "renderer/rhi/BackendPolicy.h"
+#include "scene/RasterLayerDisplay.h"
 
 #include <QCoreApplication>
 #ifdef PCINSPECTOR_ENABLE_DIAGNOSTIC_UI
@@ -1136,6 +1137,10 @@ void RenderViewportWidget::render(QRhiCommandBuffer *commandBuffer)
                  snapshotRefresh.invalidatedRootPayloads) {
                 uploadScheduler_.invalidateNode(layerId, rootPointCloudNode);
             }
+            for (const PointCloudLayerId layerId :
+                 snapshotRefresh.invalidatedColors) {
+                uploadScheduler_.invalidateLayer(layerId);
+            }
             for (const SceneLayer &sceneLayer : document->layers) {
                 const auto *point =
                     std::get_if<PointCloudLayerState>(&sceneLayer.payload);
@@ -1148,6 +1153,8 @@ void RenderViewportWidget::render(QRhiCommandBuffer *commandBuffer)
                     .visible = sceneLayer.visible,
                     .colorMode = point->colorMode,
                     .classificationFilter = point->classificationFilter,
+                    .rasterColors = point->rasterColors,
+                    .colorGeneration = point->colorGeneration,
                 };
                 retainedLayerIds.push_back(layer.id);
                 if (!layer.visible) {

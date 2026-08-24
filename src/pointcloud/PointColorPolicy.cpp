@@ -38,10 +38,11 @@ bool colorMapNameLess(const std::string_view left, const std::string_view right)
 } // namespace
 
 std::vector<PointColorSource>
-availablePointColorSources(const PointCloudMetadata &metadata)
+availablePointColorSources(const PointCloudMetadata &metadata,
+                           const bool hasOverrideColor)
 {
     std::vector<PointColorSource> sources;
-    if (metadata.hasColor) {
+    if (metadata.hasColor || hasOverrideColor) {
         sources.push_back(PointColorSource::Rgb);
     }
     sources.push_back(PointColorSource::X);
@@ -189,10 +190,11 @@ bool validPointScalarRange(const PointScalarRange &range,
 
 bool pointColorModeAvailable(const PointColorMapCatalogSnapshot &catalog,
                              const PointCloudMetadata &metadata,
-                             const PointColorMode &mode)
+                             const PointColorMode &mode,
+                             const bool hasOverrideColor)
 {
     const std::vector<PointColorSource> sources =
-        availablePointColorSources(metadata);
+        availablePointColorSources(metadata, hasOverrideColor);
     if (!pointColorSourceAvailable(sources, mode.source) ||
         !pointColorMapSupportsSource(catalog, mode.colorMap, mode.source)) {
         return false;

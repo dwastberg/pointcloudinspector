@@ -497,6 +497,37 @@ LocalPointPageSource::fullDetailInfo() const
     return result;
 }
 
+std::optional<std::vector<PointCloudStoredNode>>
+LocalPointPageSource::storedNodeIndex() const
+{
+    std::vector<PointCloudStoredNode> result;
+    {
+        const std::scoped_lock lock(state_->mutex);
+        if (!state_->complete || !state_->committed ||
+            !state_->failure.empty() || state_->pages.empty()) {
+            return std::nullopt;
+        }
+        result.reserve(state_->pages.size());
+        for (const auto &[id, page] : state_->pages) {
+            result.push_back({
+                .id = id,
+                .bounds = page.tightBounds,
+                .pointCount = page.pointCount,
+                .localityKey = page.payloadOffset,
+            });
+        }
+    }
+    std::ranges::sort(result,
+                      [](const PointCloudStoredNode &left,
+                         const PointCloudStoredNode &right) {
+                          if (left.localityKey != right.localityKey) {
+                              return left.localityKey < right.localityKey;
+                          }
+                          return left.id < right.id;
+                      });
+    return result;
+}
+
 std::uint8_t LocalPointPageSource::maximumLevel() const noexcept
 {
     return maximumLevel_;

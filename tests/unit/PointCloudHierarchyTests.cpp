@@ -155,6 +155,35 @@ TEST_CASE("decoded cache replaces pages without double counting",
     CHECK(cache.metrics().replacements == 1);
 }
 
+TEST_CASE("decoded cache root replacement is isolated to one source",
+          "[unit][hierarchy][cache][multi-layer]")
+{
+    const pci::PointCloudSourceId changedSource{1};
+    const pci::PointCloudSourceId otherSource{2};
+    const pci::PointCloudNodeId child{1, 0, 0, 0};
+    pci::DecodedPageCache cache(1024 * 1024);
+    cache.insert(changedSource, payload(child, 4));
+    auto other = payload(child, 5);
+    cache.insert(otherSource, other);
+    auto replacement = payload(pci::rootPointCloudNode, 2);
+    const std::array pins{pci::rootPointCloudNode};
+
+    cache.replaceSourceRoot(changedSource, replacement, pins);
+
+    CHECK_FALSE(cache.contains(changedSource, child));
+    CHECK(cache.peek(changedSource, pci::rootPointCloudNode) == replacement);
+    CHECK(cache.peek(otherSource, child) == other);
+    CHECK(cache.residentPoints(changedSource) == 2);
+    CHECK(cache.residentPoints(otherSource) == 5);
+    CHECK(cache.residentPoints() == 7);
+
+    other.reset();
+    replacement.reset();
+    cache.setByteBudget(1);
+    CHECK(cache.contains(changedSource, pci::rootPointCloudNode));
+    CHECK_FALSE(cache.contains(otherSource, child));
+}
+
 TEST_CASE("decoded cache honors protected and pinned pages",
           "[unit][hierarchy][cache][pin]")
 {

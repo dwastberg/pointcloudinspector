@@ -1,5 +1,6 @@
 #include "app/MainWindow.h"
 
+#include "app/ColorizeFromRasterDialog.h"
 #include "app/LayerInspectorDock.h"
 #include "app/LoadingOverlay.h"
 #include "app/PerformanceSettingsStore.h"
@@ -140,6 +141,10 @@ RenderMetrics withDocumentMetrics(RenderMetrics metrics,
     metrics.persistentIndexBytes = hierarchy.persistentIndexBytes;
     metrics.localPersistentSources = hierarchy.localPersistentSources;
     metrics.reusedPersistentSources = hierarchy.reusedPersistentSources;
+    metrics.activeColorTableBytes = hierarchy.activeColorTableBytes;
+    metrics.flatDisplacedColorBytes = hierarchy.flatDisplacedColorBytes;
+    metrics.retainedSourceRootBytes = hierarchy.retainedSourceRootBytes;
+    metrics.retainedColoredRootBytes = hierarchy.retainedColoredRootBytes;
     return metrics;
 }
 #endif
@@ -317,6 +322,16 @@ MainWindow::MainWindow(
             session_.get(),
             &SceneSession::setLayerColorMode);
     connect(layerInspectorDock_,
+            &LayerInspectorDock::revertRasterColorsRequested,
+            this,
+            [this](const SceneLayerId id) {
+                static_cast<void>(session_->revertPointCloudColors(id));
+            });
+    connect(layerInspectorDock_,
+            &LayerInspectorDock::colorizeFromRasterRequested,
+            this,
+            &MainWindow::showColorizeFromRaster);
+    connect(layerInspectorDock_,
             &LayerInspectorDock::allPointColorModesChanged,
             session_.get(),
             &SceneSession::setAllLayerColors);
@@ -342,6 +357,16 @@ MainWindow::MainWindow(
             &SceneLayersDock::statisticsRequested,
             this,
             &MainWindow::showLayerStatistics);
+    connect(sceneLayersDock_,
+            &SceneLayersDock::colorizeRequested,
+            this,
+            &MainWindow::showColorizeFromRaster);
+    connect(sceneLayersDock_,
+            &SceneLayersDock::revertColorsRequested,
+            this,
+            [this](const SceneLayerId id) {
+                static_cast<void>(session_->revertPointCloudColors(id));
+            });
     connect(sceneLayersDock_,
             &SceneLayersDock::showAllRequested,
             session_.get(),
@@ -592,6 +617,8 @@ MainWindow::MainWindow(
             &SceneLayersDock::showAll);
     layerMenu->addSeparator();
     layerMenu->addAction(sceneLayersDock_->statisticsAction());
+    layerMenu->addAction(sceneLayersDock_->colorizeAction());
+    layerMenu->addAction(sceneLayersDock_->revertColorsAction());
     layerMenu->addSeparator();
     removeSelectedLayerAction_ =
         layerMenu->addAction(QStringLiteral("&Remove Selected Layer"));
@@ -794,6 +821,7 @@ MainWindow::MainWindow(
             this,
             [this](LoadJobRows rows) {
                 taskDock_->setRows(std::move(rows));
+                updateUiContext();
             });
     connect(session_.get(),
             &SceneSession::showTasksRequested,
@@ -1095,6 +1123,18 @@ void MainWindow::updateUiContext()
     const bool hasLayers = session_->document()->hasAnyLayer();
     const bool hasSelection =
         sceneLayersDock_ && sceneLayersDock_->currentLayerId().has_value();
+    if (sceneLayersDock_) {
+        const SceneLayerId selected =
+            sceneLayersDock_->currentLayerId().value_or(SceneLayerId{});
+        const bool active = selected != SceneLayerId{} &&
+                            session_->hasActiveColorizeJob(selected);
+        const bool committing = selected != SceneLayerId{} &&
+                                session_->colorizeCommitInProgress(selected);
+        sceneLayersDock_->setColorizeJobState(active, committing);
+        if (layerInspectorDock_) {
+            layerInspectorDock_->setColorizeJobState(active, committing);
+        }
+    }
 
     if (addAction_) {
         addAction_->setEnabled(!session_->loading());
@@ -1207,7 +1247,10 @@ void MainWindow::requestLoadCancellation()
 {
     const bool cancellingPoints = session_->loading();
     const bool cancellingVectors = session_->hasActiveVectorLoads();
-    if (!cancellingPoints && !cancellingVectors) {
+    const bool cancellingRasters = session_->hasActiveRasterLoads();
+    const bool cancellingColorize = session_->hasActiveColorizeJobs();
+    if (!cancellingPoints && !cancellingVectors && !cancellingRasters &&
+        !cancellingColorize) {
         return;
     }
     if (cancellingPoints && loadingOverlay_) {
@@ -1239,6 +1282,35 @@ void MainWindow::showLayerStatistics(const PointCloudLayerId layerId)
     dialog->startAnalysis();
 }
 
+void MainWindow::showColorizeFromRaster(const PointCloudLayerId layerId)
+{
+    const auto layer = session_->document()->layer(layerId);
+    if (!layer) {
+        return;
+    }
+    ColorizeFromRasterDialog dialog(
+        *layer,
+        session_->document()->snapshot(),
+        session_->spatialReferenceComparator(),
+        session_->document()->memoryBudget()->availableBytes(),
+        this);
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+    const auto rasterId = dialog.selectedRasterLayerId();
+    if (!rasterId) {
+        return;
+    }
+    try {
+        static_cast<void>(
+            session_->colorizePointCloudFromRaster(layerId, *rasterId));
+    } catch (const std::exception &error) {
+        QMessageBox::warning(this,
+                             QStringLiteral("Colorize from Raster"),
+                             QString::fromUtf8(error.what()));
+    }
+}
+
 void MainWindow::setLoadingProgress(const LoadingProgressState &state)
 {
     loadingOverlay_->setProgress(state.percentage,
@@ -1260,7 +1332,8 @@ void MainWindow::showMetrics(const RenderMetrics &metrics)
             metrics,
             loadMetrics,
             gdalCacheUsedBytes,
-            mebibytesToBytes(performanceSettings_.raster.gdalCacheMebibytes)));
+            mebibytesToBytes(performanceSettings_.raster.gdalCacheMebibytes),
+            session_->colorizeMetrics()));
     }
     if (!session_->loading()) {
         statusBar()->showMessage(RenderDiagnosticsFormatter::statusText(

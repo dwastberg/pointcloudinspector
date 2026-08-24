@@ -6,6 +6,10 @@
 namespace pci::test {
 
 struct GdalRasterFixturePaths {
+    // Point-aligned colorization fixtures. Their affine is chosen so test LAS
+    // coordinates map to small, analytically predictable pixel addresses.
+    std::filesystem::path pointAligned;
+    std::filesystem::path pointAlignedPartialAlpha;
     // 64x48 Byte RGB, EPSG:3006, north-up, no overviews. Corner pixels carry
     // known colors so georeferenced placement can be asserted.
     std::filesystem::path rgb;

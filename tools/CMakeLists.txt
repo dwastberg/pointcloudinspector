@@ -28,6 +28,14 @@ target_link_libraries(pci_multifile_bench PRIVATE
 set_target_properties(pci_multifile_bench PROPERTIES FOLDER Tools)
 pci_configure_target(pci_multifile_bench)
 
+# Named, non-default release acceptance for raster-to-point colorization. The
+# default invocation processes 22.9M stored hierarchy samples.
+add_executable(pci_raster_colorize_bench pci_raster_colorize_bench.cpp)
+target_link_libraries(pci_raster_colorize_bench PRIVATE
+        pcinspector::scene)
+set_target_properties(pci_raster_colorize_bench PROPERTIES FOLDER Tools)
+pci_configure_target(pci_raster_colorize_bench)
+
 # Schema-aware performance qualification comparison. This stays independent of
 # the application libraries so it can validate reports without a GPU runtime.
 add_executable(pci_qualification_diff

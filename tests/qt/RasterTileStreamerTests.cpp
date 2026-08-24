@@ -1,4 +1,5 @@
 #include "renderer/rhi/RasterTileStreamer.h"
+#include "scene/RasterLayerDisplay.h"
 
 #include <catch2/catch_test_macros.hpp>
 

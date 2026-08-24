@@ -82,6 +82,7 @@ private:
     void requestLoadCancellation();
     void refreshLayerPanel();
     void showLayerStatistics(PointCloudLayerId layerId);
+    void showColorizeFromRaster(PointCloudLayerId layerId);
     void setLoadingProgress(const LoadingProgressState &state);
 #ifdef PCINSPECTOR_ENABLE_DIAGNOSTIC_UI
     void showMetrics(const RenderMetrics &metrics);

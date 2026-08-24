@@ -152,7 +152,7 @@ ApplicationInvocation parseApplicationInvocation(const QStringList &arguments)
             return error(
                 QStringLiteral("--points must be a positive 64-bit integer"));
         }
-        config.syntheticPointCount = *pointCount;
+        config.syntheticPointCount = pointCount;
     }
     const auto maximumPoints =
         parsePointCount(parser.value(maximumPointsOption).toStdString());

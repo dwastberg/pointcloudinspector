@@ -89,7 +89,13 @@ SceneSnapshotCache::RefreshResult SceneSnapshotCache::refresh()
         const auto current = snapshots_.find(layer.id);
         if (current != snapshots_.end() &&
             current->second.scene == point->scene &&
-            current->second.snapshot.revision == revision) {
+            current->second.colorGeneration != point->colorGeneration) {
+            result.invalidatedColors.push_back(layer.id);
+        }
+        if (current != snapshots_.end() &&
+            current->second.scene == point->scene &&
+            current->second.snapshot.revision == revision &&
+            current->second.colorGeneration == point->colorGeneration) {
             continue;
         }
         PointCloudSceneSnapshot sceneSnapshot = point->scene->snapshot();
@@ -99,11 +105,13 @@ SceneSnapshotCache::RefreshResult SceneSnapshotCache::refresh()
                 sceneSnapshot.rootPayloadRevision) {
             result.invalidatedRootPayloads.push_back(layer.id);
         }
-        snapshots_.insert_or_assign(layer.id,
-                                    CachedSceneSnapshot{
-                                        .scene = point->scene,
-                                        .snapshot = std::move(sceneSnapshot),
-                                    });
+        snapshots_.insert_or_assign(
+            layer.id,
+            CachedSceneSnapshot{
+                .scene = point->scene,
+                .snapshot = std::move(sceneSnapshot),
+                .colorGeneration = point->colorGeneration,
+            });
     }
     for (auto current = snapshots_.begin(); current != snapshots_.end();) {
         if (!retained.contains(current->first)) {

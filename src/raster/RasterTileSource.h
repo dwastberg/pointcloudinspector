@@ -82,6 +82,15 @@ public:
     [[nodiscard]] virtual const RasterLayerMetadata &
     metadata() const noexcept = 0;
 
+    // Returns an independently pooled reader suitable for a background bake.
+    // Sources without that capability return null; callers then share this
+    // source and restrict themselves to a single sampling worker.
+    [[nodiscard]] virtual std::shared_ptr<const RasterTileSource>
+    detachedReader(std::uint32_t) const
+    {
+        return nullptr;
+    }
+
     // Conservative bytes needed by readTile(), including temporary channel
     // planes and the returned allocation. The streamer acquires this
     // reservation before entering the source. Implementations that allocate

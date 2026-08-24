@@ -34,7 +34,14 @@ snapshot(std::initializer_list<pci::PointCloudLayer> layers)
         result->layers.push_back({
             .id = layer.id,
             .visible = layer.visible,
-            .payload = pci::PointCloudLayerState{.scene = layer.scene},
+            .payload =
+                pci::PointCloudLayerState{
+                    .scene = layer.scene,
+                    .colorMode = layer.colorMode,
+                    .classificationFilter = layer.classificationFilter,
+                    .rasterColors = layer.rasterColors,
+                    .colorGeneration = layer.colorGeneration,
+                },
         });
     }
     return result;
@@ -144,6 +151,30 @@ TEST_CASE("scene layer model reconciles snapshots incrementally",
     CHECK(changed.count() == 1);
     CHECK(model.index(1).data(Qt::CheckStateRole).toInt() == Qt::Unchecked);
     CHECK(model.rowForId(first.id) == 1);
+}
+
+TEST_CASE("scene layer model exposes baked raster color provenance",
+          "[ui][models][layers][raster][colorize]")
+{
+    pci::SceneLayerListModel model;
+    auto point = pointLayer(4, "/data/cloud.laz", 25);
+    point.rasterColors = pci::RasterPointColorBinding{
+        .rasterLayerId = pci::SceneLayerId{9},
+        .rasterSourcePath = "/data/ortho.tif",
+        .coloredPoints = 20,
+        .uncoloredPoints = 5,
+    };
+
+    model.setSnapshot(snapshot({point}));
+    const QModelIndex index = model.index(0, 0);
+    CHECK(index.data(pci::SceneLayerListModel::RasterColorsRole).toBool());
+    CHECK(index.data(pci::SceneLayerListModel::RasterColorSourceRole)
+              .toString() == QStringLiteral("ortho.tif"));
+    CHECK(index.data(Qt::ToolTipRole)
+              .toString()
+              .contains(QStringLiteral("Raster colors: ortho.tif · linked")));
+    CHECK(model.roleNames().value(pci::SceneLayerListModel::RasterColorsRole) ==
+          "rasterColors");
 }
 
 TEST_CASE("task model reconciles stable job keys without resets",

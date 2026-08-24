@@ -1,6 +1,8 @@
 #include "app/LayerInspectorDock.h"
 
 #include "app/ClassificationFilterDialog.h"
+#include "app/RasterColorizeUiState.h"
+#include "app/ToolbarIcons.h"
 #include "app/VectorColorButton.h"
 #include "platform/QtPath.h"
 #include "renderer/PointColorLabels.h"
@@ -112,6 +114,23 @@ QString boundsText(const Bounds3d &bounds)
         .arg(dx, 0, 'f', 2)
         .arg(dy, 0, 'f', 2)
         .arg(dz, 0, 'f', 2);
+}
+
+QString rasterDecodeText(const RasterDecodeParameters &decode)
+{
+    switch (decode.sampleKind) {
+    case RasterSampleKind::ContinuousColor:
+        return QStringLiteral("RGB display");
+    case RasterSampleKind::Categorical:
+        return QStringLiteral("palette display");
+    case RasterSampleKind::ContinuousScalar:
+        return decode.displayRange
+                   ? QStringLiteral("scalar range %1 to %2 with color ramp")
+                         .arg(decode.displayRange->minimum, 0, 'g', 8)
+                         .arg(decode.displayRange->maximum, 0, 'g', 8)
+                   : QStringLiteral("scalar color ramp");
+    }
+    return QStringLiteral("display colors");
 }
 
 // A single-line value label that holds its full text (kept as a tooltip and
@@ -291,6 +310,11 @@ LayerInspectorDock::LayerInspectorDock(
     boundsValue_->setObjectName(QStringLiteral("layerBoundsValue"));
     attributesValue_ = makeValueLabel();
     attributesValue_->setObjectName(QStringLiteral("layerAttributesValue"));
+    rasterColorStateValue_ = makeValueLabel();
+    rasterColorStateValue_->setObjectName(
+        QStringLiteral("layerRasterColorStateValue"));
+    rasterColorsValue_ = makeValueLabel();
+    rasterColorsValue_->setObjectName(QStringLiteral("layerRasterColorsValue"));
 #ifdef PCINSPECTOR_ENABLE_DIAGNOSTIC_UI
     indexValue_ = makeValueLabel();
     indexValue_->setObjectName(QStringLiteral("layerIndexValue"));
@@ -317,6 +341,20 @@ LayerInspectorDock::LayerInspectorDock(
         QStringLiteral("applyColorToAllButton"));
     applyColorToAllButton_->setToolTip(QStringLiteral(
         "Use this color source and color map for every compatible layer"));
+    colorizeFromRasterButton_ = new QPushButton(appearanceGroup);
+    colorizeFromRasterButton_->setObjectName(
+        QStringLiteral("inspectorColorizeFromRasterButton"));
+    colorizeFromRasterButton_->setProperty("primary", true);
+    colorizeFromRasterButton_->setIcon(
+        toolbarIcon(ToolbarIcon::ColorizeRaster, palette()));
+    revertRasterColorsButton_ = new QPushButton(
+        QStringLiteral("Revert to Source Colors"), appearanceGroup);
+    revertRasterColorsButton_->setObjectName(
+        QStringLiteral("revertRasterColorsButton"));
+    revertRasterColorsButton_->setIcon(
+        toolbarIcon(ToolbarIcon::RevertColors, palette()));
+    revertRasterColorsButton_->setToolTip(
+        QStringLiteral("Restore the point cloud's exact source colors"));
 
     colorRangeRowLabel_ = new QLabel(QStringLiteral("Range"), appearanceGroup);
     colorRangeWidget_ = new QWidget(appearanceGroup);
@@ -355,6 +393,10 @@ LayerInspectorDock::LayerInspectorDock(
     rangeLayout->addWidget(colorRangeMaximumSpin_, 2, 1);
     appearanceForm->addRow(QStringLiteral("Color by"), colorSourceCombo_);
     appearanceForm->addRow(QStringLiteral("Color map"), colorMapCombo_);
+    appearanceForm->addRow(QStringLiteral("Raster colors"),
+                           rasterColorStateValue_);
+    appearanceForm->addRow(colorizeFromRasterButton_);
+    appearanceForm->addRow(revertRasterColorsButton_);
     appearanceForm->addRow(colorRangeRowLabel_, colorRangeWidget_);
     appearanceForm->addRow(applyColorToAllButton_);
     propertiesLayout->addWidget(appearanceGroup);
@@ -378,6 +420,8 @@ LayerInspectorDock::LayerInspectorDock(
     informationForm->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
     informationForm->addRow(QStringLiteral("Points"), pointsValue_);
     informationForm->addRow(QStringLiteral("Attributes"), attributesValue_);
+    informationForm->addRow(QStringLiteral("Raster colors"),
+                            rasterColorsValue_);
 #ifdef PCINSPECTOR_ENABLE_DIAGNOSTIC_UI
     informationForm->addRow(QStringLiteral("Local index"), indexValue_);
 #endif
@@ -738,6 +782,16 @@ LayerInspectorDock::LayerInspectorDock(
     connect(applyColorToAllButton_, &QPushButton::clicked, this, [this] {
         applyColorToAll();
     });
+    connect(colorizeFromRasterButton_, &QPushButton::clicked, this, [this] {
+        if (const auto id = selectedLayerId()) {
+            emit colorizeFromRasterRequested(*id);
+        }
+    });
+    connect(revertRasterColorsButton_, &QPushButton::clicked, this, [this] {
+        if (const auto id = selectedLayerId()) {
+            emit revertRasterColorsRequested(*id);
+        }
+    });
     connect(classificationFilterButton_, &QPushButton::clicked, this, [this] {
         showClassificationFilterDialog();
     });
@@ -900,6 +954,17 @@ void LayerInspectorDock::setDocumentSnapshot(SceneDocumentSnapshotPtr snapshot,
         !rasterLayerById(selectedLayerId_)) {
         selectedLayerId_ = SceneLayerId{};
     }
+    updateProperties();
+}
+
+void LayerInspectorDock::setColorizeJobState(const bool active,
+                                             const bool committing)
+{
+    if (colorizeJobActive_ == active && colorizeJobCommitting_ == committing) {
+        return;
+    }
+    colorizeJobActive_ = active;
+    colorizeJobCommitting_ = committing;
     updateProperties();
 }
 
@@ -1100,8 +1165,11 @@ void LayerInspectorDock::applyColorSource(const int index)
     const std::vector<PointCloudLayerId> selection = selectedLayerIds();
     for (const PointCloudLayerId selectedId : selection) {
         const PointCloudLayer *selected = layerById(selectedId);
-        if (selected && pointColorModeAvailable(
-                            *colorMaps_, selected->scene->metadata(), mode)) {
+        if (selected &&
+            pointColorModeAvailable(*colorMaps_,
+                                    selected->scene->metadata(),
+                                    mode,
+                                    selected->rasterColors.has_value())) {
             emit pointColorModeChanged(selectedId, mode);
         }
     }
@@ -1127,8 +1195,10 @@ void LayerInspectorDock::applyColorMap(const int index)
         PointColorMode mode = selected->colorMode;
         mode.source = source;
         mode.colorMap = map;
-        if (pointColorModeAvailable(
-                *colorMaps_, selected->scene->metadata(), mode)) {
+        if (pointColorModeAvailable(*colorMaps_,
+                                    selected->scene->metadata(),
+                                    mode,
+                                    selected->rasterColors.has_value())) {
             emit pointColorModeChanged(selectedId, mode);
         }
     }
@@ -1246,6 +1316,17 @@ void LayerInspectorDock::updateProperties()
     const PointCloudLayer *layer = layerId ? layerById(*layerId) : nullptr;
     const VectorLayer *vector = layerId ? vectorLayerById(*layerId) : nullptr;
     const RasterLayer *raster = layerId ? rasterLayerById(*layerId) : nullptr;
+    const RasterColorizeUiState colorizeState =
+        rasterColorizeUiState(layer,
+                              rasterLayers_.size(),
+                              colorizeJobActive_,
+                              colorizeJobCommitting_);
+    colorizeFromRasterButton_->setText(colorizeState.startText);
+    colorizeFromRasterButton_->setToolTip(colorizeState.startToolTip);
+    colorizeFromRasterButton_->setEnabled(colorizeState.startEnabled);
+    revertRasterColorsButton_->setVisible(colorizeState.revertVisible);
+    revertRasterColorsButton_->setEnabled(colorizeState.revertEnabled);
+    revertRasterColorsButton_->setToolTip(colorizeState.revertToolTip);
     propertiesWidget_->setVisible(layer != nullptr);
     vectorPropertiesWidget_->setVisible(vector != nullptr);
     rasterPropertiesWidget_->setVisible(raster != nullptr);
@@ -1421,6 +1502,46 @@ void LayerInspectorDock::updateProperties()
 
     setValueText(boundsValue_, boundsText(layer->scene->bounds()));
     setValueText(attributesValue_, attributesText(metadata));
+    if (const auto &binding = layer->rasterColors) {
+        QString relation = QStringLiteral("CRS comparison unavailable");
+        if (binding->crsRelation) {
+            switch (*binding->crsRelation) {
+            case SpatialReferenceRelation::Same:
+                relation = QStringLiteral("same CRS");
+                break;
+            case SpatialReferenceRelation::Different:
+                relation = QStringLiteral("different CRS");
+                break;
+            case SpatialReferenceRelation::Unknown:
+                relation = QStringLiteral("CRS unknown");
+                break;
+            }
+        }
+        const QString source =
+            binding->rasterSourcePath.empty()
+                ? QStringLiteral("Raster source")
+                : pathToQString(binding->rasterSourcePath.filename());
+        setValueText(rasterColorStateValue_,
+                     QStringLiteral("Raster colors · %1").arg(source));
+        const QString transform =
+            binding->decode ? rasterDecodeText(*binding->decode)
+                            : QStringLiteral("display transform unavailable");
+        setValueText(
+            rasterColorsValue_,
+            QStringLiteral("%1 · %2 colored · %3 kept source · %4 · %5")
+                .arg(transform)
+                .arg(locale.toString(
+                    static_cast<qulonglong>(binding->coloredPoints)))
+                .arg(locale.toString(
+                    static_cast<qulonglong>(binding->uncoloredPoints)))
+                .arg(relation)
+                .arg(binding->rasterLayerId
+                         ? QStringLiteral("linked")
+                         : QStringLiteral("source layer removed")));
+    } else {
+        setValueText(rasterColorStateValue_, QStringLiteral("Source colors"));
+        setValueText(rasterColorsValue_, QStringLiteral("—"));
+    }
     classificationFilterButton_->setVisible(metadata.hasClassification);
     if (classificationFilterButton_->parentWidget()) {
         classificationFilterButton_->parentWidget()->setVisible(
@@ -1463,7 +1584,8 @@ void LayerInspectorDock::updateProperties()
     const QSignalBlocker sourceBlock(colorSourceCombo_);
     const QSignalBlocker mapBlock(colorMapCombo_);
     colorSourceCombo_->clear();
-    for (const PointColorSource source : availablePointColorSources(metadata)) {
+    for (const PointColorSource source : availablePointColorSources(
+             metadata, layer->rasterColors.has_value())) {
         colorSourceCombo_->addItem(pointColorSourceLabel(source),
                                    static_cast<int>(source));
     }
@@ -1492,8 +1614,10 @@ void LayerInspectorDock::updateProperties()
     };
     const bool allCompatible = std::ranges::all_of(
         layers_, [this, &sharedColorMode](const PointCloudLayer &candidate) {
-            return pointColorModeAvailable(
-                *colorMaps_, candidate.scene->metadata(), sharedColorMode);
+            return pointColorModeAvailable(*colorMaps_,
+                                           candidate.scene->metadata(),
+                                           sharedColorMode,
+                                           candidate.rasterColors.has_value());
         });
     const bool anyDifferent = std::ranges::any_of(
         layers_, [&sharedColorMode](const PointCloudLayer &candidate) {
@@ -1502,8 +1626,12 @@ void LayerInspectorDock::updateProperties()
         });
     applyColorToAllButton_->setVisible(layers_.size() > 1);
     applyColorToAllButton_->setEnabled(layers_.size() > 1 && allCompatible &&
-                                       anyDifferent);
-    if (!allCompatible) {
+                                       anyDifferent && !layer->rasterColors);
+    if (layer->rasterColors) {
+        applyColorToAllButton_->setToolTip(
+            QStringLiteral("Baked per-point raster colors cannot be applied as "
+                           "a layer appearance."));
+    } else if (!allCompatible) {
         applyColorToAllButton_->setToolTip(QStringLiteral(
             "This color is not available for every point cloud."));
     } else if (!anyDifferent) {

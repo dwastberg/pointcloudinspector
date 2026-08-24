@@ -56,7 +56,8 @@ struct PointColorMode {
 };
 
 [[nodiscard]] std::vector<PointColorSource>
-availablePointColorSources(const PointCloudMetadata &metadata);
+availablePointColorSources(const PointCloudMetadata &metadata,
+                           bool hasOverrideColor = false);
 [[nodiscard]] bool
 pointColorSourceAvailable(const std::vector<PointColorSource> &sources,
                           PointColorSource source);
@@ -86,7 +87,8 @@ pointColorSourceUsesScalarRange(PointColorSource source) noexcept;
 [[nodiscard]] bool
 pointColorModeAvailable(const PointColorMapCatalogSnapshot &catalog,
                         const PointCloudMetadata &metadata,
-                        const PointColorMode &mode);
+                        const PointColorMode &mode,
+                        bool hasOverrideColor = false);
 
 // X/Y/Z deliberately use the bounds of every layer in the document. This
 // gives equal world coordinates equal colors across sources and prevents

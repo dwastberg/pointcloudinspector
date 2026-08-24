@@ -1,5 +1,7 @@
 #include "import/gdal/GdalRasterLoader.h"
 
+#include "import/gdal/GdalSpatialReferenceComparator.h"
+
 #include "import/gdal/GdalRasterDataset.h"
 #include "import/gdal/GdalRasterSource.h"
 #include "import/gdal/GdalRuntime.h"
@@ -622,16 +624,8 @@ inspectOrSampleDisplayRange(GDALDataset &dataset,
 [[nodiscard]] bool crsDiffers(const std::string &source,
                               const std::string &target)
 {
-    if (source.empty() || target.empty()) {
-        return false;
-    }
-    OGRSpatialReference left;
-    OGRSpatialReference right;
-    if (left.importFromWkt(source.c_str()) != OGRERR_NONE ||
-        right.importFromWkt(target.c_str()) != OGRERR_NONE) {
-        return false;
-    }
-    return left.IsSame(&right) == 0;
+    return GdalSpatialReferenceComparator{}.compare(source, target) ==
+           SpatialReferenceRelation::Different;
 }
 
 [[nodiscard]] bool xyDisjoint(const Bounds3d &left, const Bounds3d &right)

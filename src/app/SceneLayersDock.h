@@ -24,6 +24,9 @@ public:
     void setDocumentSnapshot(SceneDocumentSnapshotPtr snapshot);
     [[nodiscard]] std::optional<SceneLayerId> currentLayerId() const;
     [[nodiscard]] QAction *statisticsAction() const noexcept;
+    [[nodiscard]] QAction *colorizeAction() const noexcept;
+    [[nodiscard]] QAction *revertColorsAction() const noexcept;
+    void setColorizeJobState(bool active, bool committing);
     void selectAllLayers();
     void fitCurrentLayer();
     void isolateCurrentLayer();
@@ -38,6 +41,8 @@ signals:
     void isolateRequested(pci::SceneLayerId layerId);
     void removeRequested(pci::SceneLayerId layerId);
     void statisticsRequested(pci::SceneLayerId layerId);
+    void colorizeRequested(pci::SceneLayerId layerId);
+    void revertColorsRequested(pci::SceneLayerId layerId);
     void showAllRequested();
     void showVectorAnywayRequested(pci::SceneLayerId layerId);
     void addLayerRequested();
@@ -50,6 +55,11 @@ private:
     QListView *list_ = nullptr;
     SceneLayerListModel *model_ = nullptr;
     QAction *statisticsAction_ = nullptr;
+    QAction *colorizeAction_ = nullptr;
+    QAction *revertColorsAction_ = nullptr;
+    SceneDocumentSnapshotPtr snapshot_;
+    bool colorizeJobActive_ = false;
+    bool colorizeJobCommitting_ = false;
 };
 
 } // namespace pci

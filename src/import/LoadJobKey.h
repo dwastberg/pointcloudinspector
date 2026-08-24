@@ -11,7 +11,8 @@ using LoadJobId = StrongId<struct LoadJobIdTag>;
 enum class LoadJobKind : std::uint8_t {
     PointCloud,
     Vector,
-    Raster
+    Raster,
+    Colorize
 };
 
 struct LoadJobKey {

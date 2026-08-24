@@ -66,6 +66,31 @@ void drawGlyph(QPainter &painter,
         drawNode(painter, QPointF(14.65, 14.0), accent);
         break;
     }
+    case ToolbarIcon::ColorizeRaster: {
+        painter.drawRect(QRectF(2.5, 3.0, 8.0, 8.0));
+        painter.drawLine(QPointF(6.5, 3.0), QPointF(6.5, 11.0));
+        painter.drawLine(QPointF(2.5, 7.0), QPointF(10.5, 7.0));
+        painter.drawLine(QPointF(9.5, 10.0), QPointF(14.0, 14.0));
+        painter.drawLine(QPointF(11.5, 14.0), QPointF(14.0, 14.0));
+        painter.drawLine(QPointF(14.0, 14.0), QPointF(14.0, 11.5));
+        drawNode(painter, QPointF(16.8, 8.0), accent);
+        drawNode(painter, QPointF(17.0, 14.0), accent);
+        drawNode(painter, QPointF(12.0, 17.0), accent);
+        break;
+    }
+    case ToolbarIcon::RevertColors: {
+        QPainterPath arrow;
+        arrow.moveTo(5.0, 7.0);
+        arrow.lineTo(2.7, 9.5);
+        arrow.lineTo(5.5, 11.5);
+        arrow.moveTo(3.0, 9.5);
+        arrow.cubicTo(5.0, 4.0, 14.5, 4.0, 16.5, 10.0);
+        arrow.cubicTo(17.5, 13.0, 15.5, 16.0, 12.0, 16.5);
+        painter.drawPath(arrow);
+        drawNode(painter, QPointF(9.0, 10.0), accent);
+        drawNode(painter, QPointF(12.5, 12.0), accent);
+        break;
+    }
     case ToolbarIcon::Fit:
         painter.drawLine(QPointF(3.0, 7.0), QPointF(3.0, 3.0));
         painter.drawLine(QPointF(3.0, 3.0), QPointF(7.0, 3.0));

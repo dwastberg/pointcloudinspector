@@ -51,6 +51,11 @@ public:
     void trim(PointCloudSourceId protectedSource = {},
               std::span<const PointCloudNodeId> protectedNodes = {});
     void removeSource(PointCloudSourceId sourceId);
+    // Atomically replaces one source's residency with a new root. All
+    // fallible allocations are completed against private copies first.
+    void replaceSourceRoot(PointCloudSourceId sourceId,
+                           PointCloudNodePayloadPtr root,
+                           std::span<const PointCloudNodeId> pins);
     void clear();
 
     void setByteBudget(std::uint64_t byteBudget);

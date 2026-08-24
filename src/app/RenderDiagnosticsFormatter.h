@@ -1,5 +1,6 @@
 #pragma once
 
+#include "import/PointCloudColorizeController.h"
 #include "import/PointCloudLoadController.h"
 #include "renderer/RenderMetrics.h"
 
@@ -19,7 +20,8 @@ public:
     panelText(const RenderMetrics &metrics,
               const PointCloudLoadControllerMetrics &loadMetrics,
               std::optional<std::uint64_t> gdalCacheUsedBytes = std::nullopt,
-              std::optional<std::uint64_t> gdalCacheBudgetBytes = std::nullopt);
+              std::optional<std::uint64_t> gdalCacheBudgetBytes = std::nullopt,
+              PointCloudColorizeControllerMetrics colorizeMetrics = {});
     [[nodiscard]] static QString
     statusText(const RenderMetrics &metrics,
                std::optional<double> timeToFirstPointsMilliseconds);

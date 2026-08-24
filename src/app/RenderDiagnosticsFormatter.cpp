@@ -6,7 +6,8 @@ QString RenderDiagnosticsFormatter::panelText(
     const RenderMetrics &metrics,
     const PointCloudLoadControllerMetrics &loadMetrics,
     const std::optional<std::uint64_t> gdalCacheUsedBytes,
-    const std::optional<std::uint64_t> gdalCacheBudgetBytes)
+    const std::optional<std::uint64_t> gdalCacheBudgetBytes,
+    const PointCloudColorizeControllerMetrics colorizeMetrics)
 {
     constexpr double bytesPerMiB = 1024.0 * 1024.0;
     const auto mib = [](const std::uint64_t bytes) {
@@ -48,6 +49,25 @@ QString RenderDiagnosticsFormatter::panelText(
             .arg(metrics.rasterTilesFailed)
             .arg(metrics.rasterUploadedTiles)
             .arg(metrics.rasterCacheEvictions);
+    const QString rasterPointColors =
+        QStringLiteral("Raster point colors: tables %1 MiB, displaced flat "
+                       "%2 MiB, roots source %3 / colored %4 MiB")
+            .arg(mib(metrics.activeColorTableBytes), 0, 'f', 1)
+            .arg(mib(metrics.flatDisplacedColorBytes), 0, 'f', 1)
+            .arg(mib(metrics.retainedSourceRootBytes), 0, 'f', 1)
+            .arg(mib(metrics.retainedColoredRootBytes), 0, 'f', 1);
+    const QString colorizeWork =
+        QStringLiteral("Colorize work: table %1 MiB, staging %2 MiB, run "
+                       "buffer %3 MiB, temporary %4 MiB; records %5 / %6, "
+                       "tiles %7 attempted / %8 failed")
+            .arg(mib(colorizeMetrics.activeColorTableBytes), 0, 'f', 1)
+            .arg(mib(colorizeMetrics.activeStagingBytes), 0, 'f', 1)
+            .arg(mib(colorizeMetrics.activeRunBufferBytes), 0, 'f', 1)
+            .arg(mib(colorizeMetrics.temporaryBytesWritten), 0, 'f', 1)
+            .arg(colorizeMetrics.recordsSampled)
+            .arg(colorizeMetrics.recordsGenerated)
+            .arg(colorizeMetrics.rasterTilesAttempted)
+            .arg(colorizeMetrics.rasterTilesFailed);
 
     return QStringLiteral(
                "Coverage: %1 / %2 visible sources\n"
@@ -58,7 +78,7 @@ QString RenderDiagnosticsFormatter::panelText(
                "Page decode: %15 active, %16 queued, %17 MiB active\n"
                "Import/index: %18 active, %19 queued, %20 MiB active\n"
                "Process RSS: %21 MiB (peak %22)\n"
-               "%23\n%24\n%25")
+               "%23\n%24\n%25\n%26\n%27")
         .arg(metrics.coveredLayerCount)
         .arg(metrics.visibleLayerCount)
         .arg(mib(metrics.decodedPointBytes), 0, 'f', 1)
@@ -81,7 +101,11 @@ QString RenderDiagnosticsFormatter::panelText(
         .arg(mib(loadMetrics.scheduler.activeEstimatedBytes), 0, 'f', 1)
         .arg(mib(metrics.processResidentBytes), 0, 'f', 1)
         .arg(mib(metrics.peakProcessResidentBytes), 0, 'f', 1)
-        .arg(rasterMemory, rasterTiles, rasterReads);
+        .arg(rasterMemory,
+             rasterTiles,
+             rasterReads,
+             rasterPointColors,
+             colorizeWork);
 }
 
 QString RenderDiagnosticsFormatter::statusText(

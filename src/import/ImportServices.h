@@ -1,5 +1,6 @@
 #pragma once
 
+#include "import/PointCloudColorizeController.h"
 #include "import/PointCloudLoadController.h"
 #include "import/PointCloudStatistics.h"
 #include "import/RasterLoadController.h"
@@ -19,17 +20,22 @@ struct ImportServices {
     std::unique_ptr<PointCloudLoadController> pointCloud;
     std::unique_ptr<VectorLoadController> vector;
     std::unique_ptr<RasterLoadController> raster;
+    std::unique_ptr<PointCloudColorizeController> colorize;
     std::shared_ptr<const PointCloudStatisticsProvider> statistics;
+    std::shared_ptr<const SpatialReferenceComparator> spatialReferences;
 
     [[nodiscard]] bool valid() const noexcept
     {
-        return scheduler && pointCloud && vector && raster && statistics &&
+        return scheduler && pointCloud && vector && raster && colorize &&
+               statistics &&
                pointCloud->schedulerIdentity() == scheduler.get() &&
                vector->schedulerIdentity() == scheduler.get() &&
-               raster->schedulerIdentity() == scheduler.get();
+               raster->schedulerIdentity() == scheduler.get() &&
+               colorize->schedulerIdentity() == scheduler.get();
     }
     void shutdown()
     {
+        colorize.reset();
         pointCloud.reset();
         vector.reset();
         raster.reset();

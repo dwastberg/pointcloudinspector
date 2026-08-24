@@ -393,8 +393,9 @@ expandPremultipliedRgba(const ChannelPlanes &planes,
                 break;
             }
             case RasterSampleKind::Categorical: {
-                const auto entry = static_cast<std::size_t>(
-                    std::max<double>(0.0, std::lround(first)));
+                const long rounded = std::lround(first);
+                const auto entry =
+                    static_cast<std::size_t>(std::max(0L, rounded));
                 color = entry < selection.paletteTable.size()
                             ? selection.paletteTable[entry]
                             : std::array<float, 4>{0.0F, 0.0F, 0.0F, 0.0F};
@@ -550,6 +551,13 @@ GdalRasterSource::~GdalRasterSource() = default;
 const RasterLayerMetadata &GdalRasterSource::metadata() const noexcept
 {
     return metadata_;
+}
+
+RasterTileSourcePtr
+GdalRasterSource::detachedReader(const std::uint32_t maximumHandles) const
+{
+    return std::make_shared<GdalRasterSource>(
+        sourcePath_, metadata_, selection_, maximumHandles);
 }
 
 std::uint64_t GdalRasterSource::readCount() const noexcept

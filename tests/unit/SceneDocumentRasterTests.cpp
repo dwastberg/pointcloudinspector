@@ -270,6 +270,64 @@ TEST_CASE("raster layers participate in isolation and removal",
     CHECK(document.rasterRevision() == 4);
 }
 
+TEST_CASE("raster point-color provenance survives source-layer removal",
+          "[unit][scene][raster][colorize]")
+{
+    auto scene = std::make_shared<pci::PointCloudScene>(
+        pci::PointCloudMetadata{.sourcePointCount = 1});
+    auto block = std::make_shared<pci::PointBlock>();
+    block->points.push_back({.rgba = 0xff112233U});
+    block->bounds = {.minimum = {0.0, 0.0, 0.0}, .maximum = {0.0, 0.0, 0.0}};
+    scene->addBlock(block);
+    scene->markLoadingComplete();
+
+    pci::SceneDocument document;
+    const pci::PointCloudLayerId pointId = document.addLayer(scene);
+    const pci::RasterLayerDataPtr data = rasterData();
+    const pci::SceneLayerId rasterId = document.addRasterLayer(data);
+    CHECK_FALSE(
+        document.setLayerColorMode(pointId,
+                                   {.source = pci::PointColorSource::Rgb,
+                                    .colorMap = pci::PointColorMap::Rgb}));
+
+    auto decode = std::make_shared<pci::RasterDecodeParameters>();
+    CHECK(document.setLayerRasterColors(
+        pointId,
+        {.rasterLayerId = rasterId,
+         .rasterSourceId = data->sourceId,
+         .rasterSourcePath = "source.tif",
+         .decode = decode,
+         .rasterRenderGeneration = 3,
+         .coloredPoints = 1,
+         .uncoloredPoints = 2,
+         .crsRelation = pci::SpatialReferenceRelation::Different}));
+    REQUIRE(document.layer(pointId)->rasterColors.has_value());
+    CHECK(document.layer(pointId)->colorGeneration == 1);
+    CHECK(document.setLayerColorMode(pointId,
+                                     {.source = pci::PointColorSource::Rgb,
+                                      .colorMap = pci::PointColorMap::Rgb}));
+
+    CHECK(document.removeLayer(rasterId));
+    const auto point = document.layer(pointId);
+    REQUIRE(point.has_value());
+    REQUIRE(point->rasterColors.has_value());
+    CHECK_FALSE(point->rasterColors->rasterLayerId.has_value());
+    CHECK(point->rasterColors->rasterSourceId == data->sourceId);
+    CHECK(point->rasterColors->rasterSourcePath == "source.tif");
+    // Unlinking provenance does not alter baked bytes or their generation.
+    CHECK(point->colorGeneration == 1);
+
+    const auto snapshot = document.snapshot()->layer(pointId);
+    REQUIRE(snapshot.has_value());
+    REQUIRE(snapshot->rasterColors.has_value());
+    CHECK_FALSE(snapshot->rasterColors->rasterLayerId.has_value());
+    CHECK(snapshot->colorGeneration == 1);
+
+    CHECK(document.clearLayerRasterColors(pointId));
+    CHECK(document.layer(pointId)->colorGeneration == 2);
+    CHECK_FALSE(document.layer(pointId)->rasterColors.has_value());
+}
+
 TEST_CASE("reference CRS prefers point clouds over rasters",
           "[unit][scene][raster]")
 {

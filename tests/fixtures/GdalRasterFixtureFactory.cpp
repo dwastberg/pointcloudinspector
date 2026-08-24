@@ -108,8 +108,7 @@ void writeBand(GDALDataset &dataset,
     }
 }
 
-void buildOverviews(const std::filesystem::path &path,
-                    const std::vector<int> &factors)
+void buildOverviews(const std::filesystem::path &path, std::vector<int> levels)
 {
     DatasetPtr dataset{
         GDALDataset::FromHandle(GDALOpen(path.string().c_str(), GA_Update))};
@@ -117,7 +116,6 @@ void buildOverviews(const std::filesystem::path &path,
         throw std::runtime_error("could not reopen " + path.string() +
                                  " to build overviews");
     }
-    std::vector<int> levels = factors;
     if (dataset->BuildOverviews("AVERAGE",
                                 static_cast<int>(levels.size()),
                                 levels.data(),
@@ -216,6 +214,43 @@ std::filesystem::path writeRgbFixture(const std::filesystem::path &path)
     applyProjectedReference(*dataset);
     applyTransform(*dataset, {674000.0, 2.0, 0.0, 6580000.0, 0.0, -2.0});
     writeRgb(*dataset, width, height);
+    return path;
+}
+
+std::filesystem::path
+writePointAlignedFixture(const std::filesystem::path &path,
+                         const bool partialAlpha)
+{
+    constexpr int width = 32;
+    constexpr int height = 32;
+    DatasetPtr dataset =
+        create(path, width, height, partialAlpha ? 4 : 3, GDT_Byte);
+    applyProjectedReference(*dataset);
+    applyTransform(*dataset, {995.0, 1.0, 0.0, 2015.0, 0.0, -1.0});
+    const std::size_t count = static_cast<std::size_t>(width) * height;
+    std::vector<unsigned char> red(count);
+    std::vector<unsigned char> green(count);
+    std::vector<unsigned char> blue(count, 64);
+    std::vector<unsigned char> alpha(count);
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            const std::size_t index = static_cast<std::size_t>(y) * width + x;
+            red[index] = static_cast<unsigned char>(x * 8);
+            green[index] = static_cast<unsigned char>(y * 8);
+            alpha[index] =
+                static_cast<unsigned char>(1 + (x + y * width) % 254);
+        }
+    }
+    writeBand(*dataset, 1, GDT_Byte, red);
+    writeBand(*dataset, 2, GDT_Byte, green);
+    writeBand(*dataset, 3, GDT_Byte, blue);
+    dataset->GetRasterBand(1)->SetColorInterpretation(GCI_RedBand);
+    dataset->GetRasterBand(2)->SetColorInterpretation(GCI_GreenBand);
+    dataset->GetRasterBand(3)->SetColorInterpretation(GCI_BlueBand);
+    if (partialAlpha) {
+        writeBand(*dataset, 4, GDT_Byte, alpha);
+        dataset->GetRasterBand(4)->SetColorInterpretation(GCI_AlphaBand);
+    }
     return path;
 }
 
@@ -592,6 +627,7 @@ writeCatalogFixture(const std::filesystem::path &path,
     std::vector<std::string> names;
     std::vector<const char *> sources;
     names.reserve(members.size());
+    sources.reserve(members.size() + 1);
     for (const std::filesystem::path &member : members) {
         names.push_back(member.string());
     }
@@ -824,6 +860,10 @@ writeGdalRasterFixtures(const std::filesystem::path &directory)
     std::filesystem::create_directories(directory);
 
     GdalRasterFixturePaths paths;
+    paths.pointAligned =
+        writePointAlignedFixture(directory / "point-aligned.tif", false);
+    paths.pointAlignedPartialAlpha = writePointAlignedFixture(
+        directory / "point-aligned-partial-alpha.tif", true);
     paths.rgb = writeRgbFixture(directory / "rgb.tif");
     paths.positionalRgb =
         writePositionalRgbFixture(directory / "positional-rgb.vrt");
@@ -849,8 +889,10 @@ writeGdalRasterFixtures(const std::filesystem::path &directory)
     constexpr int memberExtent = 512;
     constexpr double memberSpacing = 400000.0;
     for (int index = 0; index < 4; ++index) {
+        const int row = index / 2;
         const double originX = 200000.0 + (index % 2) * memberSpacing;
-        const double originY = 7000000.0 - (index / 2) * memberSpacing;
+        const double originY =
+            7000000.0 - static_cast<double>(row) * memberSpacing;
         paths.catalogMembers.push_back(writeCatalogMember(
             directory / ("catalog-member-" + std::to_string(index) + ".tif"),
             originX,

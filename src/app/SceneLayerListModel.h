@@ -22,7 +22,9 @@ public:
         LayerKindRole,
         WarningRole,
         ShowAnywayRole,
-        SourceToolTipRole
+        SourceToolTipRole,
+        RasterColorsRole,
+        RasterColorSourceRole
     };
     Q_ENUM(Role)
 
@@ -51,7 +53,9 @@ private:
         QString name;
         QString summary;
         QString toolTip;
+        QString rasterColorSource;
         bool visible = true;
+        bool rasterColors = false;
         bool warning = false;
         bool allowShowAnyway = false;
 

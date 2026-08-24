@@ -73,6 +73,7 @@ public:
     void touch(const GpuBlockKey &key, bool visible) noexcept;
     void evictToBudget(std::span<const GpuBlockKey> protectedBlocks = {});
     void invalidateNode(PointCloudLayerId layerId, PointCloudNodeId nodeId);
+    void invalidateLayer(PointCloudLayerId layerId);
     void retainLayers(std::span<const PointCloudLayerId> layers);
     [[nodiscard]] QRhiBuffer *bufferFor(const GpuBlockKey &key) const noexcept;
     [[nodiscard]] std::uint64_t residentPointCount() const noexcept;

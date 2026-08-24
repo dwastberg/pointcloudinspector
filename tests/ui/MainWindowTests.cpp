@@ -1,3 +1,4 @@
+#include "app/ColorizeFromRasterDialog.h"
 #include "app/LayerInspectorDock.h"
 #include "app/MainWindow.h"
 #include "app/PointCloudLoadChoiceDialog.h"
@@ -50,6 +51,7 @@
 #include <atomic>
 #include <chrono>
 #include <filesystem>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <stdexcept>
@@ -67,7 +69,8 @@ template <typename Predicate> bool waitFor(Predicate &&predicate)
 pci::SceneDocumentSnapshotPtr
 makeSnapshot(const std::vector<pci::PointCloudLayer> &points,
              const std::vector<pci::VectorLayer> &vectors,
-             const std::vector<pci::SceneLayerId> &order)
+             const std::vector<pci::SceneLayerId> &order,
+             const std::vector<pci::RasterLayer> &rasters = {})
 {
     auto snapshot = std::make_shared<pci::SceneDocumentSnapshot>();
     for (const pci::SceneLayerId id : order) {
@@ -82,20 +85,37 @@ makeSnapshot(const std::vector<pci::PointCloudLayer> &points,
                         .scene = point->scene,
                         .colorMode = point->colorMode,
                         .classificationFilter = point->classificationFilter,
+                        .rasterColors = point->rasterColors,
+                        .colorGeneration = point->colorGeneration,
                     },
             });
             continue;
         }
         const auto vector =
             std::ranges::find(vectors, id, &pci::VectorLayer::id);
-        REQUIRE(vector != vectors.end());
+        if (vector != vectors.end()) {
+            snapshot->layers.push_back({
+                .id = id,
+                .visible = vector->visible,
+                .payload =
+                    pci::VectorLayerState{
+                        .data = vector->data,
+                        .style = vector->style,
+                    },
+            });
+            continue;
+        }
+        const auto raster =
+            std::ranges::find(rasters, id, &pci::RasterLayer::id);
+        REQUIRE(raster != rasters.end());
         snapshot->layers.push_back({
             .id = id,
-            .visible = vector->visible,
+            .visible = raster->visible,
             .payload =
-                pci::VectorLayerState{
-                    .data = vector->data,
-                    .style = vector->style,
+                pci::RasterLayerState{
+                    .data = raster->data,
+                    .style = raster->style,
+                    .renderGeneration = raster->renderGeneration,
                 },
         });
     }
@@ -424,6 +444,61 @@ private:
     pci::RasterLayerMetadata metadata_;
 };
 
+[[nodiscard]] pci::RasterLayerDataPtr
+makeUiRasterData(const std::filesystem::path &sourcePath)
+{
+    pci::RasterLayerMetadata metadata;
+    metadata.sourcePath = sourcePath;
+    metadata.sourceDriver = "GTiff";
+    metadata.width = 64;
+    metadata.height = 32;
+    metadata.geoTransform = {0.0, 1.0, 0.0, 32.0, 0.0, -1.0};
+    metadata.spatialReferenceWkt = "STUBCRS";
+    metadata.bounds = *pci::rasterPixelEdgeBounds(
+        metadata.geoTransform, metadata.width, metadata.height);
+    metadata.bands = {
+        {.band = 1, .name = "Red"},
+        {.band = 2, .name = "Green"},
+        {.band = 3, .name = "Blue"},
+    };
+    pci::RasterLevel level;
+    level.width = metadata.width;
+    level.height = metadata.height;
+    level.channelCount = 3;
+    metadata.levels.push_back(level);
+    return std::make_shared<pci::RasterLayerData>(pci::RasterLayerData{
+        .sourceId = pci::nextRasterSourceId(),
+        .source = std::make_shared<StubRasterSource>(std::move(metadata)),
+    });
+}
+
+[[nodiscard]] pci::PointCloudScenePtr
+makeUiColorizableScene(const std::filesystem::path &sourcePath)
+{
+    pci::PointCloudMetadata metadata;
+    metadata.sourcePath = sourcePath;
+    metadata.sourcePointCount = 1;
+    metadata.sourceBounds = {{8.0, 8.0, 0.0}, {8.0, 8.0, 0.0}};
+    metadata.spatialReferenceWkt = "STUBCRS";
+    metadata.hasColor = true;
+    auto scene = std::make_shared<pci::PointCloudScene>(std::move(metadata));
+    auto block = std::make_shared<pci::PointBlock>();
+    block->origin = {8.0, 8.0, 0.0};
+    block->bounds = {{8.0, 8.0, 0.0}, {8.0, 8.0, 0.0}};
+    block->points.push_back({
+        .x = 0,
+        .y = 0,
+        .z = 0,
+        .attributes = 0,
+        .rgba = 0x112233ffU,
+        .packedProperties = 0,
+    });
+    block->attributes.emplace_back();
+    scene->addBlock(std::move(block));
+    scene->markLoadingComplete();
+    return scene;
+}
+
 // Produces a small, correctly georeferenced raster so UI rows and inspector
 // fields can be exercised without a GDAL dependency in the widget tests.
 class StubRasterLoader final : public pci::RasterLoader {
@@ -478,6 +553,8 @@ makeTestImportServices(std::shared_ptr<const pci::PointCloudLoader> pointLoader,
         std::move(vectorLoader), *services.scheduler);
     services.raster = std::make_unique<pci::RasterLoadController>(
         std::move(rasterLoader), *services.scheduler);
+    services.colorize = std::make_unique<pci::PointCloudColorizeController>(
+        *services.scheduler);
     services.statistics = std::make_shared<UnavailableStatistics>();
     return services;
 }
@@ -1026,6 +1103,7 @@ TEST_CASE("import services destroy controllers before waiting for workers",
     CHECK_FALSE(services.scheduler);
     CHECK_FALSE(services.pointCloud);
     CHECK_FALSE(services.vector);
+    CHECK_FALSE(services.colorize);
     CHECK_FALSE(services.statistics);
 }
 
@@ -1151,11 +1229,19 @@ TEST_CASE("selected layers expose a point-cloud statistics dialog",
 
     QAction *statisticsAction = window.findChild<QAction *>(
         QStringLiteral("pointCloudStatisticsAction"));
+    QAction *colorizeAction = window.findChild<QAction *>(
+        QStringLiteral("colorizeFromRasterAction"));
+    QAction *revertColorsAction = window.findChild<QAction *>(
+        QStringLiteral("revertRasterColorsAction"));
     QMenu *layerMenu = window.findChild<QMenu *>(QStringLiteral("layerMenu"));
     REQUIRE(statisticsAction != nullptr);
+    REQUIRE(colorizeAction != nullptr);
+    REQUIRE(revertColorsAction != nullptr);
     REQUIRE(layerMenu != nullptr);
     CHECK_FALSE(statisticsAction->isEnabled());
     CHECK(layerMenu->actions().contains(statisticsAction));
+    CHECK(layerMenu->actions().contains(colorizeAction));
+    CHECK(layerMenu->actions().contains(revertColorsAction));
 
     window.loadPointCloud("range-first.las");
     REQUIRE(waitFor([&] {
@@ -1898,6 +1984,158 @@ TEST_CASE("scene panel displays point and vector layers in document order",
           QStringLiteral("survey.las"));
 }
 
+TEST_CASE("scene panel gates raster colorize and revert actions",
+          "[ui][raster][colorize]")
+{
+    pci::SceneLayersDock panel;
+    pci::PointCloudLayer point{
+        .id = pci::SceneLayerId{7},
+        .scene = makeUiColorizableScene("target.laz"),
+    };
+    const auto rasterData = makeUiRasterData("ortho.tif");
+    const pci::RasterLayer raster{.id = pci::SceneLayerId{8},
+                                  .data = rasterData};
+
+    panel.setDocumentSnapshot(
+        makeSnapshot({point}, {}, {point.id, raster.id}, {raster}));
+    auto *colorize =
+        panel.findChild<QAction *>(QStringLiteral("colorizeFromRasterAction"));
+    auto *revert =
+        panel.findChild<QAction *>(QStringLiteral("revertRasterColorsAction"));
+    REQUIRE(colorize != nullptr);
+    REQUIRE(revert != nullptr);
+    CHECK(panel.findChild<QWidget *>(
+              QStringLiteral("rasterColorizeActionStrip")) == nullptr);
+    CHECK(colorize->isEnabled());
+    CHECK(colorize->text() == QStringLiteral("Colorize from raster…"));
+    CHECK_FALSE(revert->isEnabled());
+    CHECK_FALSE(revert->isVisible());
+
+    point.rasterColors = pci::RasterPointColorBinding{
+        .rasterLayerId = raster.id,
+        .rasterSourceId = rasterData->sourceId,
+        .rasterSourcePath = rasterData->metadata().sourcePath,
+        .decode = std::make_shared<pci::RasterDecodeParameters>(),
+        .rasterRenderGeneration = raster.renderGeneration,
+        .coloredPoints = 1,
+        .crsRelation = pci::SpatialReferenceRelation::Same,
+    };
+    panel.setDocumentSnapshot(
+        makeSnapshot({point}, {}, {point.id, raster.id}, {raster}));
+    CHECK(revert->isEnabled());
+    CHECK(revert->isVisible());
+    CHECK(colorize->text() == QStringLiteral("Recolor from raster…"));
+
+    panel.setColorizeJobState(true, false);
+    CHECK_FALSE(colorize->isEnabled());
+    CHECK(revert->isEnabled());
+    CHECK(revert->toolTip().contains(QStringLiteral("Cancel")));
+
+    panel.setColorizeJobState(true, true);
+    CHECK_FALSE(revert->isEnabled());
+    CHECK(revert->toolTip().contains(QStringLiteral("commit")));
+}
+
+TEST_CASE("raster colorize dialog and point inspector expose frozen bake state",
+          "[ui][raster][colorize][inspector]")
+{
+    pci::PointCloudLayer point{
+        .id = pci::SceneLayerId{17},
+        .scene = makeUiColorizableScene("target.laz"),
+    };
+    const auto rasterData = makeUiRasterData("ortho.tif");
+    const pci::RasterLayer raster{.id = pci::SceneLayerId{18},
+                                  .data = rasterData};
+    const auto snapshot =
+        makeSnapshot({point}, {}, {point.id, raster.id}, {raster});
+
+    pci::ColorizeFromRasterDialog dialog(
+        point, snapshot, {}, std::numeric_limits<std::uint64_t>::max());
+    auto *combo =
+        dialog.findChild<QComboBox *>(QStringLiteral("colorizeRasterCombo"));
+    auto *warning =
+        dialog.findChild<QLabel *>(QStringLiteral("colorizeRasterWarning"));
+    auto *apply = dialog.findChild<QPushButton *>(
+        QStringLiteral("colorizeRasterApplyButton"));
+    REQUIRE(combo != nullptr);
+    REQUIRE(warning != nullptr);
+    REQUIRE(apply != nullptr);
+    CHECK(combo->count() == 1);
+    CHECK(combo->currentText().contains(QStringLiteral("visible")));
+    CHECK(dialog.selectedRasterLayerId() == raster.id);
+    CHECK(warning->text() ==
+          QStringLiteral("CRS comparison is unavailable in this build."));
+    CHECK(apply->isEnabled());
+    CHECK(apply->property("primary").toBool());
+    auto *estimate =
+        dialog.findChild<QLabel *>(QStringLiteral("colorizeRasterEstimate"));
+    auto *behavior = dialog.findChild<QLabel *>(
+        QStringLiteral("colorizeRasterBehaviorNotice"));
+    REQUIRE(estimate != nullptr);
+    REQUIRE(behavior != nullptr);
+    CHECK(estimate->text().contains(QStringLiteral("Working memory")));
+    CHECK(estimate->text().contains(QStringLiteral("Temporary disk")));
+    CHECK(behavior->text().contains(QStringLiteral("opaque raster pixels")));
+
+    point.rasterColors = pci::RasterPointColorBinding{
+        .rasterLayerId = raster.id,
+        .rasterSourceId = rasterData->sourceId,
+        .rasterSourcePath = rasterData->metadata().sourcePath,
+        .decode = std::make_shared<pci::RasterDecodeParameters>(),
+        .rasterRenderGeneration = raster.renderGeneration,
+        .coloredPoints = 1,
+        .uncoloredPoints = 2,
+        .crsRelation = pci::SpatialReferenceRelation::Same,
+    };
+    pci::LayerInspectorDock inspector;
+    inspector.setDocumentSnapshot(
+        makeSnapshot({point}, {}, {point.id, raster.id}, {raster}), point.id);
+    auto *state = inspector.findChild<QLabel *>(
+        QStringLiteral("layerRasterColorStateValue"));
+    auto *details =
+        inspector.findChild<QLabel *>(QStringLiteral("layerRasterColorsValue"));
+    auto *revert = inspector.findChild<QPushButton *>(
+        QStringLiteral("revertRasterColorsButton"));
+    auto *colorize = inspector.findChild<QPushButton *>(
+        QStringLiteral("inspectorColorizeFromRasterButton"));
+    REQUIRE(state != nullptr);
+    REQUIRE(details != nullptr);
+    REQUIRE(revert != nullptr);
+    REQUIRE(colorize != nullptr);
+    CHECK(state->text() == QStringLiteral("Raster colors · ortho.tif"));
+    CHECK(details->text().contains(QStringLiteral("1 colored")));
+    CHECK(details->text().contains(QStringLiteral("2 kept source")));
+    CHECK(details->text().contains(QStringLiteral("same CRS")));
+    CHECK_FALSE(revert->isHidden());
+    CHECK(colorize->text() == QStringLiteral("Recolor from raster…"));
+
+    std::optional<pci::SceneLayerId> reverted;
+    std::optional<pci::SceneLayerId> recolored;
+    QObject::connect(&inspector,
+                     &pci::LayerInspectorDock::revertRasterColorsRequested,
+                     [&reverted](const pci::SceneLayerId id) {
+                         reverted = id;
+                     });
+    QObject::connect(&inspector,
+                     &pci::LayerInspectorDock::colorizeFromRasterRequested,
+                     [&recolored](const pci::SceneLayerId id) {
+                         recolored = id;
+                     });
+    colorize->click();
+    CHECK(recolored == point.id);
+    revert->click();
+    CHECK(reverted == point.id);
+
+    pci::ColorizeFromRasterDialog replacement(
+        point, snapshot, {}, std::numeric_limits<std::uint64_t>::max());
+    auto *replace = replacement.findChild<QPushButton *>(
+        QStringLiteral("colorizeRasterApplyButton"));
+    REQUIRE(replace != nullptr);
+    CHECK(replace->text() == QStringLiteral("Replace raster colors"));
+    CHECK(replacement.findChild<QLabel *>(
+              QStringLiteral("colorizeRasterReplacementNotice")) != nullptr);
+}
+
 TEST_CASE("vector inspector projects and edits planar overlay style",
           "[ui][vector][inspector]")
 {
@@ -2039,11 +2277,12 @@ TEST_CASE("task rows expose vector retry without a context menu",
     CHECK(retried->id == pci::LoadJobId{7});
 }
 
-TEST_CASE("task row buttons preserve point and vector job identity",
-          "[ui][tasks]")
+TEST_CASE("task row buttons preserve every job kind identity", "[ui][tasks]")
 {
     constexpr std::array kinds{pci::LoadJobKind::PointCloud,
-                               pci::LoadJobKind::Vector};
+                               pci::LoadJobKind::Vector,
+                               pci::LoadJobKind::Raster,
+                               pci::LoadJobKind::Colorize};
     for (const pci::LoadJobKind kind : kinds) {
         pci::TaskDock panel;
         const pci::LoadJobKey expected{.kind = kind, .id = pci::LoadJobId{41}};
@@ -2101,11 +2340,13 @@ TEST_CASE("task row buttons preserve point and vector job identity",
     }
 }
 
-TEST_CASE("task row context menu preserves point and vector job identity",
+TEST_CASE("task row context menu preserves every job kind identity",
           "[ui][tasks]")
 {
     constexpr std::array kinds{pci::LoadJobKind::PointCloud,
-                               pci::LoadJobKind::Vector};
+                               pci::LoadJobKind::Vector,
+                               pci::LoadJobKind::Raster,
+                               pci::LoadJobKind::Colorize};
     for (const pci::LoadJobKind kind : kinds) {
         pci::TaskDock panel;
         const pci::LoadJobKey expected{.kind = kind, .id = pci::LoadJobId{73}};

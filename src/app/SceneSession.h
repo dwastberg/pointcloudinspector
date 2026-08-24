@@ -54,6 +54,15 @@ public:
     [[nodiscard]] bool batchLoading() const noexcept;
     [[nodiscard]] bool hasActiveVectorLoads() const noexcept;
     [[nodiscard]] bool hasActiveRasterLoads() const noexcept;
+    [[nodiscard]] bool hasActiveColorizeJobs() const noexcept;
+    [[nodiscard]] bool
+    hasActiveColorizeJob(PointCloudLayerId layerId) const noexcept;
+    [[nodiscard]] bool
+    colorizeCommitInProgress(PointCloudLayerId layerId) const noexcept;
+    [[nodiscard]] PointCloudColorizeControllerMetrics
+    colorizeMetrics() const noexcept;
+    [[nodiscard]] const std::shared_ptr<const SpatialReferenceComparator> &
+    spatialReferenceComparator() const noexcept;
     [[nodiscard]] SceneSessionTimings timings() const noexcept;
     [[nodiscard]] std::uint64_t maximumLoadPoints() const noexcept;
     [[nodiscard]] std::uint64_t decodedByteBudget() const noexcept;
@@ -74,6 +83,10 @@ public:
                               std::vector<VectorSublayerKey> selected);
     // One job per selected path, so a failure in one source preserves the rest.
     LoadJobId startRasterImport(RasterImportRequest request);
+    LoadJobId colorizePointCloudFromRaster(PointCloudLayerId pointLayerId,
+                                           SceneLayerId rasterLayerId,
+                                           RasterColorizeOptions options = {});
+    bool revertPointCloudColors(PointCloudLayerId pointLayerId);
     void cancelAllLoads();
     void cancelJob(LoadJobKey key);
     void retryJob(LoadJobKey key);
@@ -117,6 +130,7 @@ private:
     [[nodiscard]] PointCloudLoadController &pointLoadController() noexcept;
     [[nodiscard]] VectorLoadController &vectorLoadController() noexcept;
     [[nodiscard]] RasterLoadController &rasterLoadController() noexcept;
+    [[nodiscard]] PointCloudColorizeController &colorizeController() noexcept;
 
     struct ActiveLoad {
         LoadJobId jobId;
@@ -150,6 +164,7 @@ private:
     void connectController();
     void connectVectorController();
     void connectRasterController();
+    void connectColorizeController();
     void publishTaskRows();
     void beginLoad(const std::filesystem::path &sourcePath,
                    PointCloudLoadMode mode);

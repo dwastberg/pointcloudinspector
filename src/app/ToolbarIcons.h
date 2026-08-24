@@ -10,6 +10,8 @@ enum class ToolbarIcon {
     Open,
     Vector,
     Raster,
+    ColorizeRaster,
+    RevertColors,
     Fit,
     TopDown,
     Orthographic,

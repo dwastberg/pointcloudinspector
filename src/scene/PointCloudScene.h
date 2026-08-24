@@ -8,6 +8,7 @@
 #include "scene/PointCloudDataSource.h"
 #include "scene/PointCloudSceneSnapshot.h"
 #include "scene/PointMemoryBudget.h"
+#include "scene/RasterPointColorize.h"
 #include "tasking/TaskScheduler.h"
 
 #include <atomic>
@@ -52,11 +53,6 @@ private:
     std::uint64_t id_ = 0;
 };
 
-struct SceneBlock {
-    std::uint64_t id = 0;
-    PointBlockPtr block;
-};
-
 struct PointCloudSceneMetrics {
     DecodedCacheMetrics cache;
     PointCloudDataSourceMetrics source;
@@ -67,7 +63,14 @@ struct PointCloudSceneMetrics {
     std::uint64_t decodeRequestsFailed = 0;
 };
 
-class PointCloudScene {
+struct RasterPointColorMetrics {
+    std::uint64_t activeColorTableBytes = 0;
+    std::uint64_t flatDisplacedColorBytes = 0;
+    std::uint64_t retainedSourceRootBytes = 0;
+    std::uint64_t retainedColoredRootBytes = 0;
+};
+
+class PointCloudScene : public std::enable_shared_from_this<PointCloudScene> {
 public:
     explicit PointCloudScene(PointCloudMetadata metadata);
     PointCloudScene(
@@ -133,6 +136,15 @@ public:
     [[nodiscard]] std::string hierarchyError() const;
     [[nodiscard]] PointCloudSceneMetrics hierarchyMetrics() const;
     [[nodiscard]] PointCloudStorageMetrics storageMetrics() const;
+    [[nodiscard]] RasterPointColorMetrics rasterPointColorMetrics() const;
+    [[nodiscard]] bool hasRasterPointColors() const;
+    [[nodiscard]] RasterPointColorizeAvailability
+    rasterPointColorizeAvailability() const;
+    [[nodiscard]] std::optional<RasterColorizeTargetSnapshot>
+    rasterPointColorizeTarget() const;
+    [[nodiscard]] RasterPointColorApplyOutcome
+    applyRasterPointColors(RasterColorizePreparedPtr prepared);
+    [[nodiscard]] RasterPointColorApplyOutcome revertPointColors();
 
 private:
     struct Storage;
@@ -168,7 +180,5 @@ private:
     bool loadingComplete_ = false;
     std::shared_ptr<PointCloudSceneInvalidationState> invalidationState_;
 };
-
-using PointCloudScenePtr = std::shared_ptr<PointCloudScene>;
 
 } // namespace pci

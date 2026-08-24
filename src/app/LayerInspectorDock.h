@@ -30,10 +30,13 @@ public:
 
     void setDocumentSnapshot(SceneDocumentSnapshotPtr snapshot,
                              SceneLayerId selectedLayerId);
+    void setColorizeJobState(bool active, bool committing);
 
 signals:
     void pointColorModeChanged(pci::SceneLayerId layerId,
                                pci::PointColorMode mode);
+    void revertRasterColorsRequested(pci::SceneLayerId layerId);
+    void colorizeFromRasterRequested(pci::SceneLayerId layerId);
     void allPointColorModesChanged(pci::PointColorMode mode);
     void classificationFilterChanged(pci::SceneLayerId layerId,
                                      pci::PointClassificationFilter filter,
@@ -73,6 +76,10 @@ private:
     QLabel *crsValue_ = nullptr;
     QLabel *boundsValue_ = nullptr;
     QLabel *attributesValue_ = nullptr;
+    QLabel *rasterColorStateValue_ = nullptr;
+    QPushButton *colorizeFromRasterButton_ = nullptr;
+    QPushButton *revertRasterColorsButton_ = nullptr;
+    QLabel *rasterColorsValue_ = nullptr;
 #ifdef PCINSPECTOR_ENABLE_DIAGNOSTIC_UI
     QLabel *indexValue_ = nullptr;
 #endif
@@ -134,6 +141,8 @@ private:
     std::vector<RasterLayer> rasterLayers_;
     SceneLayerId selectedLayerId_;
     PointColorMapCatalogSnapshotPtr colorMaps_;
+    bool colorizeJobActive_ = false;
+    bool colorizeJobCommitting_ = false;
 };
 
 } // namespace pci

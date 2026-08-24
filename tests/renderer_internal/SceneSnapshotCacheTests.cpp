@@ -138,4 +138,32 @@ TEST_CASE("scene snapshot cache retries a rejected wake dispatch",
     CHECK(dispatchAttempts == 2);
 }
 
+TEST_CASE("scene snapshot cache reports color-generation invalidation",
+          "[unit][renderer-internal][snapshot-cache][colorize]")
+{
+    auto scene =
+        std::make_shared<pci::PointCloudScene>(pci::PointCloudMetadata{});
+    scene->addBlock(onePointBlock(1.0));
+    auto document = std::make_shared<pci::SceneDocument>();
+    const pci::PointCloudLayerId layerId = document->addLayer(scene);
+
+    pci::SceneSnapshotCache cache;
+    cache.setDocument(document->snapshot(), true);
+    static_cast<void>(cache.refresh());
+    REQUIRE(cache.snapshot(layerId));
+
+    CHECK(document->setLayerRasterColors(
+        layerId,
+        {.rasterSourceId = pci::nextRasterSourceId(),
+         .rasterSourcePath = "colors.tif",
+         .decode = std::make_shared<pci::RasterDecodeParameters>()}));
+    cache.setDocument(document->snapshot(), false);
+    const pci::SceneSnapshotCache::RefreshResult changed = cache.refresh();
+    CHECK(changed.invalidatedColors == std::vector{layerId});
+    CHECK(changed.invalidatedRootPayloads.empty());
+
+    cache.setDocument(document->snapshot(), false);
+    CHECK(cache.refresh().invalidatedColors.empty());
+}
+
 } // namespace

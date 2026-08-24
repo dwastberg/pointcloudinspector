@@ -31,6 +31,13 @@ bool PointMemoryBudget::Reservation::tryResize(const std::uint64_t bytes)
     return owner_ && owner_->resize(*this, bytes);
 }
 
+std::optional<std::shared_ptr<PointMemoryBudget::Reservation>>
+PointMemoryBudget::Reservation::tryReserveSibling(
+    const std::uint64_t bytes) const
+{
+    return owner_ ? owner_->tryReserve(bytes) : std::nullopt;
+}
+
 PointMemoryBudget::PointMemoryBudget(const std::uint64_t byteBudget)
     : byteBudget_(byteBudget)
 {

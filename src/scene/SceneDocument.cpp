@@ -58,7 +58,9 @@ namespace {
             .scene = point.scene,
             .visible = layer.visible,
             .colorMode = point.colorMode,
-            .classificationFilter = point.classificationFilter};
+            .classificationFilter = point.classificationFilter,
+            .rasterColors = point.rasterColors,
+            .colorGeneration = point.colorGeneration};
 }
 
 [[nodiscard]] VectorLayer vectorProjection(const SceneLayer &layer)
@@ -173,6 +175,8 @@ PointCloudLayerId SceneDocument::addLayer(PointCloudScenePtr scene)
                     .scene = scene,
                     .colorMode = colorMode,
                     .classificationFilter = {},
+                    .rasterColors = std::nullopt,
+                    .colorGeneration = 0,
                 },
         });
     } catch (...) {
@@ -365,6 +369,9 @@ bool SceneDocument::removeLayer(const PointCloudLayerId id)
         return true;
     }
     const bool removedRaster = rasterState(*found) != nullptr;
+    if (removedRaster) {
+        static_cast<void>(clearRasterColorsForLayer(id));
+    }
     sceneLayers_.erase(found);
     if (removedRaster) {
         markRasterChanged();
@@ -640,8 +647,10 @@ bool SceneDocument::setLayerColorMode(const PointCloudLayerId id,
     const auto found = findSceneLayer(id);
     PointCloudLayerState *point =
         found == sceneLayers_.end() ? nullptr : pointState(*found);
-    if (!point || !pointColorModeAvailable(
-                      *colorMaps_, point->scene->metadata(), colorMode)) {
+    if (!point || !pointColorModeAvailable(*colorMaps_,
+                                           point->scene->metadata(),
+                                           colorMode,
+                                           point->rasterColors.has_value())) {
         return false;
     }
     if (point->colorMode != colorMode) {
@@ -649,6 +658,55 @@ bool SceneDocument::setLayerColorMode(const PointCloudLayerId id,
         markPointChanged();
     }
     return true;
+}
+
+bool SceneDocument::setLayerRasterColors(const PointCloudLayerId id,
+                                         RasterPointColorBinding binding)
+{
+    const auto found = findSceneLayer(id);
+    PointCloudLayerState *point =
+        found == sceneLayers_.end() ? nullptr : pointState(*found);
+    if (!point || !binding.decode ||
+        binding.rasterSourceId == RasterSourceId{}) {
+        return false;
+    }
+    point->rasterColors = std::move(binding);
+    ++point->colorGeneration;
+    markPointChanged();
+    return true;
+}
+
+bool SceneDocument::clearLayerRasterColors(const PointCloudLayerId id)
+{
+    const auto found = findSceneLayer(id);
+    PointCloudLayerState *point =
+        found == sceneLayers_.end() ? nullptr : pointState(*found);
+    if (!point || !point->rasterColors) {
+        return false;
+    }
+    point->rasterColors.reset();
+    ++point->colorGeneration;
+    markPointChanged();
+    return true;
+}
+
+std::vector<PointCloudLayerId>
+SceneDocument::clearRasterColorsForLayer(const SceneLayerId rasterLayerId)
+{
+    std::vector<PointCloudLayerId> changed;
+    for (SceneLayer &layer : sceneLayers_) {
+        PointCloudLayerState *point = pointState(layer);
+        if (!point || !point->rasterColors ||
+            point->rasterColors->rasterLayerId != rasterLayerId) {
+            continue;
+        }
+        point->rasterColors->rasterLayerId.reset();
+        changed.push_back(layer.id);
+    }
+    if (!changed.empty()) {
+        markPointChanged();
+    }
+    return changed;
 }
 
 bool SceneDocument::setLayerClassificationFilter(
@@ -774,6 +832,16 @@ SceneDocumentMetrics SceneDocument::hierarchyMetrics() const
     bool hasSource = false;
     bool fetchedBytesKnown = true;
     for (const PointCloudLayer &layer : layers()) {
+        const RasterPointColorMetrics color =
+            layer.scene->rasterPointColorMetrics();
+        result.activeColorTableBytes = saturatingAdd(
+            result.activeColorTableBytes, color.activeColorTableBytes);
+        result.flatDisplacedColorBytes = saturatingAdd(
+            result.flatDisplacedColorBytes, color.flatDisplacedColorBytes);
+        result.retainedSourceRootBytes = saturatingAdd(
+            result.retainedSourceRootBytes, color.retainedSourceRootBytes);
+        result.retainedColoredRootBytes = saturatingAdd(
+            result.retainedColoredRootBytes, color.retainedColoredRootBytes);
         const PointCloudStorageMetrics storage = layer.scene->storageMetrics();
         result.persistentIndexBytes =
             saturatingAdd(result.persistentIndexBytes, storage.persistentBytes);

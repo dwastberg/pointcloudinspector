@@ -60,6 +60,8 @@ pci_add_catch_test_target(pcinspector_scene_tests
         unit/BlockPartitionerTests.cpp
         unit/PointCloudSceneTests.cpp
         unit/PointCloudHierarchyTests.cpp
+        unit/RasterColorizeRunStoreTests.cpp
+        unit/RasterPointColorizerTests.cpp
         unit/SceneDocumentTests.cpp
         unit/SceneDocumentVectorTests.cpp
         unit/SceneDocumentRasterTests.cpp
@@ -69,6 +71,7 @@ pci_add_catch_test_target(pcinspector_raster_tests
         WITH_MAIN
         SOURCES
         unit/RasterLayerTests.cpp
+        unit/RasterPointSamplerTests.cpp
         unit/RasterTileCacheTests.cpp
         LIBRARIES pcinspector::raster)
 
@@ -146,11 +149,13 @@ pci_add_catch_test_target(pcinspector_raster_stress_tests
         SOURCES
         fixtures/GdalRasterFixtureFactory.cpp
         stress/RasterLargeSourceTests.cpp
+        stress/RasterPointColorizeScaleTests.cpp
         INCLUDE_DIRECTORIES
         "${CMAKE_CURRENT_SOURCE_DIR}"
         LIBRARIES
         pcinspector::import_gdal
         pcinspector::renderer
+        pcinspector::scene
         GDAL::GDAL
         PROPERTIES
         RESOURCE_LOCK pcinspector_raster_stress_fixtures

@@ -1,4 +1,5 @@
 #include "app/PerformanceSettingsStore.h"
+#include "app/RasterColorizeUiState.h"
 #include "app/RenderDiagnosticsFormatter.h"
 #include "app/ViewportSettingsStore.h"
 #include "app/WorkspaceSettings.h"
@@ -10,6 +11,8 @@
 #include <QMainWindow>
 #include <QSettings>
 #include <QTemporaryDir>
+
+#include <memory>
 
 TEST_CASE("workspace settings preserve stable geometry and state keys",
           "[ui][workspace]")
@@ -37,6 +40,45 @@ TEST_CASE("workspace settings preserve stable geometry and state keys",
 
     CHECK(restored.size() == source.size());
     CHECK(restored.dockWidgetArea(&restoredDock) == Qt::RightDockWidgetArea);
+}
+
+TEST_CASE("raster colorize controls expose contextual state",
+          "[ui][raster][colorize]")
+{
+    pci::PointCloudMetadata metadata;
+    metadata.sourcePath = "survey.laz";
+    pci::PointCloudLayer point{
+        .id = pci::SceneLayerId{7},
+        .scene = std::make_shared<pci::PointCloudScene>(metadata),
+    };
+    point.scene->markLoadingComplete();
+
+    auto state = pci::rasterColorizeUiState(&point, 1, false, false);
+    CHECK(state.startEnabled);
+    CHECK(state.startText == QStringLiteral("Colorize from raster…"));
+    CHECK_FALSE(state.revertVisible);
+
+    state = pci::rasterColorizeUiState(&point, 0, false, false);
+    CHECK_FALSE(state.startEnabled);
+    CHECK(state.startToolTip.contains(QStringLiteral("Import a raster")));
+
+    point.rasterColors = pci::RasterPointColorBinding{};
+    state = pci::rasterColorizeUiState(&point, 1, false, false);
+    CHECK(state.startEnabled);
+    CHECK(state.startText == QStringLiteral("Recolor from raster…"));
+    CHECK(state.revertVisible);
+    CHECK(state.revertEnabled);
+
+    state = pci::rasterColorizeUiState(&point, 1, true, false);
+    CHECK_FALSE(state.startEnabled);
+    CHECK(state.startText == QStringLiteral("Colorizing…"));
+    CHECK(state.revertEnabled);
+    CHECK(state.revertToolTip.contains(QStringLiteral("Cancel")));
+
+    state = pci::rasterColorizeUiState(&point, 1, true, true);
+    CHECK(state.startText == QStringLiteral("Applying raster colors…"));
+    CHECK_FALSE(state.revertEnabled);
+    CHECK(state.revertToolTip.contains(QStringLiteral("commit")));
 }
 
 TEST_CASE("viewport settings preserve appearance and depth enhancement",

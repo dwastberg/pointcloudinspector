@@ -1,5 +1,6 @@
 #pragma once
 
+#include "foundation/SpatialReferenceComparator.h"
 #include "foundation/StrongId.h"
 #include "pointcloud/PointClassificationFilter.h"
 #include "pointcloud/PointColorMapCatalog.h"
@@ -36,12 +37,25 @@ enum class SceneLayerKind : std::uint8_t {
     Raster = 3
 };
 
+struct RasterPointColorBinding {
+    std::optional<SceneLayerId> rasterLayerId;
+    RasterSourceId rasterSourceId;
+    std::filesystem::path rasterSourcePath;
+    std::shared_ptr<const RasterDecodeParameters> decode;
+    std::uint64_t rasterRenderGeneration = 0;
+    std::uint64_t coloredPoints = 0;
+    std::uint64_t uncoloredPoints = 0;
+    std::optional<SpatialReferenceRelation> crsRelation;
+};
+
 struct PointCloudLayer {
     PointCloudLayerId id;
     PointCloudScenePtr scene;
     bool visible = true;
     PointColorMode colorMode;
     PointClassificationFilter classificationFilter;
+    std::optional<RasterPointColorBinding> rasterColors;
+    std::uint64_t colorGeneration = 0;
 };
 
 struct VectorLayer {
@@ -65,6 +79,8 @@ struct PointCloudLayerState {
     PointCloudScenePtr scene;
     PointColorMode colorMode;
     PointClassificationFilter classificationFilter;
+    std::optional<RasterPointColorBinding> rasterColors;
+    std::uint64_t colorGeneration = 0;
 };
 
 struct VectorLayerState {
@@ -99,6 +115,10 @@ struct SceneDocumentMetrics {
     std::uint64_t persistentIndexBytes = 0;
     std::uint64_t localPersistentSources = 0;
     std::uint64_t reusedPersistentSources = 0;
+    std::uint64_t activeColorTableBytes = 0;
+    std::uint64_t flatDisplacedColorBytes = 0;
+    std::uint64_t retainedSourceRootBytes = 0;
+    std::uint64_t retainedColoredRootBytes = 0;
     PointMemoryBudgetMetrics memoryBudget;
     TaskSchedulerMetrics scheduler;
 };
@@ -147,6 +167,11 @@ public:
     [[nodiscard]] bool
     setLayerClassificationFilter(PointCloudLayerId id,
                                  PointClassificationFilter filter);
+    [[nodiscard]] bool setLayerRasterColors(PointCloudLayerId id,
+                                            RasterPointColorBinding binding);
+    [[nodiscard]] bool clearLayerRasterColors(PointCloudLayerId id);
+    [[nodiscard]] std::vector<PointCloudLayerId>
+    clearRasterColorsForLayer(SceneLayerId rasterLayerId);
     [[nodiscard]] std::uint64_t revision() const noexcept;
     [[nodiscard]] std::uint64_t pointRevision() const noexcept;
     [[nodiscard]] std::uint64_t vectorRevision() const noexcept;

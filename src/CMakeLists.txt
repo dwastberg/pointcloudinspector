@@ -5,6 +5,7 @@ add_library(pcinspector_foundation STATIC
         foundation/Bounds3d.h
         foundation/CheckedArithmetic.h
         foundation/Hash.h
+        foundation/SpatialReferenceComparator.h
         foundation/StrongId.h
         foundation/Vec3d.h)
 add_library(pcinspector::foundation ALIAS pcinspector_foundation)
@@ -98,6 +99,8 @@ target_link_libraries(pcinspector_pointcloud PUBLIC
 add_library(pcinspector_raster STATIC
         raster/RasterLayer.cpp
         raster/RasterLayer.h
+        raster/RasterPointSampler.cpp
+        raster/RasterPointSampler.h
         raster/RasterTileCache.cpp
         raster/RasterTileCache.h
         raster/RasterTileSource.h)
@@ -157,6 +160,17 @@ add_library(pcinspector_scene STATIC
         scene/SceneDocumentSnapshot.h
         scene/PointCloudNode.cpp
         scene/PointCloudNode.h
+        scene/RasterColorizeRunStore.cpp
+        scene/RasterColorizeRunStore.h
+        scene/RasterColorizedPointSource.cpp
+        scene/RasterColorizedPointSource.h
+        scene/RasterLayerDisplay.cpp
+        scene/RasterLayerDisplay.h
+        scene/RasterPointColorize.cpp
+        scene/RasterPointColorize.h
+        scene/RasterPointColorizer.cpp
+        scene/RasterPointColorizer.h
+        scene/SceneBlock.h
         scene/PointMemoryBudget.cpp
         scene/PointMemoryBudget.h
         scene/PointCloudScene.cpp
@@ -319,6 +333,8 @@ add_library(pcinspector_import_gdal STATIC
         import/gdal/GdalRasterDataset.h
         import/gdal/GdalRasterLoader.cpp
         import/gdal/GdalRasterLoader.h
+        import/gdal/GdalSpatialReferenceComparator.cpp
+        import/gdal/GdalSpatialReferenceComparator.h
         import/gdal/GdalRasterSource.cpp
         import/gdal/GdalRasterSource.h)
 add_library(pcinspector::import_gdal ALIAS pcinspector_import_gdal)
@@ -351,6 +367,8 @@ add_library(pcinspector_import_async STATIC
         import/LoadJobRow.h
         import/LoadJobMechanics.h
         import/PointCloudImport.h
+        import/PointCloudColorizeController.cpp
+        import/PointCloudColorizeController.h
         import/PointCloudLoadController.cpp
         import/PointCloudLoadController.h
         import/RasterImport.h
@@ -374,6 +392,8 @@ set_target_properties(pcinspector_import_async PROPERTIES AUTOMOC ON)
 pci_configure_target(pcinspector_import_async)
 
 add_library(pcinspector_app_ui STATIC
+        app/ColorizeFromRasterDialog.cpp
+        app/ColorizeFromRasterDialog.h
         app/ClassificationFilterDialog.cpp
         app/ClassificationFilterDialog.h
         app/DiagnosticsDock.cpp
@@ -395,6 +415,8 @@ add_library(pcinspector_app_ui STATIC
         app/PerformanceSettingsStore.h
         app/QualificationReporter.cpp
         app/QualificationReporter.h
+        app/RasterColorizeUiState.cpp
+        app/RasterColorizeUiState.h
         app/RenderDiagnosticsFormatter.cpp
         app/RenderDiagnosticsFormatter.h
         app/SceneLayersDock.cpp

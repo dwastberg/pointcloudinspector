@@ -111,6 +111,10 @@ QVariant SceneLayerListModel::data(const QModelIndex &index,
         return row.warning;
     case ShowAnywayRole:
         return row.allowShowAnyway && !row.visible;
+    case RasterColorsRole:
+        return row.rasterColors;
+    case RasterColorSourceRole:
+        return row.rasterColorSource;
     default:
         return {};
     }
@@ -155,6 +159,8 @@ QHash<int, QByteArray> SceneLayerListModel::roleNames() const
     roles.insert(WarningRole, "warning");
     roles.insert(ShowAnywayRole, "showAnyway");
     roles.insert(SourceToolTipRole, "sourceToolTip");
+    roles.insert(RasterColorsRole, "rasterColors");
+    roles.insert(RasterColorSourceRole, "rasterColorSource");
     return roles;
 }
 
@@ -191,13 +197,34 @@ SceneLayerListModel::project(const SceneDocumentSnapshot &snapshot)
     for (const SceneLayer &sceneLayer : snapshot.layers) {
         if (const auto *point =
                 std::get_if<PointCloudLayerState>(&sceneLayer.payload)) {
-            const PointCloudLayer layer{.id = sceneLayer.id,
-                                        .scene = point->scene,
-                                        .visible = sceneLayer.visible,
-                                        .colorMode = point->colorMode,
-                                        .classificationFilter =
-                                            point->classificationFilter};
+            const PointCloudLayer layer{
+                .id = sceneLayer.id,
+                .scene = point->scene,
+                .visible = sceneLayer.visible,
+                .colorMode = point->colorMode,
+                .classificationFilter = point->classificationFilter,
+                .rasterColors = point->rasterColors,
+                .colorGeneration = point->colorGeneration};
             const std::uint64_t resident = layer.scene->totalPointCount();
+            const QString pointSource =
+                pathToQString(layer.scene->metadata().sourcePath);
+            QString rasterColorSource;
+            QString toolTip = pointSource;
+            if (layer.rasterColors) {
+                rasterColorSource =
+                    layer.rasterColors->rasterSourcePath.empty()
+                        ? QStringLiteral("Raster source")
+                        : displayPathName(layer.rasterColors->rasterSourcePath);
+                if (!toolTip.isEmpty()) {
+                    toolTip += QChar::LineFeed;
+                }
+                toolTip +=
+                    QStringLiteral("Raster colors: %1 · %2")
+                        .arg(rasterColorSource)
+                        .arg(layer.rasterColors->rasterLayerId
+                                 ? QStringLiteral("linked")
+                                 : QStringLiteral("source layer removed"));
+            }
             result.push_back({
                 .id = sceneLayer.id,
                 .kind = SceneLayerKind::PointCloud,
@@ -205,8 +232,10 @@ SceneLayerListModel::project(const SceneDocumentSnapshot &snapshot)
                 .summary = compactCount(
                     resident > 0 ? resident
                                  : layer.scene->metadata().sourcePointCount),
-                .toolTip = pathToQString(layer.scene->metadata().sourcePath),
+                .toolTip = std::move(toolTip),
+                .rasterColorSource = std::move(rasterColorSource),
                 .visible = sceneLayer.visible,
+                .rasterColors = layer.rasterColors.has_value(),
             });
         } else if (const auto *vector =
                        std::get_if<VectorLayerState>(&sceneLayer.payload)) {
@@ -222,7 +251,9 @@ SceneLayerListModel::project(const SceneDocumentSnapshot &snapshot)
                     compactCount(layer.data ? layer.data->featureCount : 0),
                 .toolTip = layer.data ? pathToQString(layer.data->sourcePath)
                                       : QString{},
+                .rasterColorSource = {},
                 .visible = sceneLayer.visible,
+                .rasterColors = false,
                 .warning = layer.data && (layer.data->extentDisjointXY ||
                                           layer.data->crsMismatch),
                 .allowShowAnyway = layer.data && layer.data->extentDisjointXY,
@@ -244,7 +275,9 @@ SceneLayerListModel::project(const SceneDocumentSnapshot &snapshot)
                 .summary = rasterSummary(layer),
                 .toolTip =
                     metadata ? pathToQString(metadata->sourcePath) : QString{},
+                .rasterColorSource = {},
                 .visible = sceneLayer.visible,
+                .rasterColors = false,
                 // A source without adequate overviews is reported rather than
                 // compensated for; generating them is the user's job.
                 .warning =

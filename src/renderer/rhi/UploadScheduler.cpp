@@ -261,6 +261,18 @@ void UploadScheduler::invalidateNode(const PointCloudLayerId layerId,
     }
 }
 
+void UploadScheduler::invalidateLayer(const PointCloudLayerId layerId)
+{
+    for (auto current = buffers_.begin(); current != buffers_.end();) {
+        if (current->first.layerId == layerId) {
+            const auto victim = current++;
+            erase(victim, false);
+        } else {
+            ++current;
+        }
+    }
+}
+
 void UploadScheduler::retainLayers(
     const std::span<const PointCloudLayerId> layers)
 {

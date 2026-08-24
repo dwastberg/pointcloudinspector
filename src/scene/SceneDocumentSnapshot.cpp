@@ -112,6 +112,8 @@ std::vector<PointCloudLayer> SceneDocumentSnapshot::pointLayers() const
                 .visible = layer.visible,
                 .colorMode = point->colorMode,
                 .classificationFilter = point->classificationFilter,
+                .rasterColors = point->rasterColors,
+                .colorGeneration = point->colorGeneration,
             });
         }
     }
@@ -161,6 +163,8 @@ SceneDocumentSnapshot::layer(const PointCloudLayerId id) const
         .visible = found->visible,
         .colorMode = point->colorMode,
         .classificationFilter = point->classificationFilter,
+        .rasterColors = point->rasterColors,
+        .colorGeneration = point->colorGeneration,
     };
 }
 

@@ -3,6 +3,8 @@
 #include "import/gdal/GdalRasterLoader.h"
 #include "import/gdal/GdalRasterSource.h"
 #include "import/gdal/GdalRuntime.h"
+#include "import/gdal/GdalSpatialReferenceComparator.h"
+#include "raster/RasterPointSampler.h"
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -267,6 +269,100 @@ TEST_CASE("raster tile reads are 1:1 windows with a replicated gutter",
     CHECK(source->readCount() == 3);
 }
 
+TEST_CASE("detached raster readers do not consume display handles or counters",
+          "[component][gdal][colorize]")
+{
+    const pci::RasterLayerDataPtr data = load(fixtures().rgb);
+    const auto *display =
+        dynamic_cast<const pci::GdalRasterSource *>(data->source.get());
+    REQUIRE(display != nullptr);
+    const pci::RasterTileSourcePtr detached = data->source->detachedReader(2);
+    REQUIRE(detached != nullptr);
+    const auto *detachedGdal =
+        dynamic_cast<const pci::GdalRasterSource *>(detached.get());
+    REQUIRE(detachedGdal != nullptr);
+
+    const pci::RasterTileRequest request{
+        .key = {0, 0, 0},
+        .renderGeneration = 7,
+        .decode = std::make_shared<const pci::RasterDecodeParameters>(
+            data->metadata().defaultDisplay),
+    };
+    const std::uint64_t displayBefore = display->readCount();
+    const pci::RasterTileData detachedTile = detached->readTile(request, {});
+    CHECK(display->readCount() == displayBefore);
+    CHECK(detachedGdal->readCount() == 3);
+
+    const pci::RasterTileData displayTile = data->source->readTile(request, {});
+    CHECK(displayTile.validWidth == detachedTile.validWidth);
+    CHECK(displayTile.validHeight == detachedTile.validHeight);
+    CHECK(displayTile.rgba == detachedTile.rgba);
+    CHECK(display->readCount() == displayBefore + 3);
+}
+
+TEST_CASE("point-aligned GDAL colors match analytic raster sampling",
+          "[component][gdal][colorize]")
+{
+    const pci::RasterLayerDataPtr data = load(fixtures().pointAligned);
+    const auto placement =
+        pci::RasterInversePlacement::forMetadata(data->metadata());
+    REQUIRE(placement.has_value());
+    const pci::RasterTileData tile = readFirstTile(*data);
+    constexpr std::array<std::array<std::uint32_t, 2>, 8> pixels{{
+        {0, 0},
+        {5, 3},
+        {10, 2},
+        {15, 8},
+        {20, 12},
+        {25, 20},
+        {30, 25},
+        {31, 31},
+    }};
+    for (const auto pixel : pixels) {
+        const double worldX = 995.0 + pixel[0] + 0.5;
+        const double worldY = 2015.0 - pixel[1] - 0.5;
+        const auto address = placement->addressOf(worldX, worldY);
+        REQUIRE(address.has_value());
+        REQUIRE(address->tile == pci::RasterTileKey{0, 0, 0});
+        CHECK(address->innerX == pixel[0]);
+        CHECK(address->innerY == pixel[1]);
+        const std::uint32_t byteOffset =
+            ((pixel[1] + pci::rasterTileGutter) * pci::rasterStoredTilePixels +
+             pixel[0] + pci::rasterTileGutter) *
+            4U;
+        const std::uint32_t expected =
+            0xff000000U | (64U << 16U) | (pixel[1] * 8U << 8U) | pixel[0] * 8U;
+        CHECK(pci::rasterTexelToPointColor(tile, byteOffset) == expected);
+    }
+}
+
+TEST_CASE("point-aligned partial alpha round-trips displayed premultiplication",
+          "[component][gdal][colorize]")
+{
+    const pci::RasterLayerDataPtr data =
+        load(fixtures().pointAlignedPartialAlpha);
+    const pci::RasterTileData tile = readFirstTile(*data);
+    for (const std::array<std::uint32_t, 2> pixel :
+         {std::array<std::uint32_t, 2>{5, 10},
+          std::array<std::uint32_t, 2>{17, 17},
+          std::array<std::uint32_t, 2>{29, 25}}) {
+        const std::uint32_t byteOffset =
+            ((pixel[1] + pci::rasterTileGutter) * pci::rasterStoredTilePixels +
+             pixel[0] + pci::rasterTileGutter) *
+            4U;
+        const auto color = pci::rasterTexelToPointColor(tile, byteOffset);
+        REQUIRE(color.has_value());
+        CHECK((*color >> 24U) == 0xffU);
+        // Integer premultiply/unpremultiply may differ by a small rounding
+        // amount; it must remain close to the unassociated source channels.
+        CHECK(std::abs(static_cast<int>(*color & 0xffU) -
+                       static_cast<int>(pixel[0] * 8U)) <= 3);
+        CHECK(std::abs(static_cast<int>((*color >> 8U) & 0xffU) -
+                       static_cast<int>(pixel[1] * 8U)) <= 3);
+        CHECK(std::abs(static_cast<int>((*color >> 16U) & 0xffU) - 64) <= 3);
+    }
+}
+
 TEST_CASE("raster tile reads compose transparency before premultiplying",
           "[component][gdal]")
 {
@@ -441,6 +537,24 @@ TEST_CASE("raster import compares CRS without reprojecting",
     elsewhere.maximum = {10.0, 10.0, 0.0};
     request.targetExtent = elsewhere;
     CHECK(loader.inspect(request).data->metadata().extentDisjointXY);
+}
+
+TEST_CASE("GDAL spatial reference comparator distinguishes all relations",
+          "[component][gdal][colorize][crs]")
+{
+    const pci::GdalSpatialReferenceComparator comparator;
+    const std::string projected =
+        load(fixtures().rgb)->metadata().spatialReferenceWkt;
+    const std::string geographic =
+        R"(GEOGCS["WGS 84",DATUM["WGS_1984",SPHEROID["WGS 84",6378137,298.257223563]],PRIMEM["Greenwich",0],UNIT["degree",0.0174532925199433]])";
+    CHECK(comparator.compare(projected, projected) ==
+          pci::SpatialReferenceRelation::Same);
+    CHECK(comparator.compare(projected, geographic) ==
+          pci::SpatialReferenceRelation::Different);
+    CHECK(comparator.compare(projected, {}) ==
+          pci::SpatialReferenceRelation::Unknown);
+    CHECK(comparator.compare(projected, "not a WKT") ==
+          pci::SpatialReferenceRelation::Unknown);
 }
 
 } // namespace

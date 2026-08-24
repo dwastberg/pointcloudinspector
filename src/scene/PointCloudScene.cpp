@@ -2,6 +2,7 @@
 
 #include "foundation/CheckedArithmetic.h"
 #include "scene/BlockPartitioner.h"
+#include "scene/RasterColorizedPointSource.h"
 
 #include <algorithm>
 #include <array>
@@ -37,11 +38,15 @@ struct PointCloudScene::Storage {
         PointMemoryBudget::ReservationPtr residentMemoryReservation;
         std::uint64_t nextBlockId = 1;
         Bounds3d blockBounds;
+        std::shared_ptr<std::vector<std::uint32_t>> displacedColors;
+        PointMemoryBudget::ReservationPtr colorReservation;
     };
 
     struct HierarchicalSceneStorage {
         PointCloudDataSourcePtr dataSource;
         PointCloudNodePayloadPtr rootPayload;
+        PointCloudDataSourcePtr baseDataSource;
+        PointCloudNodePayloadPtr sourceRootPayload;
         std::uint64_t rootPayloadRevision = 0;
         PointCloudSourceId sourceId;
         HierarchyResidencyCoordinatorPtr standaloneResidencyCoordinator;
@@ -104,6 +109,97 @@ maximumRootBytesPerPoint(const PointCloudNodePayload &payload) noexcept
     return result;
 }
 
+PointCloudNodePayloadPtr
+reduceRootPayloadToCount(const PointCloudNodePayload &source,
+                         const std::uint64_t targetPoints)
+{
+    const std::uint64_t totalPoints = pointCloudNodePayloadPoints(source);
+    if (targetPoints == 0 || targetPoints > totalPoints) {
+        throw std::invalid_argument("invalid hierarchy root point count");
+    }
+
+    std::vector<std::uint64_t> selected;
+    selected.reserve(static_cast<std::size_t>(targetPoints));
+    for (std::uint64_t rank = 0; rank < targetPoints; ++rank) {
+        const long double position = static_cast<long double>(rank) *
+                                     static_cast<long double>(totalPoints) /
+                                     static_cast<long double>(targetPoints);
+        selected.push_back(static_cast<std::uint64_t>(position));
+    }
+
+    std::vector<std::size_t> selectedPerBlock(source.blocks.size(), 0);
+    std::size_t blockIndex = 0;
+    std::uint64_t blockBegin = 0;
+    for (const std::uint64_t point : selected) {
+        while (blockIndex < source.blocks.size()) {
+            const PointBlockPtr &block = source.blocks[blockIndex];
+            const std::uint64_t blockEnd =
+                blockBegin + (block ? block->points.size() : 0);
+            if (point < blockEnd) {
+                ++selectedPerBlock[blockIndex];
+                break;
+            }
+            blockBegin = blockEnd;
+            ++blockIndex;
+        }
+    }
+
+    std::vector<std::shared_ptr<PointBlock>> mutableBlocks(
+        source.blocks.size());
+    for (std::size_t index = 0; index < source.blocks.size(); ++index) {
+        const PointBlockPtr &block = source.blocks[index];
+        if (!block || selectedPerBlock[index] == 0) {
+            continue;
+        }
+        auto reduced = std::make_shared<PointBlock>();
+        reduced->origin = block->origin;
+        reduced->scale = block->scale;
+        // Retain conservative source-block bounds. Root sampling must not make
+        // later detail regions disappear from frustum selection.
+        reduced->bounds = block->bounds;
+        reduced->intensityMinimum = block->intensityMinimum;
+        reduced->intensityMaximum = block->intensityMaximum;
+        reduced->points.reserve(selectedPerBlock[index]);
+        if (block->attributes.size() == block->points.size()) {
+            reduced->attributes.reserve(selectedPerBlock[index]);
+        }
+        mutableBlocks[index] = std::move(reduced);
+    }
+
+    blockIndex = 0;
+    blockBegin = 0;
+    for (const std::uint64_t point : selected) {
+        while (blockIndex < source.blocks.size()) {
+            const PointBlockPtr &block = source.blocks[blockIndex];
+            const std::uint64_t blockEnd =
+                blockBegin + (block ? block->points.size() : 0);
+            if (point < blockEnd) {
+                const std::size_t local =
+                    static_cast<std::size_t>(point - blockBegin);
+                mutableBlocks[blockIndex]->points.push_back(
+                    block->points[local]);
+                if (block->attributes.size() == block->points.size()) {
+                    mutableBlocks[blockIndex]->attributes.push_back(
+                        block->attributes[local]);
+                }
+                break;
+            }
+            blockBegin = blockEnd;
+            ++blockIndex;
+        }
+    }
+
+    auto result = std::make_shared<PointCloudNodePayload>();
+    result->nodeId = rootPointCloudNode;
+    result->sourcePointCount = source.sourcePointCount;
+    for (std::shared_ptr<PointBlock> &block : mutableBlocks) {
+        if (block) {
+            result->blocks.push_back(std::move(block));
+        }
+    }
+    return result;
+}
+
 PointCloudNodePayloadPtr reducedRootPayload(const PointCloudNodePayload &source,
                                             const std::uint64_t maximumBytes)
 {
@@ -118,85 +214,8 @@ PointCloudNodePayloadPtr reducedRootPayload(const PointCloudNodePayload &source,
         std::min(totalPoints, maximumBytes / bytesPerPoint);
 
     while (targetPoints > 0) {
-        std::vector<std::uint64_t> selected;
-        selected.reserve(static_cast<std::size_t>(targetPoints));
-        for (std::uint64_t rank = 0; rank < targetPoints; ++rank) {
-            const long double position = static_cast<long double>(rank) *
-                                         static_cast<long double>(totalPoints) /
-                                         static_cast<long double>(targetPoints);
-            selected.push_back(static_cast<std::uint64_t>(position));
-        }
-
-        std::vector<std::size_t> selectedPerBlock(source.blocks.size(), 0);
-        std::size_t blockIndex = 0;
-        std::uint64_t blockBegin = 0;
-        for (const std::uint64_t point : selected) {
-            while (blockIndex < source.blocks.size()) {
-                const PointBlockPtr &block = source.blocks[blockIndex];
-                const std::uint64_t blockEnd =
-                    blockBegin + (block ? block->points.size() : 0);
-                if (point < blockEnd) {
-                    ++selectedPerBlock[blockIndex];
-                    break;
-                }
-                blockBegin = blockEnd;
-                ++blockIndex;
-            }
-        }
-
-        std::vector<std::shared_ptr<PointBlock>> mutableBlocks(
-            source.blocks.size());
-        for (std::size_t index = 0; index < source.blocks.size(); ++index) {
-            const PointBlockPtr &block = source.blocks[index];
-            if (!block || selectedPerBlock[index] == 0) {
-                continue;
-            }
-            auto reduced = std::make_shared<PointBlock>();
-            reduced->origin = block->origin;
-            reduced->scale = block->scale;
-            // Retain conservative source-block bounds. Root sampling must not
-            // make later detail regions disappear from frustum selection.
-            reduced->bounds = block->bounds;
-            reduced->intensityMinimum = block->intensityMinimum;
-            reduced->intensityMaximum = block->intensityMaximum;
-            reduced->points.reserve(selectedPerBlock[index]);
-            if (block->attributes.size() == block->points.size()) {
-                reduced->attributes.reserve(selectedPerBlock[index]);
-            }
-            mutableBlocks[index] = std::move(reduced);
-        }
-
-        blockIndex = 0;
-        blockBegin = 0;
-        for (const std::uint64_t point : selected) {
-            while (blockIndex < source.blocks.size()) {
-                const PointBlockPtr &block = source.blocks[blockIndex];
-                const std::uint64_t blockEnd =
-                    blockBegin + (block ? block->points.size() : 0);
-                if (point < blockEnd) {
-                    const std::size_t local =
-                        static_cast<std::size_t>(point - blockBegin);
-                    mutableBlocks[blockIndex]->points.push_back(
-                        block->points[local]);
-                    if (block->attributes.size() == block->points.size()) {
-                        mutableBlocks[blockIndex]->attributes.push_back(
-                            block->attributes[local]);
-                    }
-                    break;
-                }
-                blockBegin = blockEnd;
-                ++blockIndex;
-            }
-        }
-
-        auto result = std::make_shared<PointCloudNodePayload>();
-        result->nodeId = rootPointCloudNode;
-        result->sourcePointCount = source.sourcePointCount;
-        for (std::shared_ptr<PointBlock> &block : mutableBlocks) {
-            if (block) {
-                result->blocks.push_back(std::move(block));
-            }
-        }
+        PointCloudNodePayloadPtr result =
+            reduceRootPayloadToCount(source, targetPoints);
         const std::uint64_t actualBytes = pointCloudNodePayloadBytes(*result);
         if (actualBytes <= maximumBytes) {
             return result;
@@ -208,6 +227,50 @@ PointCloudNodePayloadPtr reducedRootPayload(const PointCloudNodePayload &source,
     }
     throw std::length_error(
         "hierarchy root budget cannot retain one preview point");
+}
+
+struct ReducedRootPair {
+    PointCloudNodePayloadPtr source;
+    PointCloudNodePayloadPtr colored;
+    std::uint64_t bytes = 0;
+};
+
+ReducedRootPair reducedRootPayloadPair(const PointCloudNodePayload &source,
+                                       const PointCloudNodePayload &colored,
+                                       const std::uint64_t maximumBytes)
+{
+    const std::uint64_t totalPoints = pointCloudNodePayloadPoints(source);
+    if (totalPoints == 0 ||
+        totalPoints != pointCloudNodePayloadPoints(colored)) {
+        throw std::logic_error(
+            "paired hierarchy roots have different point counts");
+    }
+    const std::uint64_t bytesPerPoint = saturatingAdd(
+        maximumRootBytesPerPoint(source), maximumRootBytesPerPoint(colored));
+    if (bytesPerPoint == 0 || maximumBytes < bytesPerPoint) {
+        throw std::length_error(
+            "hierarchy root budget cannot retain one colored preview point");
+    }
+    std::uint64_t targetPoints =
+        std::min(totalPoints, maximumBytes / bytesPerPoint);
+    while (targetPoints > 0) {
+        ReducedRootPair result{
+            .source = reduceRootPayloadToCount(source, targetPoints),
+            .colored = reduceRootPayloadToCount(colored, targetPoints),
+        };
+        result.bytes =
+            saturatingAdd(pointCloudNodePayloadBytes(*result.source),
+                          pointCloudNodePayloadBytes(*result.colored));
+        if (result.bytes <= maximumBytes) {
+            return result;
+        }
+        const std::uint64_t excess = result.bytes - maximumBytes;
+        const std::uint64_t reduction = std::max<std::uint64_t>(
+            1, (excess + bytesPerPoint - 1) / bytesPerPoint);
+        targetPoints = reduction >= targetPoints ? 0 : targetPoints - reduction;
+    }
+    throw std::length_error(
+        "hierarchy root budget cannot retain one colored preview point");
 }
 
 PointCloudSourceId nextPointCloudSourceId()
@@ -656,13 +719,18 @@ std::optional<PointCloudFullDetailInfo> PointCloudScene::fullDetailInfo() const
 
 std::uint64_t PointCloudScene::minimumRootPayloadBytes() const
 {
-    const auto *hierarchical =
-        std::get_if<Storage::HierarchicalSceneStorage>(&storage_->value);
-    if (!hierarchical) {
+    if (!hierarchical()) {
         return 0;
     }
     const std::scoped_lock lock(mutex_);
-    return maximumRootBytesPerPoint(*hierarchical->rootPayload);
+    const auto &storage =
+        std::get<Storage::HierarchicalSceneStorage>(storage_->value);
+    const std::uint64_t active = maximumRootBytesPerPoint(*storage.rootPayload);
+    return storage.sourceRootPayload
+               ? saturatingAdd(
+                     active,
+                     maximumRootBytesPerPoint(*storage.sourceRootPayload))
+               : active;
 }
 
 std::uint64_t
@@ -672,36 +740,62 @@ PointCloudScene::limitRootPayloadBytes(const std::uint64_t maximumBytes)
         return 0;
     }
     PointCloudNodePayloadPtr currentRoot;
+    PointCloudNodePayloadPtr currentSourceRoot;
     {
         const std::scoped_lock lock(mutex_);
-        currentRoot =
-            std::get<Storage::HierarchicalSceneStorage>(storage_->value)
-                .rootPayload;
+        const auto &storage =
+            std::get<Storage::HierarchicalSceneStorage>(storage_->value);
+        currentRoot = storage.rootPayload;
+        currentSourceRoot = storage.sourceRootPayload;
     }
-    const std::uint64_t currentBytes = pointCloudNodePayloadBytes(*currentRoot);
+    const std::uint64_t currentBytes = saturatingAdd(
+        pointCloudNodePayloadBytes(*currentRoot),
+        currentSourceRoot ? pointCloudNodePayloadBytes(*currentSourceRoot) : 0);
     if (currentBytes <= maximumBytes) {
         return currentBytes;
     }
-    PointCloudNodePayloadPtr reduced =
-        reducedRootPayload(*currentRoot, maximumBytes);
-    const std::uint64_t reducedBytes = pointCloudNodePayloadBytes(*reduced);
+    PointCloudNodePayloadPtr reduced;
+    PointCloudNodePayloadPtr reducedSource;
+    std::uint64_t reducedBytes = 0;
+    if (currentSourceRoot) {
+        ReducedRootPair pair = reducedRootPayloadPair(
+            *currentSourceRoot, *currentRoot, maximumBytes);
+        reducedSource = std::move(pair.source);
+        reduced = std::move(pair.colored);
+        reducedBytes = pair.bytes;
+    } else {
+        reduced = reducedRootPayload(*currentRoot, maximumBytes);
+        reducedBytes = pointCloudNodePayloadBytes(*reduced);
+    }
 
     DecodedPageCachePtr cache;
     HierarchyResidencyCoordinator::ParticipantPtr participant;
+    PointCloudSourceId sourceId;
     {
         const std::scoped_lock lock(mutex_);
         auto &hierarchicalStorage =
             std::get<Storage::HierarchicalSceneStorage>(storage_->value);
+        if (hierarchicalStorage.rootPayload != currentRoot ||
+            hierarchicalStorage.sourceRootPayload != currentSourceRoot) {
+            return saturatingAdd(
+                pointCloudNodePayloadBytes(*hierarchicalStorage.rootPayload),
+                hierarchicalStorage.sourceRootPayload
+                    ? pointCloudNodePayloadBytes(
+                          *hierarchicalStorage.sourceRootPayload)
+                    : 0);
+        }
         hierarchicalStorage.rootPayload = reduced;
+        if (currentSourceRoot) {
+            hierarchicalStorage.sourceRootPayload = reducedSource;
+        }
         ++hierarchicalStorage.rootPayloadRevision;
         cache = hierarchicalStorage.decodedPageCache;
         participant = hierarchicalStorage.residencyParticipant;
+        sourceId = hierarchicalStorage.sourceId;
         ++revision_;
     }
     participant->setRetainedRootBytes(reducedBytes);
     const std::array protectedRoot{rootPointCloudNode};
-    const auto sourceId =
-        std::get<Storage::HierarchicalSceneStorage>(storage_->value).sourceId;
     cache->insert(sourceId, std::move(reduced), protectedRoot);
     notifyInvalidated();
     return reducedBytes;
@@ -1004,6 +1098,381 @@ PointCloudStorageMetrics PointCloudScene::storageMetrics() const
         std::get_if<Storage::HierarchicalSceneStorage>(&storage_->value);
     return hierarchical ? hierarchical->dataSource->storageMetrics()
                         : PointCloudStorageMetrics{};
+}
+
+RasterPointColorMetrics PointCloudScene::rasterPointColorMetrics() const
+{
+    const std::scoped_lock lock(mutex_);
+    RasterPointColorMetrics result;
+    if (const auto *flat =
+            std::get_if<Storage::FlatSceneStorage>(&storage_->value)) {
+        if (flat->displacedColors) {
+            result.flatDisplacedColorBytes =
+                flat->displacedColors->capacity() * sizeof(std::uint32_t);
+        }
+        return result;
+    }
+    const auto &hierarchy =
+        std::get<Storage::HierarchicalSceneStorage>(storage_->value);
+    if (const auto decorated =
+            std::dynamic_pointer_cast<RasterColorizedPointSource>(
+                hierarchy.dataSource)) {
+        result.activeColorTableBytes = decorated->byteSize();
+    }
+    if (hierarchy.sourceRootPayload) {
+        result.retainedSourceRootBytes =
+            pointCloudNodePayloadBytes(*hierarchy.sourceRootPayload);
+        result.retainedColoredRootBytes =
+            pointCloudNodePayloadBytes(*hierarchy.rootPayload);
+    }
+    return result;
+}
+
+bool PointCloudScene::hasRasterPointColors() const
+{
+    const std::scoped_lock lock(mutex_);
+    if (const auto *flat =
+            std::get_if<Storage::FlatSceneStorage>(&storage_->value)) {
+        return flat->displacedColors != nullptr;
+    }
+    const auto &hierarchy =
+        std::get<Storage::HierarchicalSceneStorage>(storage_->value);
+    return hierarchy.baseDataSource != nullptr;
+}
+
+RasterPointColorizeAvailability
+PointCloudScene::rasterPointColorizeAvailability() const
+{
+    const std::scoped_lock lock(mutex_);
+    if (const auto *flat =
+            std::get_if<Storage::FlatSceneStorage>(&storage_->value)) {
+        static_cast<void>(flat);
+        return loadingComplete_ ? RasterPointColorizeAvailability::Ready
+                                : RasterPointColorizeAvailability::Loading;
+    }
+    const auto &hierarchy =
+        std::get<Storage::HierarchicalSceneStorage>(storage_->value);
+    const PointCloudDataSourcePtr &base = hierarchy.baseDataSource
+                                              ? hierarchy.baseDataSource
+                                              : hierarchy.dataSource;
+    const PointCloudStorageMetrics metrics = base->storageMetrics();
+    if (metrics.localPersistent && !metrics.committed) {
+        return RasterPointColorizeAvailability::Loading;
+    }
+    return base->storedNodeIndex()
+               ? RasterPointColorizeAvailability::Ready
+               : RasterPointColorizeAvailability::Unsupported;
+}
+
+std::optional<RasterColorizeTargetSnapshot>
+PointCloudScene::rasterPointColorizeTarget() const
+{
+    const std::scoped_lock lock(mutex_);
+    const PointCloudScenePtr self =
+        std::const_pointer_cast<PointCloudScene>(shared_from_this());
+    if (const auto *flat =
+            std::get_if<Storage::FlatSceneStorage>(&storage_->value)) {
+        if (!loadingComplete_) {
+            return std::nullopt;
+        }
+        return RasterColorizeTargetSnapshot{
+            .scene = self,
+            .data =
+                RasterColorizeFlatTarget{
+                    .blocks = flat->blocks,
+                    .sourceColors = flat->displacedColors,
+                },
+        };
+    }
+    const auto &hierarchy =
+        std::get<Storage::HierarchicalSceneStorage>(storage_->value);
+    PointCloudDataSourcePtr base = hierarchy.baseDataSource
+                                       ? hierarchy.baseDataSource
+                                       : hierarchy.dataSource;
+    const auto nodes = base->storedNodeIndex();
+    if (!nodes) {
+        return std::nullopt;
+    }
+    return RasterColorizeTargetSnapshot{
+        .scene = self,
+        .data =
+            RasterColorizeHierarchicalTarget{
+                .baseSource = std::move(base),
+                .storedNodes = *nodes,
+                .sourceRootPayload = hierarchy.sourceRootPayload
+                                         ? hierarchy.sourceRootPayload
+                                         : hierarchy.rootPayload,
+                .expectedRootPayloadRevision = hierarchy.rootPayloadRevision,
+            },
+    };
+}
+
+RasterPointColorApplyOutcome
+PointCloudScene::applyRasterPointColors(RasterColorizePreparedPtr prepared)
+{
+    if (!prepared || prepared->scene.get() != this) {
+        throw std::invalid_argument(
+            "Raster color transaction targets a different scene");
+    }
+
+    if (auto *hierarchyPrepared =
+            std::get_if<RasterColorizePreparedHierarchy>(&prepared->data)) {
+        if (!hierarchyPrepared->baseSource ||
+            !hierarchyPrepared->colorizedSource ||
+            !hierarchyPrepared->sourceRootPayload ||
+            !hierarchyPrepared->coloredRootPayload ||
+            hierarchyPrepared->sourceRootPayload->nodeId !=
+                rootPointCloudNode ||
+            hierarchyPrepared->coloredRootPayload->nodeId !=
+                rootPointCloudNode) {
+            throw std::invalid_argument(
+                "Hierarchical raster color transaction is incomplete");
+        }
+        {
+            const std::scoped_lock lock(mutex_);
+            auto *hierarchy = std::get_if<Storage::HierarchicalSceneStorage>(
+                &storage_->value);
+            if (!hierarchy) {
+                return RasterPointColorApplyOutcome::Stale;
+            }
+            const PointCloudDataSourcePtr &base =
+                hierarchy->baseDataSource ? hierarchy->baseDataSource
+                                          : hierarchy->dataSource;
+            if (base != hierarchyPrepared->baseSource ||
+                hierarchy->rootPayloadRevision !=
+                    hierarchyPrepared->expectedRootPayloadRevision ||
+                (hierarchy->sourceRootPayload ? hierarchy->sourceRootPayload
+                                              : hierarchy->rootPayload) !=
+                    hierarchyPrepared->sourceRootPayload) {
+                return RasterPointColorApplyOutcome::Stale;
+            }
+        }
+
+        cancelAndWaitForDecodes();
+        DecodedPageCachePtr cache;
+        PointCloudSourceId sourceId;
+        HierarchyResidencyCoordinator::ParticipantPtr participant;
+        std::vector<PointCloudNodeId> pins;
+        {
+            const std::scoped_lock lock(mutex_);
+            auto &hierarchy =
+                std::get<Storage::HierarchicalSceneStorage>(storage_->value);
+            const PointCloudDataSourcePtr &base = hierarchy.baseDataSource
+                                                      ? hierarchy.baseDataSource
+                                                      : hierarchy.dataSource;
+            if (base != hierarchyPrepared->baseSource ||
+                hierarchy.rootPayloadRevision !=
+                    hierarchyPrepared->expectedRootPayloadRevision) {
+                hierarchy.suspendPinnedResubmission = false;
+                return RasterPointColorApplyOutcome::Stale;
+            }
+            cache = hierarchy.decodedPageCache;
+            sourceId = hierarchy.sourceId;
+            participant = hierarchy.residencyParticipant;
+            pins.reserve(hierarchy.pinnedNodes.size() + 1);
+            pins.push_back(rootPointCloudNode);
+            pins.insert(pins.end(),
+                        hierarchy.pinnedNodes.begin(),
+                        hierarchy.pinnedNodes.end());
+        }
+        cache->replaceSourceRoot(
+            sourceId, hierarchyPrepared->coloredRootPayload, pins);
+
+        PointMemoryBudget::ReservationPtr staging;
+        std::uint64_t retainedBytes = 0;
+        {
+            const std::scoped_lock lock(mutex_);
+            auto &hierarchy =
+                std::get<Storage::HierarchicalSceneStorage>(storage_->value);
+            if (!hierarchy.baseDataSource) {
+                hierarchy.baseDataSource = hierarchyPrepared->baseSource;
+                hierarchy.sourceRootPayload =
+                    hierarchyPrepared->sourceRootPayload;
+            }
+            hierarchy.dataSource =
+                std::move(hierarchyPrepared->colorizedSource);
+            hierarchy.rootPayload =
+                std::move(hierarchyPrepared->coloredRootPayload);
+            staging = std::move(hierarchyPrepared->rootStagingReservation);
+            retainedBytes =
+                pointCloudNodePayloadBytes(*hierarchy.sourceRootPayload) +
+                pointCloudNodePayloadBytes(*hierarchy.rootPayload);
+            ++hierarchy.rootPayloadRevision;
+            hierarchy.suspendPinnedResubmission = false;
+            ++revision_;
+        }
+        participant->setRetainedRootBytes(retainedBytes);
+        staging.reset();
+        syncHierarchyResidencyBudget();
+        requestNodes({});
+        notifyInvalidated();
+        return RasterPointColorApplyOutcome::Applied;
+    }
+
+    auto *flatPrepared =
+        std::get_if<RasterColorizePreparedFlat>(&prepared->data);
+    if (!flatPrepared || flatPrepared->expectedBlocks.size() !=
+                             flatPrepared->replacementBlocks.size()) {
+        throw std::invalid_argument(
+            "Flat raster color transaction is incomplete");
+    }
+    PointMemoryBudget::ReservationPtr staging;
+    {
+        const std::scoped_lock lock(mutex_);
+        auto *flat = std::get_if<Storage::FlatSceneStorage>(&storage_->value);
+        if (!flat ||
+            flat->blocks.size() != flatPrepared->expectedBlocks.size()) {
+            return RasterPointColorApplyOutcome::Stale;
+        }
+        const bool firstBake = !flat->displacedColors;
+        if (firstBake !=
+            static_cast<bool>(flatPrepared->displacedSourceColors)) {
+            return RasterPointColorApplyOutcome::Stale;
+        }
+        for (std::size_t index = 0; index < flat->blocks.size(); ++index) {
+            const SceneBlock &live = flat->blocks[index];
+            const RasterColorizeFlatBlockIdentity &expected =
+                flatPrepared->expectedBlocks[index];
+            const auto captured = expected.block.lock();
+            if (!captured || captured != live.block || expected.id != live.id ||
+                flatPrepared->replacementBlocks[index].id != live.id ||
+                expected.pointCount != live.block->points.size() ||
+                expected.attributeCount != live.block->attributes.size()) {
+                return RasterPointColorApplyOutcome::Stale;
+            }
+        }
+        flat->blocks.swap(flatPrepared->replacementBlocks);
+        if (firstBake) {
+            flat->displacedColors =
+                std::move(flatPrepared->displacedSourceColors);
+            flat->colorReservation = std::move(flatPrepared->colorReservation);
+        }
+        staging = std::move(flatPrepared->stagingReservation);
+        ++revision_;
+    }
+    // The swap left the old live blocks in the prepared vector. Destroy them
+    // while the staging reservation still accounts for the replacement set.
+    flatPrepared->replacementBlocks.clear();
+    staging.reset();
+    notifyInvalidated();
+    return RasterPointColorApplyOutcome::Applied;
+}
+
+RasterPointColorApplyOutcome PointCloudScene::revertPointColors()
+{
+    if (hierarchical()) {
+        PointCloudDataSourcePtr base;
+        PointCloudNodePayloadPtr sourceRoot;
+        DecodedPageCachePtr cache;
+        HierarchyResidencyCoordinator::ParticipantPtr participant;
+        PointCloudSourceId sourceId;
+        std::vector<PointCloudNodeId> pins;
+        {
+            const std::scoped_lock lock(mutex_);
+            auto &hierarchy =
+                std::get<Storage::HierarchicalSceneStorage>(storage_->value);
+            if (!hierarchy.baseDataSource || !hierarchy.sourceRootPayload) {
+                return RasterPointColorApplyOutcome::Stale;
+            }
+        }
+        cancelAndWaitForDecodes();
+        {
+            const std::scoped_lock lock(mutex_);
+            auto &hierarchy =
+                std::get<Storage::HierarchicalSceneStorage>(storage_->value);
+            if (!hierarchy.baseDataSource || !hierarchy.sourceRootPayload) {
+                hierarchy.suspendPinnedResubmission = false;
+                return RasterPointColorApplyOutcome::Stale;
+            }
+            base = hierarchy.baseDataSource;
+            sourceRoot = hierarchy.sourceRootPayload;
+            cache = hierarchy.decodedPageCache;
+            participant = hierarchy.residencyParticipant;
+            sourceId = hierarchy.sourceId;
+            pins.push_back(rootPointCloudNode);
+            pins.insert(pins.end(),
+                        hierarchy.pinnedNodes.begin(),
+                        hierarchy.pinnedNodes.end());
+        }
+        cache->replaceSourceRoot(sourceId, sourceRoot, pins);
+        std::uint64_t retainedBytes = 0;
+        {
+            const std::scoped_lock lock(mutex_);
+            auto &hierarchy =
+                std::get<Storage::HierarchicalSceneStorage>(storage_->value);
+            hierarchy.dataSource = std::move(base);
+            hierarchy.rootPayload = std::move(sourceRoot);
+            hierarchy.baseDataSource.reset();
+            hierarchy.sourceRootPayload.reset();
+            ++hierarchy.rootPayloadRevision;
+            hierarchy.suspendPinnedResubmission = false;
+            retainedBytes = pointCloudNodePayloadBytes(*hierarchy.rootPayload);
+            ++revision_;
+        }
+        participant->setRetainedRootBytes(retainedBytes);
+        syncHierarchyResidencyBudget();
+        requestNodes({});
+        notifyInvalidated();
+        return RasterPointColorApplyOutcome::Applied;
+    }
+
+    std::vector<SceneBlock> replacements;
+    std::shared_ptr<std::vector<std::uint32_t>> displaced;
+    PointMemoryBudget::ReservationPtr staging;
+    {
+        const std::scoped_lock lock(mutex_);
+        auto &flat = std::get<Storage::FlatSceneStorage>(storage_->value);
+        if (!flat.displacedColors) {
+            return RasterPointColorApplyOutcome::Stale;
+        }
+        if (!flat.colorReservation) {
+            throw std::logic_error(
+                "Retained source colors have no point-memory reservation");
+        }
+        const auto reserved =
+            flat.colorReservation->tryReserveSibling(flat.residentBytes);
+        if (!reserved) {
+            return RasterPointColorApplyOutcome::Stale;
+        }
+        staging = *reserved;
+        displaced = flat.displacedColors;
+        replacements.reserve(flat.blocks.size());
+        std::uint64_t offset = 0;
+        for (const SceneBlock &entry : flat.blocks) {
+            auto block = std::make_shared<PointBlock>(*entry.block);
+            if (offset > displaced->size() ||
+                block->points.size() > displaced->size() - offset) {
+                throw std::logic_error(
+                    "Retained source colors do not match flat blocks");
+            }
+            for (GpuPoint &point : block->points) {
+                point.rgba = (*displaced)[offset++];
+            }
+            replacements.push_back({.id = entry.id, .block = std::move(block)});
+        }
+        if (offset != displaced->size()) {
+            throw std::logic_error(
+                "Retained source colors contain trailing entries");
+        }
+    }
+    {
+        const std::scoped_lock lock(mutex_);
+        auto &flat = std::get<Storage::FlatSceneStorage>(storage_->value);
+        if (flat.displacedColors != displaced ||
+            flat.blocks.size() != replacements.size()) {
+            return RasterPointColorApplyOutcome::Stale;
+        }
+        flat.blocks.swap(replacements);
+        flat.displacedColors.reset();
+        flat.colorReservation.reset();
+        ++revision_;
+    }
+    // `replacements` owns the displaced colored blocks after the swap. Keep
+    // their transient allowance until those payloads have been destroyed.
+    replacements.clear();
+    staging.reset();
+    notifyInvalidated();
+    return RasterPointColorApplyOutcome::Applied;
 }
 
 void PointCloudScene::submitDecodeLocked(const PointCloudNodeId id)
