@@ -242,7 +242,8 @@ reserve(const pci::PointMemoryBudgetPtr &budget, const std::uint64_t bytes)
                                           const std::uint8_t y)
 {
     return 0xff000000U | (9U << 16U) |
-           (static_cast<std::uint32_t>(bias + y) << 8U) | bias + x;
+           (static_cast<std::uint32_t>(bias + y) << 8U) |
+           static_cast<std::uint32_t>(bias + x);
 }
 
 [[nodiscard]] std::optional<pci::RasterColorizePreparedPtr>
