@@ -1229,10 +1229,10 @@ TEST_CASE("selected layers expose a point-cloud statistics dialog",
 
     QAction *statisticsAction = window.findChild<QAction *>(
         QStringLiteral("pointCloudStatisticsAction"));
-    QAction *colorizeAction = window.findChild<QAction *>(
-        QStringLiteral("colorizeFromRasterAction"));
-    QAction *revertColorsAction = window.findChild<QAction *>(
-        QStringLiteral("revertRasterColorsAction"));
+    QAction *colorizeAction =
+        window.findChild<QAction *>(QStringLiteral("colorizeFromRasterAction"));
+    QAction *revertColorsAction =
+        window.findChild<QAction *>(QStringLiteral("revertRasterColorsAction"));
     QMenu *layerMenu = window.findChild<QMenu *>(QStringLiteral("layerMenu"));
     REQUIRE(statisticsAction != nullptr);
     REQUIRE(colorizeAction != nullptr);
