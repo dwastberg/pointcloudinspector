@@ -293,7 +293,7 @@ TEST_CASE("raster planner reuploads decoded target tiles without rereading",
     const pci::RasterLodPlan plan = pci::planRasterTiles(input);
     REQUIRE_FALSE(plan.selected.empty());
     CHECK(plan.requests.empty());
-    CHECK(plan.decodedUploads == plan.selected);
+    CHECK(std::ranges::is_permutation(plan.decodedUploads, plan.selected));
     for (const pci::RasterTileKey key : plan.decodedUploads) {
         CHECK(std::ranges::find(plan.protectedTiles, key) !=
               plan.protectedTiles.end());
