@@ -597,9 +597,9 @@ std::optional<RasterColorizePreparedPtr> colorizePointCloudFromRaster(
         } else {
             auto &flatTarget =
                 std::get<RasterColorizeFlatTarget>(preflight.target.data);
-            RasterColorizePreparedFlat flat;
-            flat.expectedBlocks.reserve(flatTarget.blocks.size());
-            flat.replacementBlocks.reserve(flatTarget.blocks.size());
+            RasterColorizePreparedFlat preparedFlat;
+            preparedFlat.expectedBlocks.reserve(flatTarget.blocks.size());
+            preparedFlat.replacementBlocks.reserve(flatTarget.blocks.size());
             std::uint64_t actualStagingBytes = 0;
             for (std::size_t index = 0; index < flatTarget.blocks.size();
                  ++index) {
@@ -612,13 +612,13 @@ std::optional<RasterColorizePreparedPtr> colorizePointCloudFromRaster(
                         colors[range.offset + point];
                 }
                 actualStagingBytes += blockBytes(*replacement);
-                flat.expectedBlocks.push_back({
+                preparedFlat.expectedBlocks.push_back({
                     .id = entry.id,
                     .block = entry.block,
                     .pointCount = entry.block->points.size(),
                     .attributeCount = entry.block->attributes.size(),
                 });
-                flat.replacementBlocks.push_back(
+                preparedFlat.replacementBlocks.push_back(
                     {.id = entry.id, .block = std::move(replacement)});
             }
             if (!flatStagingReservation ||
@@ -627,7 +627,7 @@ std::optional<RasterColorizePreparedPtr> colorizePointCloudFromRaster(
                     RasterColorizeFailureCode::InsufficientPointMemory,
                     "Point-memory budget cannot stage replacement blocks");
             }
-            flat.stagingReservation = std::move(flatStagingReservation);
+            preparedFlat.stagingReservation = std::move(flatStagingReservation);
             if (!flatTarget.sourceColors) {
                 for (std::size_t index = 0; index < flatTarget.blocks.size();
                      ++index) {
@@ -639,16 +639,16 @@ std::optional<RasterColorizePreparedPtr> colorizePointCloudFromRaster(
                             entry.block->points[point].rgba;
                     }
                 }
-                flat.displacedSourceColors =
+                preparedFlat.displacedSourceColors =
                     std::make_shared<std::vector<std::uint32_t>>(
                         std::move(colors));
-                flat.colorReservation = std::move(colorReservation);
+                preparedFlat.colorReservation = std::move(colorReservation);
             } else {
                 colors.clear();
                 colors.shrink_to_fit();
                 colorReservation.reset();
             }
-            prepared->data = std::move(flat);
+            prepared->data = std::move(preparedFlat);
         }
         return prepared;
     } catch (const RasterReadCancelled &) {
