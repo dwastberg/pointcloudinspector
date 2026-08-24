@@ -5,6 +5,7 @@
 #include <deque>
 #include <limits>
 #include <optional>
+#include <unordered_set>
 
 namespace pci {
 namespace {
@@ -157,8 +158,9 @@ visibleCells(const RasterLayerMetadata &metadata,
     for (std::uint32_t y = beginY; y <= endY; ++y) {
         for (std::uint32_t x = beginX; x <= endX; ++x) {
             const RasterTileKey key{levelIndex, x, y};
-            if (convexPolygonOverlapsRect(polygon,
-                                          tileBaseRect(metadata, key))) {
+            const PixelRect cell = tileBaseRect(metadata, key);
+            if (cell.overlaps(bounds) &&
+                convexPolygonOverlapsRect(polygon, cell)) {
                 if (cells.size() >= maximumCells) {
                     if (truncated) {
                         *truncated = true;
@@ -282,9 +284,11 @@ RasterLodPlan planRasterTiles(const RasterLodPlanInput &input)
     const auto coarsest =
         static_cast<std::uint32_t>(metadata.levels.size() - 1);
 
-    // Refinement starts from the coarsest backed level; nothing walks from a
-    // dataset-wide root, so the work is proportional to visible coverage.
+    // Generated coverage pyramids end in a single-tile logical root. Sources
+    // created before that facility may still begin with several coarse cells,
+    // so enumeration remains bounded by the effective cap.
     std::deque<RasterTileKey> pending;
+    std::unordered_set<RasterTileKey> seenCells;
     bool coarseTruncated = false;
     for (const RasterTileKey key : visibleCells(metadata,
                                                 coarsest,
@@ -293,11 +297,16 @@ RasterLodPlan planRasterTiles(const RasterLodPlanInput &input)
                                                 effectiveCap,
                                                 &coarseTruncated)) {
         pending.push_back(key);
+        seenCells.insert(key);
     }
     if (coarseTruncated) {
         plan.capacityLimited = true;
-        plan.insufficientOverviews = true;
+        plan.coverageIncomplete = true;
     }
+
+    const auto unavailable = [&input](const RasterTileKey key) {
+        return input.unavailable && input.unavailable(key);
+    };
 
     const auto desiredLevel = [&](const RasterTileKey key) {
         const PixelRect cell = tileBaseRect(metadata, key);
@@ -345,7 +354,16 @@ RasterLodPlan planRasterTiles(const RasterLodPlanInput &input)
         pending.pop_front();
 
         const std::uint32_t desired = desiredLevel(key);
-        if (desired >= key.levelIndex || key.levelIndex == 0) {
+        const bool keyUnavailable = unavailable(key);
+        if (key.levelIndex == 0) {
+            if (keyUnavailable) {
+                plan.coverageIncomplete = true;
+            } else {
+                plan.selected.push_back(key);
+            }
+            continue;
+        }
+        if (desired >= key.levelIndex && !keyUnavailable) {
             plan.selected.push_back(key);
             continue;
         }
@@ -353,24 +371,45 @@ RasterLodPlan planRasterTiles(const RasterLodPlanInput &input)
         const std::size_t occupied = plan.selected.size() + pending.size();
         const std::size_t remaining =
             occupied < effectiveCap ? effectiveCap - occupied : 0;
-        bool childrenTruncated = false;
-        const std::vector<RasterTileKey> children =
+        bool enumerationTruncated = false;
+        const std::vector<RasterTileKey> candidates =
             visibleCells(metadata,
                          key.levelIndex - 1,
                          polygon,
                          tileBaseRect(metadata, key),
-                         remaining,
-                         &childrenTruncated);
+                         effectiveCap,
+                         &enumerationTruncated);
+        std::vector<RasterTileKey> children;
+        children.reserve(candidates.size());
+        for (const RasterTileKey child : candidates) {
+            if (!seenCells.contains(child)) {
+                children.push_back(child);
+            }
+        }
+        const bool childrenTruncated =
+            enumerationTruncated || children.size() > remaining;
         // Arbitrarily large gaps between overviews can turn one parent into
         // millions of child candidates, so the count is checked before the
         // children are materialized into the plan.
         if (childrenTruncated) {
             plan.capacityLimited = true;
-            plan.insufficientOverviews = true;
-            plan.selected.push_back(key);
+            if (keyUnavailable) {
+                // A failed generated tile cannot be retained as the coverage
+                // fallback. Use every child that fits and report the genuine
+                // coverage gap; subsequent frames can continue below them.
+                plan.coverageIncomplete = true;
+                children.resize(std::min(children.size(), remaining));
+                for (const RasterTileKey child : children) {
+                    seenCells.insert(child);
+                    pending.push_back(child);
+                }
+            } else {
+                plan.selected.push_back(key);
+            }
             continue;
         }
         for (const RasterTileKey child : children) {
+            seenCells.insert(child);
             pending.push_back(child);
         }
     }
@@ -378,6 +417,11 @@ RasterLodPlan planRasterTiles(const RasterLodPlanInput &input)
     std::ranges::sort(plan.selected);
     plan.selected.erase(std::ranges::unique(plan.selected).begin(),
                         plan.selected.end());
+    if (plan.selected.size() > effectiveCap) {
+        plan.capacityLimited = true;
+        plan.coverageIncomplete = true;
+        plan.selected.resize(effectiveCap);
+    }
 
     const auto resident = [&input](const RasterTileKey key) {
         return input.gpuResident && input.gpuResident(key);
@@ -389,6 +433,10 @@ RasterLodPlan planRasterTiles(const RasterLodPlanInput &input)
     // A resident coarser ancestor stays visible until every selected child is
     // ready, which is what prevents holes and flashes during refinement.
     for (const RasterTileKey key : plan.selected) {
+        if (unavailable(key)) {
+            plan.coverageIncomplete = true;
+            continue;
+        }
         if (resident(key)) {
             plan.draw.push_back(key);
             plan.protectedTiles.push_back(key);
@@ -412,6 +460,9 @@ RasterLodPlan planRasterTiles(const RasterLodPlanInput &input)
             bool found = false;
             for (const RasterTileKey candidate :
                  visibleCells(metadata, level, polygon, cell, effectiveCap)) {
+                if (unavailable(candidate)) {
+                    continue;
+                }
                 if (resident(candidate)) {
                     plan.draw.push_back(candidate);
                     plan.protectedTiles.push_back(candidate);
@@ -474,10 +525,6 @@ RasterLodPlan planRasterTiles(const RasterLodPlanInput &input)
     std::ranges::sort(plan.requests, priority);
     std::ranges::sort(plan.decodedUploads, priority);
 
-    if (plan.selected.size() > effectiveCap) {
-        plan.capacityLimited = true;
-        plan.selected.resize(effectiveCap);
-    }
     return plan;
 }
 

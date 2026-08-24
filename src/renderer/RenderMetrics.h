@@ -47,6 +47,7 @@ struct RenderMetrics {
     std::size_t rasterPendingReads = 0;
     std::uint32_t rasterFinestLevel = 0;
     std::uint32_t rasterCoarsestLevel = 0;
+    bool rasterCoverageIncomplete = false;
     std::uint64_t submittedFrameCount = 0;
     std::uint64_t sourcePoints = 0;
     std::uint64_t retainedFlatPoints = 0;

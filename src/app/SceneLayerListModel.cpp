@@ -278,8 +278,8 @@ SceneLayerListModel::project(const SceneDocumentSnapshot &snapshot)
                 .rasterColorSource = {},
                 .visible = sceneLayer.visible,
                 .rasterColors = false,
-                // A source without adequate overviews is reported rather than
-                // compensated for; generating them is the user's job.
+                // Source overview quality still merits a warning even though
+                // an in-memory coverage preview keeps the whole raster shown.
                 .warning =
                     metadata != nullptr &&
                     (metadata->extentDisjointXY || metadata->crsMismatch ||

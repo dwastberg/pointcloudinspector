@@ -24,6 +24,12 @@ struct GdalRasterFixturePaths {
     std::filesystem::path masked;
     std::filesystem::path gray;
     std::filesystem::path palette;
+    // 512-square, base-only fixtures used to exercise generated coverage
+    // resampling for continuous, categorical, mask, and nodata semantics.
+    std::filesystem::path coverageContinuous;
+    std::filesystem::path coverageCategorical;
+    std::filesystem::path coverageMasked;
+    std::filesystem::path coverageNodata;
     // Float32 terrain with a nodata value and a nodata region at one edge.
     std::filesystem::path terrain;
     // UInt16 occupying only part of the 0-65535 domain.

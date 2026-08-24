@@ -130,9 +130,19 @@ QualificationReporter::write(const QString &status,
             {QStringLiteral("bands"), static_cast<qint64>(raster.bands.size())},
             {QStringLiteral("levels"),
              static_cast<qint64>(raster.levels.size())},
+            {QStringLiteral("backed_levels"),
+             static_cast<qint64>(rasterBackedLevelCount(raster.levels))},
+            {QStringLiteral("generated_levels"),
+             static_cast<qint64>(rasterGeneratedLevelCount(raster.levels))},
             {QStringLiteral("coarsest_level_width"),
              static_cast<qint64>(
                  raster.levels.empty() ? 0U : raster.levels.back().width)},
+            {QStringLiteral("coarsest_backed_level_width"),
+             static_cast<qint64>(
+                 rasterBackedLevelCount(raster.levels) == 0
+                     ? 0U
+                     : raster.levels[rasterBackedLevelCount(raster.levels) - 1]
+                           .width)},
             {QStringLiteral("insufficient_overviews"),
              raster.insufficientOverviews},
             {QStringLiteral("crs_missing"), raster.crsMissing},
@@ -264,6 +274,8 @@ QualificationReporter::write(const QString &status,
          static_cast<qint64>(metrics.rasterFinestLevel)},
         {QStringLiteral("raster_coarsest_level"),
          static_cast<qint64>(metrics.rasterCoarsestLevel)},
+        {QStringLiteral("raster_coverage_incomplete"),
+         metrics.rasterCoverageIncomplete},
         {QStringLiteral("sources"), sources},
         {QStringLiteral("layers"), layers},
         {QStringLiteral("raster_layers"), rasterLayers},

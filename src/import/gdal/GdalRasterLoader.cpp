@@ -745,6 +745,12 @@ GdalRasterLoader::inspect(const RasterImportRequest &request) const
                                                           request.stopToken,
                                                           sampleReadCount_);
 
+    // Keep inspection and range sampling on physically backed GDAL levels.
+    // The logical coverage pyramid is metadata-only here; its pixels are read
+    // asynchronously by the normal tile streamer when the viewport needs them.
+    appendGeneratedRasterCoverageLevels(
+        metadata.levels, metadata.width, metadata.height);
+
     if (!rasterLevelTableValid(
             metadata.levels, metadata.width, metadata.height)) {
         throw RasterImportError("Raster has no common readable band level");

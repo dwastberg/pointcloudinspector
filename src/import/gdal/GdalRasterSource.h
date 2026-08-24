@@ -46,8 +46,10 @@ struct RasterBandSelection {
 // Defined in the implementation so no GDAL type reaches this header.
 struct GdalRasterHandlePool;
 
-// Owns the read-only handle pool and performs windowed 1:1 tile reads. It is
-// the only place that turns GDAL bands into premultiplied RGBA.
+// Owns the read-only handle pool and performs windowed tile reads. Backed
+// levels are 1:1; logical coverage levels are resampled into the same bounded
+// output buffer. It is the only place that turns GDAL bands into premultiplied
+// RGBA.
 class GdalRasterSource final : public RasterTileSource {
 public:
     GdalRasterSource(std::filesystem::path sourcePath,

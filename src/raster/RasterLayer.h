@@ -27,9 +27,9 @@ inline constexpr std::uint32_t rasterStoredTilePixels =
 static_assert(rasterStoredTilePixels == 258);
 
 // Above this base-image size, a decimating read of the base band is no longer
-// bounded and only an explicitly backed overview may be used. Phase 1's
-// one-shot static texture and inspection-time sampling may decimate the base
-// band below this threshold; runtime tile reads never do, at any size.
+// bounded and only an explicitly backed overview may be used for inspection
+// sampling. Runtime backed-level tiles remain 1:1; generated coverage tiles
+// perform bounded, on-demand decimation into one fixed-size tile buffer.
 inline constexpr std::uint64_t rasterBoundedBaseReadPixels = 64ULL << 20;
 
 // A level at or under this size covers the whole raster in at most 16x16
@@ -68,6 +68,11 @@ struct RasterBandRef {
     bool operator==(const RasterBandRef &) const = default;
 };
 
+enum class RasterLevelKind : std::uint8_t {
+    Backed,
+    GeneratedCoverage,
+};
+
 // One entry of the inspected level table. Entry 0 is the full-resolution band;
 // later entries are ordered from finer to coarser resolution. A level index
 // never implies a power-of-two reduction: the measured base-pixels-per-texel
@@ -80,6 +85,10 @@ struct RasterLevel {
     std::uint8_t channelCount = 0;
     std::array<RasterBandRef, 4> rgbaBands{};
     std::optional<RasterBandRef> maskBand;
+    // Backed levels name dimensions physically exposed by GDAL. Generated
+    // coverage levels are logical, read-only levels resampled on demand from
+    // the coarsest backed level; they are never written to the source.
+    RasterLevelKind kind = RasterLevelKind::Backed;
     bool operator==(const RasterLevel &) const = default;
 };
 
@@ -151,14 +160,26 @@ struct RasterLayerStyle {
 
 // True when the source has no level coarse enough to show the whole raster
 // without reading an unreasonable number of native-resolution tiles, and its
-// base is too large to be worth covering that way. Such a source is admitted
-// as metadata, renders whatever its level table supports, and warns that
-// overviews are missing rather than pretending the display is complete.
+// base is too large to be worth covering that way. Such a source is admitted,
+// receives an automatic in-memory coverage pyramid, and warns that real source
+// overviews would make zoomed-out navigation faster and sharper.
 //
 // Everything renders through the tiled path now, so this is a display-quality
 // warning rather than a decision between two read strategies.
 [[nodiscard]] bool
 rasterRequiresTiledRendering(const RasterLayerMetadata &metadata) noexcept;
+
+// Appends a halving pyramid below the coarsest backed level until the final
+// level fits in one stored tile. Existing backed levels are never changed and
+// repeated calls are idempotent.
+void appendGeneratedRasterCoverageLevels(std::vector<RasterLevel> &levels,
+                                         std::uint32_t baseWidth,
+                                         std::uint32_t baseHeight);
+
+[[nodiscard]] std::size_t
+rasterBackedLevelCount(std::span<const RasterLevel> levels) noexcept;
+[[nodiscard]] std::size_t
+rasterGeneratedLevelCount(std::span<const RasterLevel> levels) noexcept;
 
 [[nodiscard]] RasterLayerStyle
 defaultRasterLayerStyle(const RasterLayerMetadata &metadata);

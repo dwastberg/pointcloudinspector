@@ -180,6 +180,7 @@ TEST_CASE("raster planner honours the smaller of the two caps",
     const pci::RasterLodPlan plannerLimited = pci::planRasterTiles(input);
     CHECK(plannerLimited.selected.size() <= 4);
     CHECK(plannerLimited.capacityLimited);
+    CHECK_FALSE(plannerLimited.coverageIncomplete);
 
     // Driving the other limit below the first must bind just as tightly: the
     // two are independent ceilings and the planner always takes the smaller.
@@ -188,6 +189,7 @@ TEST_CASE("raster planner honours the smaller of the two caps",
     const pci::RasterLodPlan budgetLimited = pci::planRasterTiles(input);
     CHECK(budgetLimited.selected.size() <= 4);
     CHECK(budgetLimited.capacityLimited);
+    CHECK_FALSE(budgetLimited.coverageIncomplete);
 
     input.maximumSelectedTiles = 512;
     input.gpuCapacityTiles = 512;
@@ -418,7 +420,79 @@ TEST_CASE("raster planner bounds enumeration across an enormous overview gap",
     const pci::RasterLodPlan plan = pci::planRasterTiles(input);
     CHECK(plan.selected.size() <= 4);
     CHECK(plan.capacityLimited);
-    CHECK(plan.insufficientOverviews);
+    // The cap prevents refinement, but retaining the one-cell root still
+    // covers the complete raster footprint.
+    CHECK_FALSE(plan.coverageIncomplete);
+}
+
+TEST_CASE("raster generated root keeps a 10k raster fully covered",
+          "[renderer][raster][lod][coverage]")
+{
+    pci::RasterLayerMetadata metadata;
+    metadata.width = 10000;
+    metadata.height = 10000;
+    metadata.geoTransform = {0.0, 1.0, 0.0, 0.0, 0.0, -1.0};
+    metadata.bounds = *pci::rasterPixelEdgeBounds(
+        metadata.geoTransform, metadata.width, metadata.height);
+    metadata.levels = {makeLevel(10000, 10000, 10000, 10000)};
+    pci::appendGeneratedRasterCoverageLevels(
+        metadata.levels, metadata.width, metadata.height);
+
+    pci::RasterLayer layer;
+    layer.id = pci::SceneLayerId{8};
+    layer.data = std::make_shared<pci::RasterLayerData>(pci::RasterLayerData{
+        .sourceId = pci::nextRasterSourceId(),
+        .source = std::make_shared<PlannerRasterSource>(std::move(metadata)),
+    });
+
+    pci::RasterLodPlanInput input =
+        planInput(layer, overheadCamera(10000.0, 5000.0, -5000.0));
+    input.maximumSelectedTiles = 188;
+    input.gpuCapacityTiles = 188;
+    const pci::RasterLodPlan plan = pci::planRasterTiles(input);
+
+    REQUIRE_FALSE(plan.selected.empty());
+    CHECK(plan.selected.size() <= 188);
+    CHECK_FALSE(plan.coverageIncomplete);
+    CHECK(plan.requests.front().levelIndex ==
+          layer.data->metadata().levels.size() - 1);
+
+    double coveredArea = 0.0;
+    for (const pci::RasterTileKey key : plan.selected) {
+        const pci::RasterBasePixelRect rect = pci::rasterTileBasePixelRect(
+            layer.data->metadata().levels[key.levelIndex], key, 10000, 10000);
+        coveredArea += (rect.maximumPixel - rect.minimumPixel) *
+                       (rect.maximumLine - rect.minimumLine);
+    }
+    CHECK(coveredArea == Catch::Approx(10000.0 * 10000.0));
+}
+
+TEST_CASE("raster planner bypasses a failed generated coverage tile",
+          "[renderer][raster][lod][failure]")
+{
+    pci::RasterLayer layer = plannerLayer();
+    pci::RasterLayerMetadata metadata = layer.data->metadata();
+    metadata.levels.resize(1);
+    pci::appendGeneratedRasterCoverageLevels(
+        metadata.levels, metadata.width, metadata.height);
+    layer.data = std::make_shared<pci::RasterLayerData>(pci::RasterLayerData{
+        .sourceId = pci::nextRasterSourceId(),
+        .source = std::make_shared<PlannerRasterSource>(std::move(metadata)),
+    });
+
+    const std::uint32_t root =
+        static_cast<std::uint32_t>(layer.data->metadata().levels.size() - 1);
+    pci::RasterLodPlanInput input = planInput(layer, overheadCamera(4000.0));
+    input.unavailable = [root](const pci::RasterTileKey key) {
+        return key.levelIndex == root;
+    };
+    const pci::RasterLodPlan plan = pci::planRasterTiles(input);
+
+    REQUIRE_FALSE(plan.selected.empty());
+    CHECK(std::ranges::none_of(plan.selected, [root](const auto key) {
+        return key.levelIndex == root;
+    }));
+    CHECK_FALSE(plan.coverageIncomplete);
 }
 
 TEST_CASE("raster planner clips a rotated footprint to its visible region",

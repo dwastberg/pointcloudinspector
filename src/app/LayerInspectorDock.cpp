@@ -1025,13 +1025,10 @@ void LayerInspectorDock::updateRasterProperties(const RasterLayer &raster)
             "scene.");
     }
     if (metadata.insufficientOverviews) {
-        // Reported rather than compensated for: generating overviews is the
-        // user's job, via gdaladdo or an equivalent. Display quality on a
-        // source without them is bounded by what the source provides.
         warnings << QStringLiteral(
-            "This raster has no overviews coarse enough for its size, so "
-            "zoomed-out views show only part of it. Run gdaladdo to add "
-            "them.");
+            "This raster has no source overviews coarse enough for efficient "
+            "zoomed-out display. An automatic low-resolution preview is "
+            "used; add source overviews for faster, sharper navigation.");
     }
     if (metadata.positionalBandFallback) {
         warnings << QStringLiteral(
@@ -1065,14 +1062,29 @@ void LayerInspectorDock::updateRasterProperties(const RasterLayer &raster)
                  0,
                  'g',
                  4));
-    if (metadata.levels.size() <= 1) {
-        rasterOverviewsValue_->setText(QStringLiteral("None"));
+    const std::size_t backedLevels = rasterBackedLevelCount(metadata.levels);
+    const std::size_t generatedLevels =
+        rasterGeneratedLevelCount(metadata.levels);
+    const QString automaticCoverage =
+        generatedLevels == 0 ? QString{}
+                             : QStringLiteral("automatic coverage %1 x %2")
+                                   .arg(metadata.levels.back().width)
+                                   .arg(metadata.levels.back().height);
+    if (backedLevels <= 1) {
+        rasterOverviewsValue_->setText(
+            automaticCoverage.isEmpty()
+                ? QStringLiteral("None")
+                : QStringLiteral("None · %1").arg(automaticCoverage));
     } else {
-        const RasterLevel &coarsest = metadata.levels.back();
-        rasterOverviewsValue_->setText(QStringLiteral("%1 · coarsest %2 x %3")
-                                           .arg(metadata.levels.size() - 1)
-                                           .arg(coarsest.width)
-                                           .arg(coarsest.height));
+        const RasterLevel &coarsestBacked = metadata.levels[backedLevels - 1];
+        QString text = QStringLiteral("%1 · coarsest source %2 x %3")
+                           .arg(backedLevels - 1)
+                           .arg(coarsestBacked.width)
+                           .arg(coarsestBacked.height);
+        if (!automaticCoverage.isEmpty()) {
+            text += QStringLiteral(" · %1").arg(automaticCoverage);
+        }
+        rasterOverviewsValue_->setText(text);
     }
     if (range) {
         // The provenance matters: a sampled range is an estimate, not the

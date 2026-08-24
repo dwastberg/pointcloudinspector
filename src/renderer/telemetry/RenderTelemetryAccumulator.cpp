@@ -193,6 +193,8 @@ RenderMetrics projectRenderMetrics(const RenderTelemetrySnapshot &telemetry)
         .rasterPendingReads = telemetry.residency.rasterPendingReads,
         .rasterFinestLevel = telemetry.residency.rasterFinestLevel,
         .rasterCoarsestLevel = telemetry.residency.rasterCoarsestLevel,
+        .rasterCoverageIncomplete =
+            telemetry.residency.rasterCoverageIncomplete,
         .submittedFrameCount = telemetry.frame.submittedFrameCount,
         .sourcePoints = telemetry.selection.sourcePoints,
         .retainedFlatPoints = telemetry.selection.retainedFlatPoints,

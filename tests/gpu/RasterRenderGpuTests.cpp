@@ -621,7 +621,8 @@ TEST_CASE("GPU GTI catalog covers from an overview then reaches native pixels",
     viewport->setRasterByteBudgets(cpuBudget, gpuBudget);
 
     // The north-west member is fixed at 512 pixels square with 2 m pixels.
-    // Start far enough away that only a real backed overview is appropriate.
+    // Start far enough away that only non-native overview/coverage detail is
+    // appropriate.
     const pci::Vec3d memberCenter{metadata.bounds.minimum[0] + 512.0,
                                   metadata.bounds.maximum[1] - 512.0,
                                   0.0};
@@ -817,6 +818,53 @@ TEST_CASE("GPU raster shows coarse coverage before native detail",
                countWhere(image, nearlyGreen) > 200;
     }));
     CHECK(source->reads.load() > 0);
+}
+
+TEST_CASE("GPU four 10k rasters show complete automatic previews",
+          "[gpu][raster][lod][coverage]")
+{
+    auto document = std::make_shared<pci::SceneDocument>();
+    const auto addQuadrant =
+        [&document](const double west, const double north, const Rgba color) {
+            pci::RasterLayerMetadata metadata = patternMetadata({10000});
+            metadata.geoTransform = {
+                west,
+                100.0 / metadata.width,
+                0.0,
+                north,
+                0.0,
+                -100.0 / metadata.height,
+            };
+            metadata.bounds = *pci::rasterPixelEdgeBounds(
+                metadata.geoTransform, metadata.width, metadata.height);
+            pci::appendGeneratedRasterCoverageLevels(
+                metadata.levels, metadata.width, metadata.height);
+            REQUIRE(metadata.levels.back().width <= pci::rasterTilePixels);
+            static_cast<void>(document->addRasterLayer(patternLayer(
+                std::move(metadata), [color](std::uint32_t, double, double) {
+                    return color;
+                })));
+        };
+    addQuadrant(-100.0, 100.0, {255, 0, 0});
+    addQuadrant(0.0, 100.0, {0, 255, 0});
+    addQuadrant(-100.0, 0.0, {0, 0, 255});
+    addQuadrant(0.0, 0.0, {255, 255, 0});
+
+    auto viewport = makeViewport();
+    viewport->setDocument(document->snapshot(), true);
+    viewport->setEyeDomeLightingEnabled(false);
+    viewport->setRasterByteBudgets(16ULL * 1024 * 1024, 8ULL * 1024 * 1024);
+    frameWholeScene(*viewport);
+
+    REQUIRE(renderUntil(*viewport, [](const QImage &image) {
+        return countWhere(image, nearlyRed) > 300 &&
+               countWhere(image, nearlyGreen) > 300 &&
+               countWhere(image, nearlyBlue) > 300 &&
+               countWhere(image, nearlyYellow) > 300;
+    }));
+    CHECK(pci::testAccess(*viewport).rasterDrawnTilesForTesting() >= 4);
+    CHECK(pci::testAccess(*viewport).rasterGpuBytesForTesting() <=
+          8ULL * 1024 * 1024);
 }
 
 TEST_CASE("GPU raster layers obey painter order and opacity",

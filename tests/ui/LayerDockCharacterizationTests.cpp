@@ -535,7 +535,8 @@ TEST_CASE("layer inspector warns when a raster needs tiled rendering",
         QStringLiteral("rasterShowAnywayButton"));
     REQUIRE(warning != nullptr);
     CHECK(warning->isVisibleTo(inspector.widget()));
-    CHECK(label->text().contains(QStringLiteral("gdaladdo")));
+    CHECK(label->text().contains(
+        QStringLiteral("automatic low-resolution preview")));
     // Overviews are a data problem, not a visibility one, so no Show anyway.
     CHECK_FALSE(showAnyway->isVisibleTo(warning));
 }

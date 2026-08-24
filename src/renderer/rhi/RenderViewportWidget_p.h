@@ -222,6 +222,7 @@ private:
     std::uint64_t rasterUploadedTiles_ = 0;
     std::uint32_t rasterFinestLevel_ = 0;
     std::uint32_t rasterCoarsestLevel_ = 0;
+    bool rasterCoverageIncomplete_ = false;
     EyeDomeLightingPass eyeDomeLightingPass_;
     PointPicker pointPicker_;
     MeasurementOverlay *measurementOverlay_ = nullptr;

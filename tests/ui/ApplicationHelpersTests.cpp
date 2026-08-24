@@ -195,7 +195,7 @@ TEST_CASE("render diagnostics report all three raster allocators",
         "(peak 5.0), GDAL block cache 12.0 MiB / 32.0 MiB")));
     CHECK(panel.contains(QStringLiteral(
         "Raster tiles: 26 drawn / 24 selected / 28 resident, 2 pending, "
-        "levels 1-3")));
+        "levels 1-3, coverage complete")));
     CHECK(panel.contains(QStringLiteral(
         "Raster reads: 40 requested, 32 completed, 5 cancelled, 1 failed, "
         "30 uploaded, 7 evictions")));

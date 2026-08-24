@@ -118,8 +118,8 @@ struct ChannelPlanes {
 };
 
 // A rectangular read: window dimensions in the source band, buffer dimensions
-// in the destination. They are equal for a 1:1 tile read and differ only for
-// phase 1's single bounded decimating read.
+// in the destination. They are equal for a backed tile and differ for a
+// generated coverage tile.
 struct ReadExtent {
     int sourceX = 0;
     int sourceY = 0;
@@ -127,7 +127,63 @@ struct ReadExtent {
     int sourceHeight = 0;
     int bufferWidth = 0;
     int bufferHeight = 0;
+    bool floatingWindow = false;
+    double floatingX = 0.0;
+    double floatingY = 0.0;
+    double floatingWidth = 0.0;
+    double floatingHeight = 0.0;
 };
+
+[[nodiscard]] GDALRasterBand *levelBand(GDALDataset &dataset,
+                                        const RasterBandRef &reference);
+
+[[nodiscard]] ReadExtent readExtentFor(GDALDataset &dataset,
+                                       const RasterLevel &level,
+                                       const TileWindow &window)
+{
+    ReadExtent extent{
+        .sourceX = window.readX,
+        .sourceY = window.readY,
+        .sourceWidth = window.readWidth,
+        .sourceHeight = window.readHeight,
+        .bufferWidth = window.readWidth,
+        .bufferHeight = window.readHeight,
+    };
+    if (level.kind != RasterLevelKind::GeneratedCoverage) {
+        return extent;
+    }
+
+    GDALRasterBand *backing = levelBand(dataset, level.rgbaBands[0]);
+    if (backing == nullptr || level.width == 0 || level.height == 0) {
+        throw RasterReadError("Generated raster coverage has no backing band");
+    }
+    const double scaleX =
+        static_cast<double>(backing->GetXSize()) / level.width;
+    const double scaleY =
+        static_cast<double>(backing->GetYSize()) / level.height;
+    extent.floatingWindow = true;
+    extent.floatingX = static_cast<double>(window.readX) * scaleX;
+    extent.floatingY = static_cast<double>(window.readY) * scaleY;
+    extent.floatingWidth = static_cast<double>(window.readWidth) * scaleX;
+    extent.floatingHeight = static_cast<double>(window.readHeight) * scaleY;
+    extent.sourceX = std::clamp(static_cast<int>(std::floor(extent.floatingX)),
+                                0,
+                                backing->GetXSize() - 1);
+    extent.sourceY = std::clamp(static_cast<int>(std::floor(extent.floatingY)),
+                                0,
+                                backing->GetYSize() - 1);
+    const int sourceRight = std::clamp(
+        static_cast<int>(std::ceil(extent.floatingX + extent.floatingWidth)),
+        extent.sourceX + 1,
+        backing->GetXSize());
+    const int sourceBottom = std::clamp(
+        static_cast<int>(std::ceil(extent.floatingY + extent.floatingHeight)),
+        extent.sourceY + 1,
+        backing->GetYSize());
+    extent.sourceWidth = sourceRight - extent.sourceX;
+    extent.sourceHeight = sourceBottom - extent.sourceY;
+    return extent;
+}
 
 [[nodiscard]] GDALRasterBand *levelBand(GDALDataset &dataset,
                                         const RasterBandRef &reference)
@@ -152,30 +208,46 @@ void readExtent(GDALRasterBand &band,
                 const GDALDataType type,
                 std::vector<Sample> &destination,
                 const std::stop_token &stop,
-                std::atomic<std::uint64_t> &readCount)
+                std::atomic<std::uint64_t> &readCount,
+                const GDALRIOResampleAlg resampling = GRIORA_NearestNeighbour)
 {
     destination.assign(static_cast<std::size_t>(extent.bufferWidth) *
                            extent.bufferHeight,
                        Sample{});
 
-    GDALRasterIOExtraArg extra;
-    INIT_RASTERIO_EXTRA_ARG(extra);
-    extra.pfnProgress = abortWhenStopRequested;
-    extra.pProgressData = const_cast<std::stop_token *>(&stop);
+    const auto perform = [&](const GDALRIOResampleAlg algorithm) {
+        GDALRasterIOExtraArg extra;
+        INIT_RASTERIO_EXTRA_ARG(extra);
+        extra.eResampleAlg = algorithm;
+        extra.pfnProgress = abortWhenStopRequested;
+        extra.pProgressData = const_cast<std::stop_token *>(&stop);
+        if (extent.floatingWindow) {
+            extra.bFloatingPointWindowValidity = TRUE;
+            extra.dfXOff = extent.floatingX;
+            extra.dfYOff = extent.floatingY;
+            extra.dfXSize = extent.floatingWidth;
+            extra.dfYSize = extent.floatingHeight;
+        }
+        readCount.fetch_add(1, std::memory_order_relaxed);
+        return band.RasterIO(GF_Read,
+                             extent.sourceX,
+                             extent.sourceY,
+                             extent.sourceWidth,
+                             extent.sourceHeight,
+                             destination.data(),
+                             extent.bufferWidth,
+                             extent.bufferHeight,
+                             type,
+                             0,
+                             0,
+                             &extra);
+    };
 
-    readCount.fetch_add(1, std::memory_order_relaxed);
-    const CPLErr status = band.RasterIO(GF_Read,
-                                        extent.sourceX,
-                                        extent.sourceY,
-                                        extent.sourceWidth,
-                                        extent.sourceHeight,
-                                        destination.data(),
-                                        extent.bufferWidth,
-                                        extent.bufferHeight,
-                                        type,
-                                        0,
-                                        0,
-                                        &extra);
+    CPLErr status = perform(resampling);
+    if (status != CE_None && resampling != GRIORA_NearestNeighbour) {
+        checkCancelled(stop);
+        status = perform(GRIORA_NearestNeighbour);
+    }
     checkCancelled(stop);
     if (status != CE_None) {
         throw RasterReadError("Raster window read failed");
@@ -196,6 +268,20 @@ ChannelPlanes readPlanes(GDALDataset &dataset,
         static_cast<std::size_t>(extent.bufferWidth) * extent.bufferHeight;
 
     const std::size_t channels = selection.colorBands.size();
+    const bool preserveExactNodata =
+        std::ranges::any_of(selection.nodata, [](const double value) {
+            return std::isfinite(value);
+        });
+    // Filtering raw color separately from validity can blend an invalid
+    // source color into a valid output texel. Keep nodata, alpha, masks, and
+    // categorical values exact; ordinary continuous imagery uses bilinear.
+    const GDALRIOResampleAlg colorResampling =
+        level.kind == RasterLevelKind::GeneratedCoverage &&
+                selection.sampleKind != RasterSampleKind::Categorical &&
+                !preserveExactNodata && selection.alphaBand == 0 &&
+                !level.maskBand
+            ? GRIORA_Bilinear
+            : GRIORA_NearestNeighbour;
     if (planes.byteSamples) {
         planes.colorBytes.resize(channels);
     } else {
@@ -210,14 +296,16 @@ ChannelPlanes readPlanes(GDALDataset &dataset,
                        GDT_Byte,
                        planes.colorBytes[channel],
                        stop,
-                       readCount);
+                       readCount,
+                       colorResampling);
         } else {
             readExtent(band,
                        extent,
                        GDT_Float64,
                        planes.colorDoubles[channel],
                        stop,
-                       readCount);
+                       readCount,
+                       colorResampling);
         }
     }
 
@@ -225,15 +313,21 @@ ChannelPlanes readPlanes(GDALDataset &dataset,
         checkCancelled(stop);
         GDALRasterBand &band = *levelBand(dataset, level.rgbaBands[3]);
         if (selection.byteAlphaBand) {
-            readExtent(
-                band, extent, GDT_Byte, planes.alphaBytes, stop, readCount);
+            readExtent(band,
+                       extent,
+                       GDT_Byte,
+                       planes.alphaBytes,
+                       stop,
+                       readCount,
+                       colorResampling);
         } else {
             readExtent(band,
                        extent,
                        GDT_Float64,
                        planes.alphaDoubles,
                        stop,
-                       readCount);
+                       readCount,
+                       colorResampling);
         }
     }
 
@@ -247,7 +341,13 @@ ChannelPlanes readPlanes(GDALDataset &dataset,
         if (mask == nullptr) {
             throw RasterReadError("Raster mask band is unavailable");
         }
-        readExtent(*mask, extent, GDT_Byte, planes.mask, stop, readCount);
+        readExtent(*mask,
+                   extent,
+                   GDT_Byte,
+                   planes.mask,
+                   stop,
+                   readCount,
+                   GRIORA_NearestNeighbour);
     }
     return planes;
 }
@@ -617,20 +717,12 @@ RasterTileData GdalRasterSource::readTile(const RasterTileRequest &request,
             throw RasterReadError("Raster tile names an unknown level");
         }
         const RasterLevel &level = metadata_.levels[request.key.levelIndex];
-        const TileWindow window = tileWindow(level, request.key);
-
-        // A 1:1 window: buffer dimensions equal window dimensions, so GDAL
-        // never decimates and never falls back to scanning the base image.
-        const ReadExtent extent{
-            .sourceX = window.readX,
-            .sourceY = window.readY,
-            .sourceWidth = window.readWidth,
-            .sourceHeight = window.readHeight,
-            .bufferWidth = window.readWidth,
-            .bufferHeight = window.readHeight,
-        };
-
         const HandleLease lease(*handles_, acquireHandle(*handles_, stop));
+        const TileWindow window = tileWindow(level, request.key);
+        // Backed levels remain exact 1:1 reads. Generated coverage levels map
+        // the same fixed-size output tile onto a floating window in the
+        // coarsest source-backed band and let GDAL resample it in memory.
+        const ReadExtent extent = readExtentFor(lease.dataset(), level, window);
         const ChannelPlanes planes = readPlanes(
             lease.dataset(), level, selection_, extent, stop, readCount_);
 

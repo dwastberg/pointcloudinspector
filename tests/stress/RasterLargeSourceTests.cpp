@@ -122,20 +122,21 @@ TEST_CASE("a huge catalog plans and reads a bounded amount of work",
     const std::uint64_t rssBaseline = pci::processMemoryMetrics().residentBytes;
     const std::uint64_t readsBeforePlanning = source->readCount();
 
-    // Whole-catalog view. A real external overview makes the request count
-    // small and explicitly backed instead of falling through to base pixels.
+    // Whole-catalog view. The external overview backs a cheap generated root,
+    // so requests stay small instead of falling through to base pixels.
     const pci::RasterLodPlan wide =
         planRasterTiles(planInput(layer, overheadCamera(center, 900000.0)));
     REQUIRE_FALSE(wide.selected.empty());
     CHECK(wide.selected.size() <= 512);
     CHECK_FALSE(wide.capacityLimited);
-    CHECK_FALSE(wide.insufficientOverviews);
+    CHECK_FALSE(wide.coverageIncomplete);
     const std::uint32_t coarsest =
         static_cast<std::uint32_t>(metadata.levels.size() - 1);
-    CHECK(std::ranges::all_of(wide.selected,
-                              [coarsest](const pci::RasterTileKey key) {
-                                  return key.levelIndex == coarsest;
-                              }));
+    CHECK(std::ranges::all_of(wide.selected, [](const pci::RasterTileKey key) {
+        return key.levelIndex > 0;
+    }));
+    REQUIRE_FALSE(wide.requests.empty());
+    CHECK(wide.requests.front().levelIndex == coarsest);
     // Planning reads nothing; it is arithmetic over the level table.
     CHECK(source->readCount() == readsBeforePlanning);
 
@@ -305,15 +306,15 @@ TEST_CASE("a huge mosaic covers coarsely before it refines",
     const pci::GdalRasterLoader loader;
     const pci::RasterLayer layer = layerFor(load(fixtures().vrtMosaic, loader));
     const pci::RasterLayerMetadata &metadata = layer.data->metadata();
-    REQUIRE(metadata.levels.size() == 3);
+    REQUIRE(pci::rasterBackedLevelCount(metadata.levels) == 3);
 
     const pci::Vec3d center{
         (metadata.bounds.minimum[0] + metadata.bounds.maximum[0]) * 0.5,
         (metadata.bounds.minimum[1] + metadata.bounds.maximum[1]) * 0.5,
         0.0};
 
-    // Far away, the coarsest backed level is what the planner asks for, and
-    // requests are ordered coarse-first so coverage arrives before detail.
+    // Far away, the automatic root is what the planner asks for, and requests
+    // are ordered coarse-first so coverage arrives before detail.
     const pci::RasterLodPlan wide =
         planRasterTiles(planInput(layer, overheadCamera(center, 900000.0)));
     REQUIRE_FALSE(wide.requests.empty());

@@ -338,10 +338,10 @@ std::filesystem::path writeRgbaFixture(const std::filesystem::path &path)
     return path;
 }
 
-std::filesystem::path writeMaskedFixture(const std::filesystem::path &path)
+std::filesystem::path writeMaskedFixture(const std::filesystem::path &path,
+                                         const int width = 64,
+                                         const int height = 48)
 {
-    constexpr int width = 64;
-    constexpr int height = 48;
     std::error_code cleanupError;
     std::filesystem::remove(path.string() + ".msk", cleanupError);
     {
@@ -351,6 +351,77 @@ std::filesystem::path writeMaskedFixture(const std::filesystem::path &path)
         writeRgb(*dataset, width, height);
     }
     addDatasetMask(path, width, height);
+    return path;
+}
+
+std::filesystem::path
+writeCoverageContinuousFixture(const std::filesystem::path &path)
+{
+    constexpr int extent = 512;
+    DatasetPtr dataset = create(path, extent, extent, 1, GDT_Byte);
+    applyProjectedReference(*dataset);
+    applyTransform(*dataset, {674000.0, 1.0, 0.0, 6580000.0, 0.0, -1.0});
+    std::vector<unsigned char> samples(static_cast<std::size_t>(extent) *
+                                       extent);
+    for (int y = 0; y < extent; ++y) {
+        for (int x = 0; x < extent; ++x) {
+            samples[static_cast<std::size_t>(y) * extent + x] =
+                x % 2 == 0 ? 0 : 255;
+        }
+    }
+    writeBand(*dataset, 1, GDT_Byte, samples);
+    dataset->GetRasterBand(1)->SetColorInterpretation(GCI_GrayIndex);
+    return path;
+}
+
+std::filesystem::path
+writeCoverageCategoricalFixture(const std::filesystem::path &path)
+{
+    constexpr int extent = 512;
+    DatasetPtr dataset = create(path, extent, extent, 1, GDT_Byte);
+    applyProjectedReference(*dataset);
+    applyTransform(*dataset, {674000.0, 1.0, 0.0, 6580000.0, 0.0, -1.0});
+    GDALColorTable table;
+    const std::array<GDALColorEntry, 3> entries{
+        GDALColorEntry{255, 0, 0, 255},
+        GDALColorEntry{0, 255, 0, 255},
+        GDALColorEntry{0, 0, 255, 255},
+    };
+    for (int entry = 0; entry < static_cast<int>(entries.size()); ++entry) {
+        table.SetColorEntry(entry, &entries[static_cast<std::size_t>(entry)]);
+    }
+    GDALRasterBand *band = dataset->GetRasterBand(1);
+    band->SetColorTable(&table);
+    band->SetColorInterpretation(GCI_PaletteIndex);
+    std::vector<unsigned char> indices(static_cast<std::size_t>(extent) *
+                                       extent);
+    for (int y = 0; y < extent; ++y) {
+        for (int x = 0; x < extent; ++x) {
+            indices[static_cast<std::size_t>(y) * extent + x] =
+                x % 2 == 0 ? 0 : 2;
+        }
+    }
+    writeBand(*dataset, 1, GDT_Byte, indices);
+    return path;
+}
+
+std::filesystem::path
+writeCoverageNodataFixture(const std::filesystem::path &path)
+{
+    constexpr int extent = 512;
+    constexpr float nodata = -9999.0F;
+    DatasetPtr dataset = create(path, extent, extent, 1, GDT_Float32);
+    applyProjectedReference(*dataset);
+    applyTransform(*dataset, {674000.0, 1.0, 0.0, 6580000.0, 0.0, -1.0});
+    std::vector<float> samples(static_cast<std::size_t>(extent) * extent);
+    for (int y = 0; y < extent; ++y) {
+        for (int x = 0; x < extent; ++x) {
+            samples[static_cast<std::size_t>(y) * extent + x] =
+                x < extent / 4 ? nodata : 100.0F + x + y;
+        }
+    }
+    writeBand(*dataset, 1, GDT_Float32, samples);
+    dataset->GetRasterBand(1)->SetNoDataValue(nodata);
     return path;
 }
 
@@ -873,6 +944,14 @@ writeGdalRasterFixtures(const std::filesystem::path &directory)
     paths.masked = writeMaskedFixture(directory / "masked.tif");
     paths.gray = writeGrayFixture(directory / "gray.tif");
     paths.palette = writePaletteFixture(directory / "palette.tif");
+    paths.coverageContinuous =
+        writeCoverageContinuousFixture(directory / "coverage-continuous.tif");
+    paths.coverageCategorical =
+        writeCoverageCategoricalFixture(directory / "coverage-categorical.tif");
+    paths.coverageMasked =
+        writeMaskedFixture(directory / "coverage-masked.tif", 512, 512);
+    paths.coverageNodata =
+        writeCoverageNodataFixture(directory / "coverage-nodata.tif");
     paths.terrain = writeTerrainFixture(directory / "terrain.tif");
     paths.unsigned16 = writeUnsigned16Fixture(directory / "uint16.tif");
     paths.rotated = writeRotatedFixture(directory / "rotated.tif");

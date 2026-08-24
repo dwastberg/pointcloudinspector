@@ -772,6 +772,7 @@ RenderViewportWidget::streamRasterTiles(QRhiCommandBuffer *commandBuffer)
     // starting at zero would make the reported minimum permanently zero.
     rasterFinestLevel_ = std::numeric_limits<std::uint32_t>::max();
     rasterCoarsestLevel_ = 0;
+    rasterCoverageIncomplete_ = false;
 
     // An empty document is deliberately not an early return: releasing removed
     // sources and pruning per-layer state is exactly what a removed layer
@@ -863,11 +864,18 @@ RenderViewportWidget::streamRasterTiles(QRhiCommandBuffer *commandBuffer)
                 return rasterTileStreamer_.cpuResident(
                     RasterCacheKey{sourceId, generation, key});
             };
+        input.unavailable =
+            [this, sourceId, generation](const RasterTileKey key) {
+                return rasterTileStreamer_.failed(
+                    RasterCacheKey{sourceId, generation, key});
+            };
 
         const RasterLodPlan &plan =
             plans.emplace_back(index, planRasterTiles(input)).second;
         previousRasterSelection_[layer.id] = plan.selected;
         rasterSelectedTiles_ += plan.selected.size();
+        rasterCoverageIncomplete_ =
+            rasterCoverageIncomplete_ || plan.coverageIncomplete;
         for (const RasterTileKey key : plan.selected) {
             rasterFinestLevel_ = std::min(rasterFinestLevel_, key.levelIndex);
             rasterCoarsestLevel_ =
@@ -2254,6 +2262,7 @@ void RenderViewportWidget::publishMetrics(const bool force)
             .rasterPendingReads = rasterStreamerMetrics.pending,
             .rasterFinestLevel = rasterFinestLevel_,
             .rasterCoarsestLevel = rasterCoarsestLevel_,
+            .rasterCoverageIncomplete = rasterCoverageIncomplete_,
             .gpuResidentPoints = uploadScheduler_.residentPointCount(),
             .gpuPointBudgetBytes = uploadScheduler_.residencyByteBudget(),
             .gpuPointBytes = uploadScheduler_.residentBytes(),

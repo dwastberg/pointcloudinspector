@@ -139,9 +139,11 @@ bool rasterLevelTableValid(const std::span<const RasterLevel> levels,
         return false;
     }
     if (levels.front().width != baseWidth ||
-        levels.front().height != baseHeight) {
+        levels.front().height != baseHeight ||
+        levels.front().kind != RasterLevelKind::Backed) {
         return false;
     }
+    bool generatedSeen = false;
     for (std::size_t index = 0; index < levels.size(); ++index) {
         const RasterLevel &level = levels[index];
         if (level.width == 0 || level.height == 0) {
@@ -154,6 +156,11 @@ bool rasterLevelTableValid(const std::span<const RasterLevel> levels,
             !std::isfinite(level.basePixelsPerTexelY) ||
             level.basePixelsPerTexelX <= 0.0 ||
             level.basePixelsPerTexelY <= 0.0) {
+            return false;
+        }
+        if (level.kind == RasterLevelKind::GeneratedCoverage) {
+            generatedSeen = true;
+        } else if (generatedSeen) {
             return false;
         }
         if (index == 0) {
@@ -249,7 +256,14 @@ bool rasterRequiresTiledRendering(const RasterLayerMetadata &metadata) noexcept
     if (metadata.levels.empty()) {
         return true;
     }
-    const RasterLevel &coarsest = metadata.levels.back();
+    const auto coarsestBacked = std::ranges::find_last_if(
+        metadata.levels, [](const RasterLevel &level) {
+            return level.kind == RasterLevelKind::Backed;
+        });
+    if (coarsestBacked.empty()) {
+        return true;
+    }
+    const RasterLevel &coarsest = *coarsestBacked.begin();
     if (coarsest.width <= rasterOverviewCoverageLimitPixels &&
         coarsest.height <= rasterOverviewCoverageLimitPixels) {
         return false;
@@ -260,6 +274,56 @@ bool rasterRequiresTiledRendering(const RasterLayerMetadata &metadata) noexcept
     const auto basePixels =
         static_cast<std::uint64_t>(metadata.width) * metadata.height;
     return basePixels > rasterBoundedBaseReadPixels;
+}
+
+void appendGeneratedRasterCoverageLevels(std::vector<RasterLevel> &levels,
+                                         const std::uint32_t baseWidth,
+                                         const std::uint32_t baseHeight)
+{
+    if (levels.empty() || baseWidth == 0 || baseHeight == 0 ||
+        std::ranges::any_of(levels, [](const RasterLevel &level) {
+            return level.kind == RasterLevelKind::GeneratedCoverage;
+        })) {
+        return;
+    }
+
+    const auto backed =
+        std::ranges::find_last_if(levels, [](const RasterLevel &level) {
+            return level.kind == RasterLevelKind::Backed;
+        });
+    if (backed.empty()) {
+        return;
+    }
+
+    RasterLevel previous = *backed.begin();
+    while (previous.width > rasterTilePixels ||
+           previous.height > rasterTilePixels) {
+        RasterLevel generated = previous;
+        generated.width = std::max<std::uint32_t>(1, (previous.width + 1) / 2);
+        generated.height =
+            std::max<std::uint32_t>(1, (previous.height + 1) / 2);
+        generated.basePixelsPerTexelX =
+            static_cast<double>(baseWidth) / generated.width;
+        generated.basePixelsPerTexelY =
+            static_cast<double>(baseHeight) / generated.height;
+        generated.kind = RasterLevelKind::GeneratedCoverage;
+        levels.push_back(generated);
+        previous = generated;
+    }
+}
+
+std::size_t
+rasterBackedLevelCount(const std::span<const RasterLevel> levels) noexcept
+{
+    return static_cast<std::size_t>(std::ranges::count(
+        levels, RasterLevelKind::Backed, &RasterLevel::kind));
+}
+
+std::size_t
+rasterGeneratedLevelCount(const std::span<const RasterLevel> levels) noexcept
+{
+    return static_cast<std::size_t>(std::ranges::count(
+        levels, RasterLevelKind::GeneratedCoverage, &RasterLevel::kind));
 }
 
 RasterLayerStyle defaultRasterLayerStyle(const RasterLayerMetadata &metadata)

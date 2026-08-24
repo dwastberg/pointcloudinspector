@@ -562,15 +562,18 @@ TEST_CASE("raster mid-size source without overviews renders tiled",
           "[component][gdal]")
 {
     // The most common first import: about 5000x5000 with no overviews. The
-    // tiled path reads it at native resolution, so it needs no warning and no
-    // decimating whole-image read.
+    // tiled path retains native detail and adds a non-persistent logical
+    // coverage pyramid for zoomed-out display.
     const pci::GdalRasterLoader loader;
     const pci::RasterLayerDataPtr data =
         load(fixtures().midSizeNoOverviews, loader);
     const pci::RasterLayerMetadata &metadata = data->metadata();
 
     REQUIRE(metadata.width == 5000);
-    REQUIRE(metadata.levels.size() == 1);
+    REQUIRE(pci::rasterBackedLevelCount(metadata.levels) == 1);
+    REQUIRE(pci::rasterGeneratedLevelCount(metadata.levels) == 5);
+    REQUIRE(metadata.levels.back().width == 157);
+    REQUIRE(metadata.levels.back().height == 157);
     CHECK_FALSE(metadata.insufficientOverviews);
     CHECK_FALSE(pci::rasterRequiresTiledRendering(metadata));
 
@@ -592,6 +595,69 @@ TEST_CASE("raster mid-size source without overviews renders tiled",
     CHECK(tile.rgba.size() == pci::rasterStoredTileBytes);
     // One window per selected band, sized to the tile rather than the source.
     CHECK(source->readCount() - before == 3);
+
+    const std::uint64_t beforeCoverage = source->readCount();
+    const pci::RasterTileData coverage = readFirstTile(
+        *data, static_cast<std::uint32_t>(metadata.levels.size() - 1));
+    CHECK(coverage.validWidth == 157);
+    CHECK(coverage.validHeight == 157);
+    CHECK(coverage.rgba.size() == pci::rasterStoredTileBytes);
+    CHECK(source->readCount() - beforeCoverage == 3);
+}
+
+TEST_CASE("automatic coverage resampling preserves raster sample semantics",
+          "[component][gdal][coverage]")
+{
+    SECTION("continuous samples use a filtered preview")
+    {
+        const pci::RasterLayerDataPtr data =
+            load(fixtures().coverageContinuous);
+        REQUIRE(data->metadata().levels.size() == 2);
+        REQUIRE(data->metadata().levels.back().kind ==
+                pci::RasterLevelKind::GeneratedCoverage);
+        const auto sample = texel(readFirstTile(*data, 1), 40, 40);
+        const int gray = std::to_integer<int>(sample[0]);
+        // The source alternates black/white every pixel. A 2:1 bilinear read
+        // is gray; nearest-neighbour would remain at an endpoint.
+        CHECK(gray > 80);
+        CHECK(gray < 180);
+        CHECK(sample[0] == sample[1]);
+        CHECK(sample[1] == sample[2]);
+        CHECK(sample[3] == std::byte{255});
+    }
+
+    SECTION("categorical samples never invent an interpolated class")
+    {
+        const pci::RasterLayerDataPtr data =
+            load(fixtures().coverageCategorical);
+        REQUIRE(data->metadata().levels.size() == 2);
+        const pci::RasterTileData tile = readFirstTile(*data, 1);
+        for (std::uint32_t x = 20; x < 40; ++x) {
+            const auto sample = texel(tile, x, 40);
+            // Only red (class 0) and blue (class 2) exist in the source. A
+            // bilinear average would create the absent green class 1.
+            CHECK(sample[1] == std::byte{0});
+            CHECK(sample[3] == std::byte{255});
+        }
+    }
+
+    SECTION("dataset masks remain hard validity boundaries")
+    {
+        const pci::RasterLayerDataPtr data = load(fixtures().coverageMasked);
+        REQUIRE(data->metadata().levels.size() == 2);
+        const pci::RasterTileData tile = readFirstTile(*data, 1);
+        CHECK(texel(tile, 20, 80)[3] == std::byte{0});
+        CHECK(texel(tile, 100, 80)[3] == std::byte{255});
+    }
+
+    SECTION("nodata remains transparent in generated levels")
+    {
+        const pci::RasterLayerDataPtr data = load(fixtures().coverageNodata);
+        REQUIRE(data->metadata().levels.size() == 2);
+        const pci::RasterTileData tile = readFirstTile(*data, 1);
+        CHECK(texel(tile, 20, 80)[3] == std::byte{0});
+        CHECK(texel(tile, 100, 80)[3] == std::byte{255});
+    }
 }
 
 TEST_CASE("raster source above the coverage limit reports missing overviews",
@@ -655,9 +721,10 @@ TEST_CASE("VRT mosaic exposes the union extent and its common overviews",
     // nothing enormous was written to disk.
     CHECK(metadata.width == 200512);
     CHECK(metadata.height == 200512);
-    // The members' own overviews surface as mosaic levels, so the level table
-    // is three deep rather than base-only.
-    REQUIRE(metadata.levels.size() == 3);
+    // The members' own overviews surface as three backed mosaic levels; the
+    // remaining entries are the automatic logical coverage pyramid.
+    REQUIRE(pci::rasterBackedLevelCount(metadata.levels) == 3);
+    REQUIRE(pci::rasterGeneratedLevelCount(metadata.levels) > 0);
     CHECK(metadata.levels[0].width == 200512);
     CHECK(metadata.levels[1].width == 100256);
     CHECK(metadata.levels[2].width == 50128);
@@ -691,14 +758,14 @@ TEST_CASE("large sources report whether backed overviews can cover cheaply",
     // a bounded tile set, so it is sufficient despite the 40-billion-pixel
     // logical base.
     const pci::RasterLayerDataPtr catalog = load(fixtures().catalog, loader);
-    REQUIRE(catalog->metadata().levels.size() == 2);
+    REQUIRE(pci::rasterBackedLevelCount(catalog->metadata().levels) == 2);
     CHECK_FALSE(catalog->metadata().insufficientOverviews);
 
     // The mosaic does have overviews, and is still flagged. The warning is
     // about whether any level can cover the view cheaply, not about whether
     // overviews exist at all: 50128 pixels still needs about 38000 tiles.
     const pci::RasterLayerDataPtr mosaic = load(fixtures().vrtMosaic, loader);
-    REQUIRE(mosaic->metadata().levels.size() == 3);
+    REQUIRE(pci::rasterBackedLevelCount(mosaic->metadata().levels) == 3);
     CHECK(mosaic->metadata().insufficientOverviews);
 }
 

@@ -426,6 +426,41 @@ TEST_CASE("raster streamer reconciles every layer of a frame at once",
     CHECK(streamer.metrics().cancelled == 0);
 }
 
+TEST_CASE("raster streamer shares the bounded queue fairly across layers",
+          "[qt][raster][stream][fairness]")
+{
+    Fixture first = makeFixture();
+    Fixture second = makeFixture();
+    second.layer.id = pci::SceneLayerId{2};
+    first.source->blocked.store(true);
+    second.source->blocked.store(true);
+    pci::RasterTileStreamer streamer(256ULL * 1024 * 1024, 1);
+
+    std::vector<pci::RasterTileKey> firstKeys;
+    std::vector<pci::RasterTileKey> secondKeys;
+    for (std::uint32_t index = 0; index < 300; ++index) {
+        firstKeys.push_back({0, index % 20, index / 20});
+        secondKeys.push_back({0, index % 20, index / 20});
+    }
+    const pci::RasterLodPlan firstPlan = planFor(std::move(firstKeys));
+    const pci::RasterLodPlan secondPlan = planFor(std::move(secondKeys));
+    const std::array<pci::RasterFrameLayer, 2> frame{
+        pci::RasterFrameLayer{.plan = &firstPlan, .layer = &first.layer},
+        pci::RasterFrameLayer{.plan = &secondPlan, .layer = &second.layer},
+    };
+
+    streamer.reconcile(frame);
+    REQUIRE(streamer.metrics().pending == pci::rasterMaximumPendingRequests);
+    first.source->blocked.store(false);
+    second.source->blocked.store(false);
+    streamer.waitForIdle();
+
+    // Layer-major insertion would give all 256 slots to the first plan. The
+    // round-robin order gives both layers their coverage-first requests.
+    CHECK(first.source->reads.load() == 128);
+    CHECK(second.source->reads.load() == 128);
+}
+
 TEST_CASE("raster streamer keeps every layer's work across repeated frames",
           "[qt][raster][stream]")
 {

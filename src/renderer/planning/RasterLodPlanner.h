@@ -27,6 +27,10 @@ struct RasterLodPlanInput {
     std::span<const RasterTileKey> previousSelection;
     std::function<bool(RasterTileKey)> cpuResident;
     std::function<bool(RasterTileKey)> gpuResident;
+    // A failed generated tile is bypassed in favour of finer descendants.
+    // This prevents a permanently failed coverage tile from blocking the
+    // source-backed data beneath it.
+    std::function<bool(RasterTileKey)> unavailable;
     // Hard planner ceiling. The effective cap is
     // min(maximumSelectedTiles, gpuCapacityTiles): the two are independent
     // limits, a fixed ceiling and a budget-derived residency ceiling, and the
@@ -44,7 +48,10 @@ struct RasterLodPlan {
     // without rereading GDAL.
     std::vector<RasterTileKey> decodedUploads;
     std::vector<RasterTileKey> protectedTiles;
-    bool insufficientOverviews = false;
+    // True only when the selected cells do not cover the whole visible raster
+    // footprint. Capacity-limited refinement can still have complete coverage
+    // because its coarser parent remains selected.
+    bool coverageIncomplete = false;
     bool capacityLimited = false;
 };
 

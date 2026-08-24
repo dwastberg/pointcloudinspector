@@ -77,6 +77,7 @@ struct RenderResidencyTelemetry {
     std::size_t rasterPendingReads = 0;
     std::uint32_t rasterFinestLevel = 0;
     std::uint32_t rasterCoarsestLevel = 0;
+    bool rasterCoverageIncomplete = false;
     std::uint64_t gpuResidentPoints = 0;
     std::uint64_t gpuPointBudgetBytes = 0;
     std::uint64_t gpuPointBytes = 0;

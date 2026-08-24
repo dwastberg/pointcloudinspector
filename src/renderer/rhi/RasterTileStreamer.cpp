@@ -228,6 +228,14 @@ void RasterTileStreamer::reconcile(
 
     std::unordered_set<RasterCacheKey> wanted;
     std::vector<Request> scheduled;
+    struct LayerSchedule {
+        RasterSourceId sourceId{};
+        std::uint64_t renderGeneration = 0;
+        RasterTileSourcePtr source;
+        std::shared_ptr<const RasterDecodeParameters> decode;
+        std::span<const RasterTileKey> requests;
+    };
+    std::vector<LayerSchedule> layerSchedules;
 
     for (const RasterFrameLayer &entry : frame) {
         if (!entry.plan || !entry.layer || !entry.layer->data) {
@@ -251,6 +259,32 @@ void RasterTileStreamer::reconcile(
                 .tile = key,
             };
             wanted.insert(cacheKey);
+        }
+        layerSchedules.push_back(LayerSchedule{
+            .sourceId = layer.data->sourceId,
+            .renderGeneration = layer.renderGeneration,
+            .source = layer.data->source,
+            .decode = std::move(decode),
+            .requests = plan.requests,
+        });
+    }
+
+    // Plans are individually ordered coverage-first. Interleave equal ranks
+    // across layers so one large raster cannot fill the bounded global queue
+    // before the other visible rasters have even scheduled their roots.
+    for (std::size_t rank = 0;; ++rank) {
+        bool found = false;
+        for (const LayerSchedule &layer : layerSchedules) {
+            if (rank >= layer.requests.size()) {
+                continue;
+            }
+            found = true;
+            const RasterTileKey key = layer.requests[rank];
+            const RasterCacheKey cacheKey{
+                .sourceId = layer.sourceId,
+                .renderGeneration = layer.renderGeneration,
+                .tile = key,
+            };
             // A tile already decoded, or already known to fail for this
             // generation, is not requested again.
             if (cache_.contains(cacheKey) ||
@@ -260,14 +294,17 @@ void RasterTileStreamer::reconcile(
             scheduled.push_back(Request{
                 .key = cacheKey,
                 .epoch = requestEpoch_,
-                .source = layer.data->source,
+                .source = layer.source,
                 .request =
                     RasterTileRequest{
                         .key = key,
                         .renderGeneration = layer.renderGeneration,
-                        .decode = decode,
+                        .decode = layer.decode,
                     },
             });
+        }
+        if (!found) {
+            break;
         }
     }
 

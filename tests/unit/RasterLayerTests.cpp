@@ -177,6 +177,35 @@ TEST_CASE("raster level table rejects malformed pyramids", "[unit][raster]")
     CHECK_FALSE(pci::rasterLevelTableValid({}, 1000, 800));
 }
 
+TEST_CASE("raster coverage pyramid ends in a single logical tile",
+          "[unit][raster][overview]")
+{
+    std::vector<pci::RasterLevel> levels{makeLevel(10000, 10000, 10000, 10000)};
+
+    pci::appendGeneratedRasterCoverageLevels(levels, 10000, 10000);
+
+    REQUIRE(levels.size() == 7);
+    CHECK(pci::rasterBackedLevelCount(levels) == 1);
+    CHECK(pci::rasterGeneratedLevelCount(levels) == 6);
+    CHECK(levels[1].width == 5000);
+    CHECK(levels[5].width == 313);
+    CHECK(levels.back().width == 157);
+    CHECK(levels.back().height == 157);
+    CHECK(levels.back().kind == pci::RasterLevelKind::GeneratedCoverage);
+    CHECK(levels.back().basePixelsPerTexelX == Catch::Approx(10000.0 / 157.0));
+    CHECK(pci::rasterLevelTableValid(levels, 10000, 10000));
+
+    // Logical preview levels do not change whether the source itself has an
+    // adequate backed overview, and constructing them is idempotent.
+    pci::RasterLayerMetadata metadata;
+    metadata.width = 10000;
+    metadata.height = 10000;
+    metadata.levels = levels;
+    CHECK(pci::rasterRequiresTiledRendering(metadata));
+    pci::appendGeneratedRasterCoverageLevels(levels, 10000, 10000);
+    CHECK(levels.size() == 7);
+}
+
 TEST_CASE("raster tile counts and edge extents", "[unit][raster]")
 {
     const pci::RasterLevel level = makeLevel(1000, 800, 1000, 800);

@@ -3197,8 +3197,10 @@ TEST_CASE("main window archives native Release H metrics",
     CHECK(raster.value(QStringLiteral("layer_id")).isDouble());
     CHECK(raster.value(QStringLiteral("width")).toInteger() > 0);
     CHECK(raster.value(QStringLiteral("levels")).toInteger() >= 1);
-    // The warning that display quality is bounded by the source travels into
-    // the report, so a "looks wrong" bug can be triaged without the file.
+    CHECK(raster.value(QStringLiteral("backed_levels")).toInteger() >= 1);
+    CHECK(raster.contains(QStringLiteral("generated_levels")));
+    // Source quality and automatic preview provenance travel into the report,
+    // so a "looks wrong" bug can be triaged without the file.
     CHECK(raster.contains(QStringLiteral("insufficient_overviews")));
     CHECK(raster.contains(QStringLiteral("driver")));
 }
