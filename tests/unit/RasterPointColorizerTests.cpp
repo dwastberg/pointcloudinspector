@@ -317,7 +317,7 @@ TEST_CASE("flat raster colorization applies rebakes and reverts atomically",
         std::make_shared<pci::PointMemoryBudget>(64ULL * 1024 * 1024);
     TemporaryDirectory directory;
 
-    auto firstRaster = std::make_shared<GridRasterSource>(10);
+    auto firstRaster = std::make_shared<GridRasterSource>(std::uint8_t{10});
     std::vector<pci::RasterColorizeProgress> progress;
     const auto first =
         colorize(scene, firstRaster, budget, directory.path(), &progress);
@@ -344,7 +344,8 @@ TEST_CASE("flat raster colorization applies rebakes and reverts atomically",
     CHECK(bakedEntry.block->points[1].rgba == expectedColor(10, 1, 1));
     CHECK(bakedEntry.block->points[2].rgba == expectedColor(10, 2, 2));
 
-    auto secondRaster = std::make_shared<GridRasterSource>(20, true);
+    auto secondRaster =
+        std::make_shared<GridRasterSource>(std::uint8_t{20}, true);
     const auto second = colorize(scene, secondRaster, budget, directory.path());
     REQUIRE(second.has_value());
     REQUIRE(*second);
@@ -384,7 +385,7 @@ TEST_CASE("cancelled raster colorization produces no prepared transaction",
         pci::PointCloudMetadata{.sourcePointCount = 1});
     scene->addBlock(block);
     scene->markLoadingComplete();
-    auto raster = std::make_shared<GridRasterSource>(0);
+    auto raster = std::make_shared<GridRasterSource>(std::uint8_t{0});
     auto budget = std::make_shared<pci::PointMemoryBudget>(64ULL * 1024 * 1024);
     TemporaryDirectory directory;
     auto target = scene->rasterPointColorizeTarget();
@@ -493,7 +494,7 @@ TEST_CASE(
     metadata.sourceBounds = root->blocks.front()->bounds;
     auto scene = std::make_shared<pci::PointCloudScene>(
         metadata, source, root, 1024 * 1024);
-    auto raster = std::make_shared<GridRasterSource>(10);
+    auto raster = std::make_shared<GridRasterSource>(std::uint8_t{10});
     auto budget = std::make_shared<pci::PointMemoryBudget>(64ULL * 1024 * 1024);
     TemporaryDirectory directory;
 
