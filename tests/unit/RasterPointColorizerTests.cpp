@@ -418,6 +418,58 @@ TEST_CASE("cancelled raster colorization produces no prepared transaction",
     CHECK(budget->reservedBytes() == 0);
 }
 
+TEST_CASE("raster colorization rejects unbounded run fan-in before writing",
+          "[unit][scene][colorize]")
+{
+    auto block = std::make_shared<pci::PointBlock>();
+    block->origin = {0.0, 0.0, 0.0};
+    block->scale = 1.0;
+    block->bounds.minimum = {0.0, 0.0, 0.0};
+    block->bounds.maximum = {0.0, 0.0, 0.0};
+    block->points.resize(257, {.x = 0, .y = 0, .z = 0, .rgba = 0xff123456U});
+    auto scene = std::make_shared<pci::PointCloudScene>(
+        pci::PointCloudMetadata{.sourcePointCount = block->points.size()});
+    scene->addBlock(std::move(block));
+    scene->markLoadingComplete();
+
+    auto raster = std::make_shared<GridRasterSource>(std::uint8_t{0});
+    auto budget = std::make_shared<pci::PointMemoryBudget>(64ULL * 1024 * 1024);
+    TemporaryDirectory directory;
+    auto target = scene->rasterPointColorizeTarget();
+    REQUIRE(target.has_value());
+    pci::RasterColorizeOptions options{
+        .workerCount = 4,
+        .maximumScatterRecords = 1,
+        .temporaryDirectory = directory.path(),
+    };
+    auto preflight = pci::preflightRasterPointColorize(
+        std::move(*target), raster->metadata(), options);
+
+    bool rejected = false;
+    try {
+        static_cast<void>(pci::colorizePointCloudFromRaster(
+            preflight,
+            raster,
+            std::make_shared<pci::RasterDecodeParameters>(),
+            1,
+            options,
+            reserve(budget, preflight.tableEntries * sizeof(std::uint32_t)),
+            reserve(budget, preflight.workingReservationBytes),
+            reserve(budget, preflight.rootStagingReservationBytes),
+            reserve(budget, preflight.flatStagingReservationBytes),
+            {},
+            {}));
+    } catch (const pci::RasterColorizeError &error) {
+        rejected = true;
+        CHECK(error.code() ==
+              pci::RasterColorizeFailureCode::InsufficientPointMemory);
+    }
+    CHECK(rejected);
+    CHECK(std::filesystem::is_empty(directory.path()));
+    CHECK(raster->reads() == 0);
+    CHECK(budget->reservedBytes() == 0);
+}
+
 TEST_CASE("parallel raster sampling reads each addressed tile once",
           "[unit][scene][colorize]")
 {

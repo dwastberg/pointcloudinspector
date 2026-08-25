@@ -18,11 +18,48 @@
 namespace pci {
 namespace {
 
+// MSVC's default stdio limit is 512 streams per process. Keep temporary-run
+// merging comfortably below that limit so other application streams retain
+// headroom.
+constexpr std::uint64_t maximumOpenRunReaders = 256;
+
 void checkStop(const std::stop_token &stop)
 {
     if (stop.stop_requested()) {
         throw PointCloudDataSourceCancelled();
     }
+}
+
+[[nodiscard]] constexpr std::uint64_t
+divideRoundedUp(const std::uint64_t value, const std::uint64_t divisor) noexcept
+{
+    return value / divisor + (value % divisor != 0 ? 1U : 0U);
+}
+
+[[nodiscard]] std::uint64_t
+maximumGeneratedRuns(const std::uint64_t maximumRecordCount,
+                     const std::uint64_t aggregateBufferLimit,
+                     const std::size_t workerCount) noexcept
+{
+    if (maximumRecordCount == 0) {
+        return 0;
+    }
+    if (aggregateBufferLimit == 0 || workerCount == 0) {
+        return std::numeric_limits<std::uint64_t>::max();
+    }
+    const std::uint64_t minimumWorkerCapacity =
+        aggregateBufferLimit / workerCount;
+    if (minimumWorkerCapacity == 0) {
+        return std::numeric_limits<std::uint64_t>::max();
+    }
+    const std::uint64_t fullBuffers =
+        divideRoundedUp(maximumRecordCount, minimumWorkerCapacity);
+    const std::uint64_t partialBuffers = workerCount - 1U;
+    if (fullBuffers >
+        std::numeric_limits<std::uint64_t>::max() - partialBuffers) {
+        return std::numeric_limits<std::uint64_t>::max();
+    }
+    return fullBuffers + partialBuffers;
 }
 
 [[nodiscard]] std::uint64_t spread24(std::uint32_t value) noexcept
@@ -259,8 +296,23 @@ std::optional<RasterColorizePreparedPtr> colorizePointCloudFromRaster(
                 ? options.workerCount
                 : static_cast<std::size_t>(std::min<std::uint64_t>(
                       options.workerCount, aggregateBufferLimit));
-        const std::size_t recordWorkers =
-            std::min(workUnits, recordLimitedWorkers);
+        std::size_t recordWorkers = std::min(workUnits, recordLimitedWorkers);
+        while (recordWorkers > 1 &&
+               maximumGeneratedRuns(preflight.maximumRecordCount,
+                                    aggregateBufferLimit,
+                                    recordWorkers) > maximumOpenRunReaders) {
+            --recordWorkers;
+        }
+        if (recordWorkers > 0 &&
+            maximumGeneratedRuns(preflight.maximumRecordCount,
+                                 aggregateBufferLimit,
+                                 recordWorkers) > maximumOpenRunReaders) {
+            throw RasterColorizeError(
+                RasterColorizeFailureCode::InsufficientPointMemory,
+                "Raster colorization run buffer is too small; increase "
+                "maximumScatterRecords to keep temporary merging within the "
+                "open-file limit");
+        }
         const std::uint32_t tileHistogramShift =
             histogramShift(raster->metadata());
         std::vector<std::array<std::uint64_t, 4096>> histograms(recordWorkers);
@@ -429,8 +481,21 @@ std::optional<RasterColorizePreparedPtr> colorizePointCloudFromRaster(
                          0,
                          true);
 
+        std::size_t maximumSamplingWorkers = 0;
+        if (runs.recordCount() > 0) {
+            const std::uint64_t recordLimitedSamplingWorkers =
+                std::min<std::uint64_t>(options.workerCount,
+                                        runs.recordCount());
+            const std::uint64_t readerLimitedSamplingWorkers =
+                maximumOpenRunReaders / runs.runCount();
+            maximumSamplingWorkers = static_cast<std::size_t>(std::min(
+                recordLimitedSamplingWorkers, readerLimitedSamplingWorkers));
+        }
         RasterTileSourcePtr samplingSource =
-            raster->detachedReader(options.workerCount);
+            maximumSamplingWorkers == 0
+                ? RasterTileSourcePtr{}
+                : raster->detachedReader(
+                      static_cast<std::uint32_t>(maximumSamplingWorkers));
         const bool hasDetachedReader = static_cast<bool>(samplingSource);
         if (!hasDetachedReader) {
             samplingSource = raster;
@@ -439,10 +504,8 @@ std::optional<RasterColorizePreparedPtr> colorizePointCloudFromRaster(
         // The base interface makes no concurrency guarantee. A source that
         // cannot provide an independently pooled reader is deliberately
         // sampled by one worker.
-        if (hasDetachedReader && runs.recordCount() > 0 &&
-            options.workerCount > 1) {
-            const std::uint64_t desired = std::min<std::uint64_t>(
-                options.workerCount, runs.recordCount());
+        if (hasDetachedReader && maximumSamplingWorkers > 1) {
+            const std::uint64_t desired = maximumSamplingWorkers;
             std::array<std::uint64_t, 4096> histogram{};
             for (const auto &workerHistogram : histograms) {
                 for (std::size_t bin = 0; bin < histogram.size(); ++bin) {

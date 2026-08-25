@@ -51,6 +51,7 @@ private:
 struct RasterCounters {
     std::atomic_uint64_t displayReads = 0;
     std::atomic_uint64_t detachedReads = 0;
+    std::atomic_uint32_t detachedMaximumHandles = 0;
     std::atomic_uint32_t activeReads = 0;
     std::atomic_uint32_t peakActiveReads = 0;
     std::mutex keysMutex;
@@ -78,8 +79,9 @@ public:
     }
 
     [[nodiscard]] pci::RasterTileSourcePtr
-    detachedReader(const std::uint32_t) const override
+    detachedReader(const std::uint32_t maximumHandles) const override
     {
+        counters_->detachedMaximumHandles = maximumHandles;
         return std::make_shared<ScaleRasterSource>(
             metadata_.width, counters_, true);
     }
@@ -187,6 +189,7 @@ struct ScaleOutcome {
     pci::PointMemoryBudgetMetrics memory;
     std::uint64_t distinctTiles = 0;
     std::uint64_t displayReads = 0;
+    std::uint32_t detachedMaximumHandles = 0;
 };
 
 [[nodiscard]] ScaleOutcome bake(const std::uint32_t copies,
@@ -239,7 +242,9 @@ struct ScaleOutcome {
     return {.statistics = statistics,
             .memory = budget->metrics(),
             .distinctTiles = distinctTiles,
-            .displayReads = raster->counters()->displayReads.load()};
+            .displayReads = raster->counters()->displayReads.load(),
+            .detachedMaximumHandles =
+                raster->counters()->detachedMaximumHandles.load()};
 }
 
 TEST_CASE("four-million-point raster bake remains footprint bounded",
@@ -269,6 +274,7 @@ TEST_CASE("four-million-point raster bake remains footprint bounded",
     CHECK(twoMillion.displayReads == 0);
     CHECK(fourMillion.displayReads == 0);
     CHECK(sparseExtent.displayReads == 0);
+    CHECK(fourMillion.detachedMaximumHandles == 1);
 }
 
 TEST_CASE("four-million-point raster bake cancels promptly and cleans runs",
