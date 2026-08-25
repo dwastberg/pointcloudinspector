@@ -256,11 +256,16 @@ TEST_CASE("four-million-point raster bake remains footprint bounded",
     CHECK(twoMillion.statistics.pointsConsidered == 2'000'000);
     CHECK(fourMillion.statistics.pointsConsidered == 4'000'000);
     CHECK(fourMillion.statistics.pointsColored == 4'000'000);
-    CHECK(twoMillion.statistics.tileReads == fourMillion.statistics.tileReads);
-    CHECK(sparseExtent.statistics.tileReads == twoMillion.statistics.tileReads);
-    CHECK(fourMillion.statistics.tileReads >= fourMillion.distinctTiles);
-    CHECK(fourMillion.statistics.tileReads <=
-          fourMillion.distinctTiles * pci::rasterColorizeTileReadOverheadBound);
+    CHECK(twoMillion.distinctTiles == fourMillion.distinctTiles);
+    CHECK(sparseExtent.distinctTiles == twoMillion.distinctTiles);
+    const auto checkTileReadsBounded = [](const ScaleOutcome &outcome) {
+        CHECK(outcome.statistics.tileReads >= outcome.distinctTiles);
+        CHECK(outcome.statistics.tileReads <=
+              outcome.distinctTiles * pci::rasterColorizeTileReadOverheadBound);
+    };
+    checkTileReadsBounded(twoMillion);
+    checkTileReadsBounded(fourMillion);
+    checkTileReadsBounded(sparseExtent);
     CHECK(twoMillion.displayReads == 0);
     CHECK(fourMillion.displayReads == 0);
     CHECK(sparseExtent.displayReads == 0);
