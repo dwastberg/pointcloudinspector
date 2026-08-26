@@ -1,6 +1,10 @@
 #include "import/pdal/MortonRunBuilder.h"
 
 #include "import/pdal/MortonRunRecord.h"
+#include "platform/QtPath.h"
+
+#include <QFile>
+#include <QIODeviceBase>
 
 #include <algorithm>
 #include <array>
@@ -54,15 +58,16 @@ void writeRun(const std::filesystem::path &path,
         return left.morton != right.morton ? left.morton < right.morton
                                            : left.ordinal < right.ordinal;
     });
-    std::ofstream output(path, std::ios::binary | std::ios::trunc);
-    if (!output) {
+    QFile output(pathToQString(path));
+    if (!output.open(QIODeviceBase::WriteOnly | QIODeviceBase::NewOnly,
+                     QFile::ReadOwner | QFile::WriteOwner)) {
         throw std::runtime_error("could not create local point sort run");
     }
-    output.write(
-        reinterpret_cast<const char *>(records.data()),
-        static_cast<std::streamsize>(records.size() * sizeof(MortonRunRecord)));
-    output.flush();
-    if (!output) {
+    const std::size_t byteCount = records.size() * sizeof(MortonRunRecord);
+    if (output.write(reinterpret_cast<const char *>(records.data()),
+                     static_cast<qint64>(byteCount)) !=
+            static_cast<qint64>(byteCount) ||
+        !output.flush()) {
         throw std::runtime_error("could not write local point sort run");
     }
     records.clear();

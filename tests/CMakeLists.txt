@@ -18,7 +18,9 @@ include("${PROJECT_SOURCE_DIR}/cmake/PciTesting.cmake")
 pci_add_catch_test_target(pcinspector_app_config_tests
         WITH_MAIN
         SOURCES unit/ApplicationConfigTests.cpp
-        LIBRARIES pcinspector::app_config)
+        LIBRARIES
+        pcinspector::app_config
+        Qt6::Core)
 
 pci_add_catch_test_target(pcinspector_app_model_tests
         WITH_MAIN
@@ -45,6 +47,16 @@ pci_add_catch_test_target(pcinspector_platform_tests
         SOURCES unit/PlatformTests.cpp
         LIBRARIES pcinspector::platform)
 
+pci_add_catch_test_target(pcinspector_supported_source_tests
+        WITH_MAIN
+        SOURCES unit/SupportedSourceTests.cpp
+        LIBRARIES pcinspector::app_config)
+
+pci_add_catch_test_target(pcinspector_secure_storage_tests
+        WITH_MAIN
+        SOURCES unit/SecureStorageTests.cpp
+        LIBRARIES pcinspector::secure_storage)
+
 pci_add_catch_test_target(pcinspector_pointcloud_tests
         WITH_MAIN
         SOURCES
@@ -65,7 +77,9 @@ pci_add_catch_test_target(pcinspector_scene_tests
         unit/SceneDocumentTests.cpp
         unit/SceneDocumentVectorTests.cpp
         unit/SceneDocumentRasterTests.cpp
-        LIBRARIES pcinspector::scene)
+        LIBRARIES
+        pcinspector::scene
+        Qt6::Core)
 
 pci_add_catch_test_target(pcinspector_raster_tests
         WITH_MAIN
@@ -134,6 +148,7 @@ pci_add_catch_test_target(pcinspector_import_gdal_tests
         LIBRARIES
         pcinspector::import_gdal
         GDAL::GDAL
+        Qt6::Core
         PROPERTIES
         # Catch discovery runs each case in a separate process. Every process
         # rebuilds the shared on-disk corpus, so parallel cases would otherwise
@@ -156,6 +171,7 @@ pci_add_catch_test_target(pcinspector_raster_stress_tests
         pcinspector::import_gdal
         pcinspector::renderer
         pcinspector::scene
+        pcinspector::secure_storage
         GDAL::GDAL
         PROPERTIES
         RESOURCE_LOCK pcinspector_raster_stress_fixtures
@@ -170,7 +186,8 @@ pci_add_catch_test_target(pcinspector_import_ogr_tests
         "${CMAKE_CURRENT_SOURCE_DIR}"
         LIBRARIES
         pcinspector::import_ogr
-        GDAL::GDAL)
+        GDAL::GDAL
+        Qt6::Core)
 
 add_executable(pcinspector_ogr_fixture_generator
         fixtures/OgrFixtureFactory.cpp
@@ -447,6 +464,7 @@ if(PCINSPECTOR_ENABLE_GPU_TESTS)
             pcinspector::app_config
             pcinspector::import_gdal
             pcinspector::renderer
+            pcinspector::secure_storage
             GDAL::GDAL
             Qt6::GuiPrivate
             Qt6::Test

@@ -1,11 +1,15 @@
 #include "scene/RasterColorizeRunStore.h"
 
 #include "scene/RasterPointColorize.h"
+#include "storage/SecureStorage.h"
+
+#include "platform/QtPath.h"
+
+#include <QFile>
+#include <QIODeviceBase>
 
 #include <algorithm>
 #include <array>
-#include <atomic>
-#include <chrono>
 #include <fstream>
 #include <queue>
 #include <string>
@@ -21,43 +25,29 @@ void checkStop(const std::stop_token &stop)
     }
 }
 
-[[nodiscard]] std::filesystem::path
-uniqueRunPath(const std::filesystem::path &directory)
+[[nodiscard]] std::unique_ptr<PrivateTemporaryDirectory>
+createPrivateRunDirectory(const std::filesystem::path &baseDirectory)
 {
-    static std::atomic_uint64_t sequence = 0;
-    const auto stamp =
-        std::chrono::steady_clock::now().time_since_epoch().count();
-    for (;;) {
-        const auto value = sequence.fetch_add(1, std::memory_order_relaxed);
-        const auto candidate =
-            directory / ("pcinspector-colorize-" + std::to_string(stamp) + "-" +
-                         std::to_string(value) + ".run");
-        std::error_code error;
-        if (!std::filesystem::exists(candidate, error)) {
-            return candidate;
-        }
+    try {
+        return std::make_unique<PrivateTemporaryDirectory>(
+            baseDirectory, "pcinspector-colorize");
+    } catch (const PrivateStorageError &error) {
+        throw RasterColorizeError(
+            RasterColorizeFailureCode::Io,
+            "Could not create a private colorization workspace: " +
+                std::string(error.what()));
     }
 }
 
 } // namespace
 
 RasterColorizeRunStore::RasterColorizeRunStore(std::filesystem::path directory)
-    : directory_(std::move(directory))
+    : privateDirectory_(createPrivateRunDirectory(directory))
+    , directory_(privateDirectory_->path())
 {
-    if (directory_.empty() || !std::filesystem::is_directory(directory_)) {
-        throw RasterColorizeError(
-            RasterColorizeFailureCode::Io,
-            "Colorization temporary directory is invalid");
-    }
 }
 
-RasterColorizeRunStore::~RasterColorizeRunStore()
-{
-    for (const Run &run : runs_) {
-        std::error_code ignored;
-        std::filesystem::remove(run.path, ignored);
-    }
-}
+RasterColorizeRunStore::~RasterColorizeRunStore() = default;
 
 std::array<std::byte, 12>
 RasterColorizeRunStore::serialize(const RasterSortRecord &record) noexcept
@@ -101,28 +91,30 @@ void RasterColorizeRunStore::writeSortedRun(
         throw RasterColorizeError(RasterColorizeFailureCode::Internal,
                                   "Colorization run was not sorted");
     }
-    const std::filesystem::path path = uniqueRunPath(directory_);
-    std::ofstream output(path, std::ios::binary | std::ios::trunc);
-    if (!output) {
+    const std::filesystem::path path =
+        directory_ / ("run-" + std::to_string(runs_.size()) + ".bin");
+    QFile output(pathToQString(path));
+    if (!output.open(QIODeviceBase::WriteOnly | QIODeviceBase::NewOnly,
+                     QFile::ReadOwner | QFile::WriteOwner)) {
         throw RasterColorizeError(RasterColorizeFailureCode::Io,
                                   "Could not create colorization run file");
     }
     try {
         for (const RasterSortRecord &record : records) {
             const auto bytes = serialize(record);
-            output.write(reinterpret_cast<const char *>(bytes.data()),
-                         static_cast<std::streamsize>(bytes.size()));
-            if (!output) {
+            if (output.write(reinterpret_cast<const char *>(bytes.data()),
+                             static_cast<qint64>(bytes.size())) !=
+                static_cast<qint64>(bytes.size())) {
                 throw RasterColorizeError(
                     RasterColorizeFailureCode::Io,
                     "Could not write colorization run file");
             }
         }
-        output.close();
-        if (!output) {
+        if (!output.flush()) {
             throw RasterColorizeError(RasterColorizeFailureCode::Io,
                                       "Could not close colorization run file");
         }
+        output.close();
     } catch (...) {
         output.close();
         std::error_code ignored;

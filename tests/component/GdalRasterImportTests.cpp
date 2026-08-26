@@ -9,23 +9,43 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include <QDir>
+#include <QTemporaryDir>
+
 #include <algorithm>
 #include <cstddef>
 #include <filesystem>
 #include <memory>
+#include <stdexcept>
 #include <stop_token>
 #include <string>
 #include <vector>
 
 namespace {
 
+[[nodiscard]] std::filesystem::path temporaryPath(QTemporaryDir &directory)
+{
+    if (!directory.isValid()) {
+        throw std::runtime_error("could not create private GDAL fixture");
+    }
+    return QDir(directory.path()).filesystemPath();
+}
+
 // The fixture corpus is written once; every case here is read-only.
+struct GdalFixtures final {
+    GdalFixtures()
+        : paths(pci::test::writeGdalRasterFixtures(temporaryPath(directory)))
+    {
+    }
+
+    QTemporaryDir directory;
+    pci::test::GdalRasterFixturePaths paths;
+};
+
 const pci::test::GdalRasterFixturePaths &fixtures()
 {
-    static const pci::test::GdalRasterFixturePaths paths =
-        pci::test::writeGdalRasterFixtures(
-            std::filesystem::temp_directory_path() / "pci-raster-fixtures");
-    return paths;
+    static const GdalFixtures fixture;
+    return fixture.paths;
 }
 
 [[nodiscard]] pci::RasterLayerDataPtr load(const std::filesystem::path &path,

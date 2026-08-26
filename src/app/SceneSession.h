@@ -5,6 +5,7 @@
 #include "app/PointCloudLoadMode.h"
 #include "import/ImportServices.h"
 #include "import/LoadJobRow.h"
+#include "import/SupportedSource.h"
 #include "renderer/RenderLoadProgress.h"
 #include "scene/SceneDocumentSnapshot.h"
 
@@ -21,6 +22,12 @@
 #include <vector>
 
 namespace pci {
+
+enum class VectorImportAvailability : std::uint8_t {
+    Unknown,
+    Supported,
+    Unsupported,
+};
 
 struct SceneSessionTimings {
     std::optional<double> timeToFirstPointsMilliseconds;
@@ -39,7 +46,7 @@ public:
                  std::uint64_t decodedByteBudget,
                  std::optional<AutomaticMemoryBudgetParameters>
                      automaticMemoryBudget = std::nullopt,
-                 std::filesystem::path localPageCacheDirectory = {},
+                 LocalPageCacheContextPtr localPageCache = {},
                  PointColorMapCatalogSnapshotPtr colorMaps = {},
                  QObject *parent = nullptr);
     ~SceneSession() override;
@@ -72,6 +79,9 @@ public:
                         PointCloudLoadMode mode);
     void loadPointClouds(std::vector<std::filesystem::path> sourcePaths,
                          PointCloudLoadMode firstMode);
+    void openSources(std::vector<SupportedSource> sources);
+    void setVectorImportAvailability(VectorImportAvailability availability,
+                                     QString reason = {});
     void cancelAll();
     void cancelJob(LoadJobId jobId);
     void retryJob(LoadJobId jobId);
@@ -211,10 +221,14 @@ private:
     std::uint64_t maximumLoadPoints_;
     std::uint64_t decodedByteBudget_;
     std::optional<AutomaticMemoryBudgetParameters> automaticMemoryBudget_;
-    std::filesystem::path localPageCacheDirectory_;
+    LocalPageCacheContextPtr localPageCache_;
     std::unordered_map<LoadJobId, ActiveLoad> activeLoads_;
     std::unordered_map<LoadJobId, std::vector<VectorSublayerKey>>
         preselectedVectorSublayers_;
+    std::vector<VectorImportRequest> pendingVectorImports_;
+    VectorImportAvailability vectorImportAvailability_ =
+        VectorImportAvailability::Unknown;
+    QString vectorImportUnavailableReason_;
     std::vector<LoadJobId> batchOrder_;
     std::size_t batchBaseLayerCount_ = 0;
     std::size_t batchTotal_ = 0;

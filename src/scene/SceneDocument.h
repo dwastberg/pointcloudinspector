@@ -177,8 +177,8 @@ public:
     [[nodiscard]] std::uint64_t vectorRevision() const noexcept;
     [[nodiscard]] std::uint64_t rasterRevision() const noexcept;
     // Deterministic precedence: the first point-cloud layer carrying a CRS,
-    // then the first raster layer carrying one. A comparison aid only; the
-    // document neither reprojects nor enforces a CRS.
+    // then the first raster layer, then the first vector layer. A comparison
+    // aid only; the document neither reprojects nor enforces a CRS.
     [[nodiscard]] std::string referenceSpatialReferenceWkt() const;
     [[nodiscard]] SceneDocumentSnapshotPtr snapshot() const;
     [[nodiscard]] SceneLayerKind layerKind(SceneLayerId id) const noexcept;

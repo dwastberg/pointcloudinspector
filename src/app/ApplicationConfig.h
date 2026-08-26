@@ -69,7 +69,8 @@ resolveMemoryBudget(const ApplicationConfig &config,
                     const SystemMemoryInfo &memory) noexcept;
 
 [[nodiscard]] std::filesystem::path
-pointPageCacheDirectory(const QString &standardCacheLocation,
-                        const std::filesystem::path &temporaryDirectory);
+pointPageCacheDirectory(const QString &standardCacheLocation);
+[[nodiscard]] std::filesystem::path
+pointPageCacheConfigurationDirectory(const QString &standardConfigLocation);
 
 } // namespace pci

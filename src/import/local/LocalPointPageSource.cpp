@@ -1,7 +1,12 @@
 #include "import/local/LocalPointPageSource.h"
 
 #include "foundation/CheckedArithmetic.h"
+#include "platform/QtPath.h"
 #include "scene/BlockPartitioner.h"
+
+#include <QFile>
+#include <QIODeviceBase>
+#include <QRandomGenerator>
 
 #include <algorithm>
 #include <atomic>
@@ -87,18 +92,23 @@ directoryUsageBytes(const std::filesystem::path &directory) noexcept
 
 void activateLease(LocalPointPageSourceState &state)
 {
-    static std::atomic_uint64_t sequence = 0;
-    const std::string name = state.storeDirectory.filename().string() +
-                             ".lease-" +
-                             std::to_string(localPointCurrentProcessId()) +
-                             "-" + std::to_string(sequence.fetch_add(1));
-    state.leasePath = state.storeDirectory.parent_path() / name;
-    std::ofstream lease(state.leasePath, std::ios::trunc);
-    if (!lease) {
-        state.leasePath.clear();
-        throw std::runtime_error(
-            "could not create local page cache usage lease");
+    const std::string prefix =
+        state.storeDirectory.filename().string() + ".lease-" +
+        std::to_string(localPointCurrentProcessId()) + "-";
+    for (int attempt = 0; attempt < 32; ++attempt) {
+        const std::uint64_t nonce = QRandomGenerator::system()->generate64();
+        const std::filesystem::path candidate =
+            state.storeDirectory.parent_path() /
+            (prefix + std::to_string(nonce));
+        QFile lease(pathToQString(candidate));
+        if (lease.open(QIODeviceBase::WriteOnly | QIODeviceBase::NewOnly,
+                       QFile::ReadOwner | QFile::WriteOwner)) {
+            lease.close();
+            state.leasePath = candidate;
+            return;
+        }
     }
+    throw std::runtime_error("could not create local page cache usage lease");
 }
 
 void saturatedAtomicAdd(std::atomic_uint64_t &destination,
@@ -175,8 +185,8 @@ std::vector<std::byte> readPayload(const std::filesystem::path &path,
     if (!input) {
         throw std::runtime_error("could not read complete local point page");
     }
-    if (localPointCrc32(bytes) != record.payloadChecksum) {
-        throw std::runtime_error("local point page checksum mismatch");
+    if (localPointPayloadDigest(bytes) != record.payloadDigest) {
+        throw std::runtime_error("local point page digest mismatch");
     }
     return bytes;
 }
@@ -233,10 +243,11 @@ std::shared_ptr<LocalPointPageSource> LocalPointPageSource::createBuilding(
 std::shared_ptr<LocalPointPageSource> LocalPointPageSource::openCommitted(
     const std::filesystem::path &storeDirectory,
     const LocalPointSourceFingerprint &fingerprint,
+    const ManifestAuthenticationKey &authenticationKey,
     const std::uint64_t maximumPoints)
 {
-    LocalPointPageManifest manifest =
-        readLocalPointManifest(storeDirectory / "manifest.pci", fingerprint);
+    LocalPointPageManifest manifest = readLocalPointManifest(
+        storeDirectory / "manifest.pci", fingerprint, authenticationKey);
     const std::filesystem::path payloadPath = storeDirectory / "payload.bin";
     std::error_code error;
     const std::uintmax_t payloadBytes =

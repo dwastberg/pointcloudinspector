@@ -7,6 +7,7 @@
 #include "platform/ProcessMemory.h"
 #include "platform/QtPath.h"
 #include "scene/SceneDocument.h"
+#include "storage/SecureStorage.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -15,6 +16,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QStandardPaths>
 #include <QTimer>
 
 #include <algorithm>
@@ -212,10 +214,6 @@ std::optional<Options> parseOptions(const int argc, char **argv)
         std::fprintf(stderr, "--cpu-cache-mb is too large\n");
         return std::nullopt;
     }
-    if (options.cacheDirectory.empty()) {
-        options.cacheDirectory = std::filesystem::temp_directory_path() /
-                                 "pcinspector-multifile-bench" / "point-pages";
-    }
     return options;
 }
 
@@ -243,6 +241,10 @@ void writeReport(const std::filesystem::path &path, const QJsonObject &report)
 
 int main(int argc, char **argv)
 {
+    QCoreApplication::setApplicationName(
+        QStringLiteral("Point Cloud Inspector"));
+    QCoreApplication::setOrganizationName(
+        QStringLiteral("Point Cloud Inspector"));
     QCoreApplication application(argc, argv);
     const std::optional<Options> parsed = parseOptions(argc, argv);
     if (!parsed) {
@@ -252,6 +254,26 @@ int main(int argc, char **argv)
                    : 2;
     }
     const Options &options = *parsed;
+    pci::LocalPageCacheContextPtr cache;
+    try {
+        if (options.cacheDirectory.empty()) {
+            cache = pci::LocalPageCacheContext::createTemporary(
+                pci::qStringToPath(QDir::tempPath()));
+        } else {
+            const QString configLocation = QStandardPaths::writableLocation(
+                QStandardPaths::AppConfigLocation);
+            if (configLocation.isEmpty()) {
+                throw pci::PrivateStorageError(
+                    "no application configuration directory is available");
+            }
+            cache = pci::LocalPageCacheContext::createPersistent(
+                options.cacheDirectory,
+                pci::qStringToPath(configLocation) / "cache-security");
+        }
+    } catch (const pci::PrivateStorageError &error) {
+        std::fprintf(stderr, "cache setup failed: %s\n", error.what());
+        return 2;
+    }
     const std::vector<std::filesystem::path> paths =
         pci::expandPathArguments(options.files);
     if (paths.empty()) {
@@ -345,7 +367,7 @@ int main(int argc, char **argv)
                     .localPaging =
                         {
                             .pointThreshold = options.localPageThreshold,
-                            .cacheDirectory = options.cacheDirectory,
+                            .cache = cache,
                         },
                 },
             .resources =

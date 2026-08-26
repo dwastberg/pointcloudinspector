@@ -2,6 +2,7 @@
 
 #include "scene/HierarchyResidencyCoordinator.h"
 #include "scene/PointCloudScene.h"
+#include "storage/SecureStorage.h"
 
 #include <cstdint>
 #include <filesystem>
@@ -70,7 +71,7 @@ struct LocalPagingOptions {
     // Ordinary LAS/LAZ above this source size uses the persistent local page
     // store. The value is a routing threshold, not a source-count limit.
     std::uint64_t pointThreshold = 1'000'000;
-    std::filesystem::path cacheDirectory;
+    LocalPageCacheContextPtr cache;
     std::uint32_t pagePoints = 32'768;
     std::uint32_t rootPreviewPoints = 16'384;
     std::uint64_t sortMemoryBytes = std::uint64_t{64} * 1024 * 1024;

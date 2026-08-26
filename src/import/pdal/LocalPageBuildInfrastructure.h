@@ -5,10 +5,13 @@
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
+#include <memory>
 #include <optional>
 #include <string>
 
 namespace pci::local_index {
+
+class LocalPageBuildLockImpl;
 
 class LocalPageBuildLock final {
 public:
@@ -20,11 +23,10 @@ public:
 
     [[nodiscard]] bool tryAcquire();
     void touch() const;
-    [[nodiscard]] bool removeIfStale(std::chrono::minutes maximumAge) const;
 
 private:
     std::filesystem::path path_;
-    bool owned_ = false;
+    std::unique_ptr<LocalPageBuildLockImpl> impl_;
 };
 
 class LocalPageBuildSession final {
@@ -39,6 +41,7 @@ public:
     [[nodiscard]] const std::filesystem::path &directory() const noexcept;
 
 private:
+    std::unique_ptr<PrivateTemporaryDirectory> temporaryDirectory_;
     std::filesystem::path directory_;
 };
 
@@ -62,13 +65,15 @@ private:
     LocalPointSourceFingerprint fingerprint_;
     std::string key_;
     std::filesystem::path finalDirectory_;
+    ManifestAuthenticationKey authenticationKey_{};
 };
 
 class LocalPageCommitter final {
 public:
     static void commit(const std::filesystem::path &temporaryDirectory,
                        const std::filesystem::path &finalDirectory,
-                       const LocalPointPageManifest &manifest);
+                       const LocalPointPageManifest &manifest,
+                       const ManifestAuthenticationKey &authenticationKey);
 };
 
 } // namespace pci::local_index

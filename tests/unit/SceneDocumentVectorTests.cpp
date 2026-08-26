@@ -66,6 +66,18 @@ TEST_CASE("scene document shares layer ids and copies vector records",
     CHECK(destination.layerKind(id) == pci::SceneLayerKind::None);
 }
 
+TEST_CASE("vector CRS is the document fallback reference",
+          "[unit][scene][vector][crs]")
+{
+    pci::SceneDocument document;
+    auto referenced = std::make_shared<pci::VectorLayerData>();
+    referenced->bounds = {{0.0, 0.0, 0.0}, {1.0, 1.0, 0.0}};
+    referenced->spatialReferenceWkt = "VECTOR_CRS";
+    static_cast<void>(document.addVectorLayer(referenced));
+
+    CHECK(document.referenceSpatialReferenceWkt() == "VECTOR_CRS");
+}
+
 TEST_CASE("scene document preserves cross-kind insertion order",
           "[unit][scene][vector][order]")
 {

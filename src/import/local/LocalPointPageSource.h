@@ -45,6 +45,7 @@ public:
     [[nodiscard]] static std::shared_ptr<LocalPointPageSource>
     openCommitted(const std::filesystem::path &storeDirectory,
                   const LocalPointSourceFingerprint &fingerprint,
+                  const ManifestAuthenticationKey &authenticationKey,
                   std::uint64_t maximumPoints);
 
     void publish(LocalPointPageRecord record);

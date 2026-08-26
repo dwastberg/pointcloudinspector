@@ -1,9 +1,13 @@
 #include "import/pdal/LocalPageBuildInfrastructure.h"
 
 #include "foundation/CheckedArithmetic.h"
+#include "platform/QtPath.h"
+#include "storage/SecureStorage.h"
+
+#include <QDir>
+#include <QLockFile>
 
 #include <algorithm>
-#include <atomic>
 #include <charconv>
 #include <limits>
 #include <string_view>
@@ -11,48 +15,39 @@
 #include <vector>
 
 namespace pci::local_index {
-namespace {
+class LocalPageBuildLockImpl final {
+public:
+    explicit LocalPageBuildLockImpl(const std::filesystem::path &path)
+        : lock(pathToQString(path))
+    {
+        lock.setStaleLockTime(std::chrono::minutes(5));
+    }
 
-std::filesystem::path
-uniqueTemporaryDirectory(const std::filesystem::path &cacheDirectory,
-                         const std::string &key)
-{
-    static std::atomic_uint64_t sequence = 0;
-    const auto nonce =
-        std::chrono::steady_clock::now().time_since_epoch().count();
-    return cacheDirectory / (key + ".tmp-" + std::to_string(nonce) + "-" +
-                             std::to_string(sequence.fetch_add(1)));
-}
-
-} // namespace
+    QLockFile lock;
+};
 
 LocalPageBuildLock::LocalPageBuildLock(std::filesystem::path path)
     : path_(std::move(path))
+    , impl_(std::make_unique<LocalPageBuildLockImpl>(path_))
 {
 }
 
-LocalPageBuildLock::~LocalPageBuildLock()
-{
-    if (owned_) {
-        std::error_code ignored;
-        std::filesystem::remove_all(path_, ignored);
-    }
-}
+LocalPageBuildLock::~LocalPageBuildLock() = default;
 
 bool LocalPageBuildLock::tryAcquire()
 {
-    std::error_code error;
-    owned_ = std::filesystem::create_directory(path_, error);
-    if (error && error != std::make_error_code(std::errc::file_exists)) {
-        throw std::runtime_error("could not create local page build lock: " +
-                                 error.message());
+    if (impl_->lock.tryLock(std::chrono::milliseconds::zero())) {
+        return true;
     }
-    return owned_;
+    if (impl_->lock.error() != QLockFile::LockFailedError) {
+        throw std::runtime_error("could not create local page build lock");
+    }
+    return false;
 }
 
 void LocalPageBuildLock::touch() const
 {
-    if (!owned_) {
+    if (!impl_->lock.isLocked()) {
         return;
     }
     std::error_code error;
@@ -63,31 +58,21 @@ void LocalPageBuildLock::touch() const
     }
 }
 
-bool LocalPageBuildLock::removeIfStale(
-    const std::chrono::minutes maximumAge) const
-{
-    std::error_code error;
-    const auto modified = std::filesystem::last_write_time(path_, error);
-    if (error || std::filesystem::file_time_type::clock::now() - modified <=
-                     maximumAge) {
-        return false;
-    }
-    std::filesystem::remove_all(path_, error);
-    return !error;
-}
-
 LocalPageBuildSession::LocalPageBuildSession(
     const std::filesystem::path &cacheDirectory, const std::string &key)
-    : directory_(uniqueTemporaryDirectory(cacheDirectory, key))
+    : temporaryDirectory_(std::make_unique<PrivateTemporaryDirectory>(
+          cacheDirectory, key + ".tmp"))
+    , directory_(temporaryDirectory_->path())
 {
-    std::filesystem::create_directories(directory_ / "runs");
+    QDir directory(pathToQString(directory_));
+    if (!directory.mkdir(QStringLiteral("runs"),
+                         QFile::ReadOwner | QFile::WriteOwner |
+                             QFile::ExeOwner)) {
+        throw std::runtime_error("could not create local point run directory");
+    }
 }
 
-LocalPageBuildSession::~LocalPageBuildSession()
-{
-    std::error_code ignored;
-    std::filesystem::remove_all(directory_, ignored);
-}
+LocalPageBuildSession::~LocalPageBuildSession() = default;
 
 const std::filesystem::path &LocalPageBuildSession::directory() const noexcept
 {
@@ -97,13 +82,14 @@ const std::filesystem::path &LocalPageBuildSession::directory() const noexcept
 LocalPageCacheLocator::LocalPageCacheLocator(
     const PointCloudImportPreflight &preflight,
     const LocalPointPageStoreOptions &options)
-    : cacheDirectory_(options.cacheDirectory)
+    : cacheDirectory_(options.cache->directory())
     , fingerprint_(fingerprintLocalPointSource(preflight.metadata,
                                                preflight.sourceFileBytes,
                                                preflight.sourceModificationTime,
                                                options))
     , key_(localPointFingerprintHex(fingerprint_))
     , finalDirectory_(cacheDirectory_ / (key_ + ".pcipages"))
+    , authenticationKey_(options.cache->manifestAuthenticationKey())
 {
 }
 
@@ -138,7 +124,7 @@ std::optional<LocalPointPageBuildResult> LocalPageCacheLocator::tryOpen(
     std::uint64_t payloadBytes = 0;
     try {
         source = LocalPointPageSource::openCommitted(
-            finalDirectory_, fingerprint_, maximumPoints);
+            finalDirectory_, fingerprint_, authenticationKey_, maximumPoints);
         root = source->loadNode(rootPointCloudNode, {});
         if (!root || pointCloudNodePayloadPoints(*root) == 0) {
             throw std::runtime_error("local page cache has an empty root");
@@ -261,13 +247,16 @@ void LocalPageCacheLocator::prune(const std::uint64_t byteBudget) const
     }
 }
 
-void LocalPageCommitter::commit(const std::filesystem::path &temporaryDirectory,
-                                const std::filesystem::path &finalDirectory,
-                                const LocalPointPageManifest &manifest)
+void LocalPageCommitter::commit(
+    const std::filesystem::path &temporaryDirectory,
+    const std::filesystem::path &finalDirectory,
+    const LocalPointPageManifest &manifest,
+    const ManifestAuthenticationKey &authenticationKey)
 {
     // The manifest is the validity marker and must remain the final file
     // written before the directory is atomically published.
-    writeLocalPointManifest(temporaryDirectory / "manifest.pci", manifest);
+    writeLocalPointManifest(
+        temporaryDirectory / "manifest.pci", manifest, authenticationKey);
 
     std::error_code error;
     if (std::filesystem::exists(finalDirectory, error)) {

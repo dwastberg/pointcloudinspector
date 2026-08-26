@@ -5,12 +5,15 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <span>
 #include <stop_token>
 #include <vector>
 
 namespace pci {
+
+class PrivateTemporaryDirectory;
 
 struct RasterSortRecord {
     std::uint64_t address = 0;
@@ -55,6 +58,7 @@ private:
         std::uint64_t records = 0;
     };
 
+    std::unique_ptr<PrivateTemporaryDirectory> privateDirectory_;
     std::filesystem::path directory_;
     std::vector<Run> runs_;
     mutable std::vector<std::filesystem::path> pathView_;

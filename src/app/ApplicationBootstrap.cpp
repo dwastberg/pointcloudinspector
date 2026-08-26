@@ -3,6 +3,7 @@
 #include "app/MainWindow.h"
 #include "development/SyntheticScene.h"
 #include "import/ImportServices.h"
+#include "import/SupportedSource.h"
 #include "import/gdal/GdalRasterLoader.h"
 #include "import/gdal/GdalRuntime.h"
 #include "import/gdal/GdalSpatialReferenceComparator.h"
@@ -13,6 +14,7 @@
 #include "platform/SystemMemoryInfo.h"
 #include "pointcloud/PointColorMapCatalog.h"
 #include "renderer/RenderViewport.h"
+#include "storage/SecureStorage.h"
 
 #include <QCoreApplication>
 #include <QDebug>
@@ -106,17 +108,33 @@ void reportMemoryBudget(const ApplicationConfig &config,
 #endif
 }
 
-std::filesystem::path defaultPointPageCacheDirectory()
+LocalPageCacheContextPtr defaultPointPageCache()
 {
-    return pointPageCacheDirectory(
-        QStandardPaths::writableLocation(QStandardPaths::CacheLocation),
-        std::filesystem::temp_directory_path());
+    const std::filesystem::path cacheDirectory = pointPageCacheDirectory(
+        QStandardPaths::writableLocation(QStandardPaths::CacheLocation));
+    const std::filesystem::path configurationDirectory =
+        pointPageCacheConfigurationDirectory(QStandardPaths::writableLocation(
+            QStandardPaths::AppConfigLocation));
+    if (!cacheDirectory.empty() && !configurationDirectory.empty()) {
+        try {
+            return LocalPageCacheContext::createPersistent(
+                cacheDirectory, configurationDirectory);
+        } catch (const PrivateStorageError &error) {
+            qWarning().noquote()
+                << QStringLiteral(
+                       "Persistent point-page cache is unavailable; using a "
+                       "private temporary cache: %1")
+                       .arg(QString::fromLocal8Bit(error.what()));
+        }
+    }
+    return LocalPageCacheContext::createTemporary(
+        qStringToPath(QDir::tempPath()));
 }
 
 void populateInitialDocument(RenderViewport &viewport,
                              const ApplicationConfig &config,
                              const std::uint64_t decodedByteBudget,
-                             const std::filesystem::path &cacheDirectory,
+                             const LocalPageCacheContextPtr &cache,
                              const PointColorMapCatalogSnapshotPtr &colorMaps)
 {
     if (config.sources.empty()) {
@@ -147,12 +165,17 @@ void populateInitialDocument(RenderViewport &viewport,
         colorMaps);
     PdalPointCloudLoader loader;
     for (const std::filesystem::path &sourcePath : config.sources) {
+        if (supportedSourceKind(sourcePath) !=
+            SupportedSourceKind::PointCloud) {
+            throw std::invalid_argument(
+                "--smoke-test supports point-cloud sources only");
+        }
         const PointCloudLoadOptions options{
             .sourcePath = sourcePath,
             .maximumPoints = config.maximumLoadPoints,
             .localPaging =
                 {
-                    .cacheDirectory = cacheDirectory,
+                    .cache = cache,
                 },
         };
         const PointCloudLoadResources resources{
@@ -246,8 +269,7 @@ bootstrapApplication(const ApplicationConfig &config,
     const ResolvedMemoryBudget memoryBudget =
         resolveMemoryBudget(config, systemMemoryInfo());
     reportMemoryBudget(config, memoryBudget);
-    const std::filesystem::path cacheDirectory =
-        defaultPointPageCacheDirectory();
+    const LocalPageCacheContextPtr cache = defaultPointPageCache();
 
     std::unique_ptr<RenderViewport> viewport =
         createRenderViewport(config.smokeTest,
@@ -255,18 +277,15 @@ bootstrapApplication(const ApplicationConfig &config,
                              config.graphicsApi,
                              config.gpuValidation,
                              colorMaps);
-    populateInitialDocument(*viewport,
-                            config,
-                            memoryBudget.pointByteBudget,
-                            cacheDirectory,
-                            colorMaps);
+    populateInitialDocument(
+        *viewport, config, memoryBudget.pointByteBudget, cache, colorMaps);
 
     auto window = std::make_unique<MainWindow>(std::move(viewport),
                                                createImportServices(),
                                                config.maximumLoadPoints,
                                                memoryBudget.pointByteBudget,
                                                memoryBudget.automaticParameters,
-                                               cacheDirectory,
+                                               cache,
                                                colorMaps);
     // The window budgets and reports the GDAL cache without linking GDAL.
     window->setGdalCacheControls(GdalCacheControls{
@@ -301,7 +320,7 @@ bootstrapApplication(const ApplicationConfig &config,
     if (!config.sources.empty() && !config.smokeTest) {
         QTimer::singleShot(
             0, window.get(), [window = window.get(), sources = config.sources] {
-                window->loadPointClouds(sources, PointCloudLoadMode::Replace);
+                window->openSources(sources);
             });
     }
     return window;

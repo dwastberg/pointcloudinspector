@@ -1,5 +1,6 @@
 #include "scene/PointCloudScene.h"
 #include "scene/RasterPointColorizer.h"
+#include "storage/SecureStorage.h"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -20,32 +21,23 @@ namespace {
 class TemporaryDirectory final {
 public:
     TemporaryDirectory()
+        : directory_(std::filesystem::temp_directory_path(),
+                     "pcinspector-colorize-scale")
     {
-        const auto stamp =
-            std::chrono::steady_clock::now().time_since_epoch().count();
-        path_ = std::filesystem::temp_directory_path() /
-                ("pcinspector-colorize-scale-" + std::to_string(stamp));
-        std::filesystem::create_directory(path_);
-    }
-
-    ~TemporaryDirectory()
-    {
-        std::error_code ignored;
-        std::filesystem::remove_all(path_, ignored);
     }
 
     [[nodiscard]] const std::filesystem::path &path() const noexcept
     {
-        return path_;
+        return directory_.path();
     }
 
     [[nodiscard]] bool empty() const
     {
-        return std::filesystem::is_empty(path_);
+        return std::filesystem::is_empty(directory_.path());
     }
 
 private:
-    std::filesystem::path path_;
+    pci::PrivateTemporaryDirectory directory_;
 };
 
 struct RasterCounters {

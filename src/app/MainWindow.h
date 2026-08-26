@@ -17,6 +17,7 @@
 #include <QTimer>
 
 #include <cstdint>
+#include <deque>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -24,6 +25,8 @@
 
 class QAction;
 class QCloseEvent;
+class QDragEnterEvent;
+class QDropEvent;
 class QLabel;
 
 namespace pci {
@@ -44,7 +47,7 @@ public:
         std::uint64_t decodedByteBudget = defaultPointCloudDecodedByteBudget,
         std::optional<AutomaticMemoryBudgetParameters> automaticMemoryBudget =
             std::nullopt,
-        std::filesystem::path localPageCacheDirectory = {},
+        LocalPageCacheContextPtr localPageCache = {},
         PointColorMapCatalogSnapshotPtr colorMaps = {});
     ~MainWindow() override;
 
@@ -53,6 +56,7 @@ public:
                         PointCloudLoadMode mode);
     void loadPointClouds(std::vector<std::filesystem::path> sourcePaths,
                          PointCloudLoadMode firstMode);
+    void openSources(std::vector<std::filesystem::path> sourcePaths);
     LoadJobId loadVectorLayers(VectorImportRequest request);
     LoadJobId importRasterLayer(RasterImportRequest request);
     // Installed by the application layer, which owns the GDAL link. Applying
@@ -66,12 +70,11 @@ public:
 
 protected:
     void closeEvent(QCloseEvent *event) override;
+    void dragEnterEvent(QDragEnterEvent *event) override;
+    void dropEvent(QDropEvent *event) override;
 
 private:
-    void choosePointCloud(
-        std::optional<PointCloudLoadMode> requestedMode = std::nullopt);
-    void chooseVectorLayers();
-    void chooseRasterLayers();
+    void chooseSources();
     void showSettings();
     [[nodiscard]] bool
     applyPerformanceSettings(const PerformanceSettings &settings);
@@ -83,6 +86,9 @@ private:
     void refreshLayerPanel();
     void showLayerStatistics(PointCloudLayerId layerId);
     void showColorizeFromRaster(PointCloudLayerId layerId);
+    void enqueueVectorSelection(LoadJobId jobId,
+                                VectorImportPreflight preflight);
+    void showNextVectorSelection();
     void setLoadingProgress(const LoadingProgressState &state);
 #ifdef PCINSPECTOR_ENABLE_DIAGNOSTIC_UI
     void showMetrics(const RenderMetrics &metrics);
@@ -95,9 +101,6 @@ private:
     std::unique_ptr<RenderViewport> viewport_;
     std::unique_ptr<SceneSession> session_;
     QAction *openAction_ = nullptr;
-    QAction *addAction_ = nullptr;
-    QAction *importVectorAction_ = nullptr;
-    QAction *importRasterAction_ = nullptr;
     QAction *fitSceneAction_ = nullptr;
     QAction *topDownSceneAction_ = nullptr;
     QAction *orthographicAction_ = nullptr;
@@ -117,6 +120,12 @@ private:
 #endif
     QLabel *emptySceneLabel_ = nullptr;
     QLabel *navigationHintLabel_ = nullptr;
+    struct PendingVectorSelection {
+        LoadJobId jobId;
+        VectorImportPreflight preflight;
+    };
+    std::deque<PendingVectorSelection> pendingVectorSelections_;
+    std::optional<LoadJobId> activeVectorSelectionJob_;
     bool navigationHintDismissed_ = false;
     PerformanceSettings performanceSettings_;
     GdalCacheControls gdalCache_;

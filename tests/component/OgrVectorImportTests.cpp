@@ -3,23 +3,31 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <QDir>
+#include <QTemporaryDir>
+
 #include <gdal_priv.h>
 #include <ogrsf_frmts.h>
 
-#include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <stdexcept>
 
 namespace {
+
+[[nodiscard]] std::filesystem::path temporaryPath(QTemporaryDir &directory)
+{
+    if (!directory.isValid()) {
+        throw std::runtime_error("could not create private OGR fixture");
+    }
+    return QDir(directory.path()).filesystemPath();
+}
 
 class TemporaryGeoJson final {
 public:
     TemporaryGeoJson()
+        : path_(temporaryPath(directory_) / "fixture.geojson")
     {
-        const auto stamp =
-            std::chrono::steady_clock::now().time_since_epoch().count();
-        path_ = std::filesystem::temp_directory_path() /
-                ("pcinspector-vector-" + std::to_string(stamp) + ".geojson");
         std::ofstream output(path_);
         output << R"({
 "type":"FeatureCollection",
@@ -30,29 +38,21 @@ public:
 ]})";
     }
 
-    ~TemporaryGeoJson()
-    {
-        std::error_code error;
-        std::filesystem::remove(path_, error);
-    }
-
     [[nodiscard]] const std::filesystem::path &path() const noexcept
     {
         return path_;
     }
 
 private:
+    QTemporaryDir directory_;
     std::filesystem::path path_;
 };
 
 class TemporaryGeoPackage final {
 public:
     TemporaryGeoPackage()
+        : path_(temporaryPath(directory_) / "fixture.gpkg")
     {
-        const auto stamp =
-            std::chrono::steady_clock::now().time_since_epoch().count();
-        path_ = std::filesystem::temp_directory_path() /
-                ("pcinspector-vector-" + std::to_string(stamp) + ".gpkg");
         GDALAllRegister();
         GDALDriver *driver = GetGDALDriverManager()->GetDriverByName("GPKG");
         if (!driver)
@@ -73,8 +73,6 @@ public:
     {
         if (dataset_)
             GDALClose(dataset_);
-        std::error_code error;
-        std::filesystem::remove(path_, error);
     }
 
     [[nodiscard]] const std::filesystem::path &path() const noexcept
@@ -146,6 +144,7 @@ private:
         addFeature(layer, collection);
     }
 
+    QTemporaryDir directory_;
     std::filesystem::path path_;
     GDALDataset *dataset_ = nullptr;
     OGRSpatialReference srs_;
@@ -257,13 +256,9 @@ TEST_CASE(
     "reusable OGR fixture factory writes the projected multi-layer corpus",
     "[component][ogr][fixture]")
 {
-    const auto stamp =
-        std::chrono::steady_clock::now().time_since_epoch().count();
-    const std::filesystem::path directory =
-        std::filesystem::temp_directory_path() /
-        ("pcinspector-ogr-fixture-" + std::to_string(stamp));
+    QTemporaryDir directory;
     const pci::test::OgrFixturePaths paths =
-        pci::test::writeOgrFixtures(directory);
+        pci::test::writeOgrFixtures(temporaryPath(directory));
     pci::OgrVectorLoader loader;
     pci::VectorImportRequest request;
     request.sourcePath = paths.geoPackage;
@@ -277,8 +272,6 @@ TEST_CASE(
     // The fixture's CircularString must be linearised using the configured
     // 4-degree maximum angle step, not passed through as its 3 controls.
     CHECK(roads->segments.size() > 8);
-    std::error_code error;
-    std::filesystem::remove_all(directory, error);
 }
 
 } // namespace

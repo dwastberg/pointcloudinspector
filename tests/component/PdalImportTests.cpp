@@ -1,6 +1,7 @@
 #include "fixtures/PdalFixtureFactory.h"
 #include "import/PointCloudImport.h"
 #include "import/local/LocalPointIndexBuilder.h"
+#include "import/local/LocalPointPageFormat.h"
 #include "import/pdal/LocalPageBuildInfrastructure.h"
 #include "import/pdal/PdalHierarchicalPointSource.h"
 #include "import/pdal/PdalPointCloudLoader.h"
@@ -36,14 +37,10 @@ namespace {
 class FixtureDirectory {
 public:
     FixtureDirectory()
-        : directory_(uniqueDirectory())
-        , paths_(pci::test::writePdalFixtures(directory_))
+        : directory_(std::filesystem::temp_directory_path(), "pcinspector-pdal")
+        , root_(std::filesystem::canonical(directory_.path()))
+        , paths_(pci::test::writePdalFixtures(root_))
     {
-    }
-
-    ~FixtureDirectory()
-    {
-        std::filesystem::remove_all(directory_);
     }
 
     [[nodiscard]] const pci::test::PdalFixturePaths &paths() const noexcept
@@ -51,20 +48,24 @@ public:
         return paths_;
     }
 
-private:
-    static std::filesystem::path uniqueDirectory()
+    [[nodiscard]] const std::filesystem::path &directory() const noexcept
     {
-        static std::atomic<std::uint64_t> sequence = 0;
-        const auto timestamp =
-            std::chrono::steady_clock::now().time_since_epoch().count();
-        return std::filesystem::temp_directory_path() /
-               ("pcinspector-pdal-" + std::to_string(timestamp) + "-" +
-                std::to_string(sequence.fetch_add(1)));
+        return root_;
     }
 
-    std::filesystem::path directory_;
+private:
+    pci::PrivateTemporaryDirectory directory_;
+    std::filesystem::path root_;
     pci::test::PdalFixturePaths paths_;
 };
+
+[[nodiscard]] pci::LocalPageCacheContextPtr
+testCache(const FixtureDirectory &fixture, const std::string_view name)
+{
+    return pci::LocalPageCacheContext::createPersistent(
+        fixture.directory() / name,
+        fixture.directory() / "cache-configuration");
+}
 
 void checkMetadata(const pci::PointCloudMetadata &metadata,
                    const std::string_view expectedDriver)
@@ -349,8 +350,7 @@ TEST_CASE(
 {
     const FixtureDirectory fixture;
     const pci::PdalPointCloudLoader loader;
-    const std::filesystem::path cache =
-        fixture.paths().las.parent_path() / "page-cache";
+    const auto cache = testCache(fixture, "page-cache");
     std::optional<bool> shellLoadingComplete;
     const pci::PointCloudLoadRequest request{
         .options =
@@ -360,7 +360,7 @@ TEST_CASE(
                 .localPaging =
                     {
                         .pointThreshold = 1,
-                        .cacheDirectory = cache,
+                        .cache = cache,
                         .pagePoints = 2,
                         .rootPreviewPoints = 2,
                         .sortMemoryBytes = 4096,
@@ -413,8 +413,7 @@ TEST_CASE("a single-page local index retains every source point",
         preflight,
         8,
         {
-            .cacheDirectory =
-                fixture.paths().las.parent_path() / "single-page-cache",
+            .cache = testCache(fixture, "single-page-cache"),
             .pointsPerLeaf = 16,
             .rootPreviewPoints = 2,
             .sortMemoryBytes = 4096,
@@ -438,7 +437,7 @@ TEST_CASE("a single-page local index retains every source point",
           pci::pointCloudNodePayloadBytes(*result.rootPayload));
 }
 
-TEST_CASE("committed v1 local page fixture remains byte-stable and readable",
+TEST_CASE("committed v1 local page fixture is rejected for rebuilding",
           "[component][pdal][local-pages][compatibility]")
 {
     const std::filesystem::path store =
@@ -455,19 +454,8 @@ TEST_CASE("committed v1 local page fixture remains byte-stable and readable",
     CHECK(sha256(store / "payload.bin") ==
           "81e5cc6dbf63a2303966063279def2f82826b439da3750d07d1a840c2c14a257");
 
-    const auto source =
-        pci::LocalPointPageSource::openCommitted(store, fingerprint, 8);
-    REQUIRE(source);
-    const auto root = source->loadNode(pci::rootPointCloudNode, {});
-    REQUIRE(root);
-    CHECK(pci::pointCloudNodePayloadPoints(*root) == 2);
-    std::uint64_t leafPoints = 0;
-    for (const pci::PointCloudNodeId child :
-         pci::childNodeIds(pci::rootPointCloudNode)) {
-        leafPoints +=
-            pci::pointCloudNodePayloadPoints(*source->loadNode(child, {}));
-    }
-    CHECK(leafPoints == pci::test::fixturePoints.size());
+    CHECK_THROWS(pci::LocalPointPageSource::openCommitted(
+        store, fingerprint, pci::ManifestAuthenticationKey{}, 8));
 }
 
 TEST_CASE(
@@ -482,19 +470,17 @@ TEST_CASE(
         .localPaging = {.pointThreshold = 1},
     };
     const pci::PointCloudImportPreflight preflight = loader.inspect(request);
-    const auto optionsFor = [](const std::filesystem::path &cache) {
+    const auto optionsFor = [](const pci::LocalPageCacheContextPtr &cache) {
         return pci::LocalPointPageStoreOptions{
-            .cacheDirectory = cache,
+            .cache = cache,
             .pointsPerLeaf = 2,
             .rootPreviewPoints = 2,
             .sortMemoryBytes = 4096,
             .diskCacheBytes = std::uint64_t{64} * 1024 * 1024,
         };
     };
-    const std::filesystem::path cacheA =
-        fixture.paths().laz.parent_path() / "cache-a";
-    const std::filesystem::path cacheB =
-        fixture.paths().laz.parent_path() / "cache-b";
+    const auto cacheA = testCache(fixture, "cache-a");
+    const auto cacheB = testCache(fixture, "cache-b");
     pci::LocalPointIndexBuilder builder;
     std::uint64_t rootPublications = 0;
     bool rootPublishedBeforeCommit = false;
@@ -599,7 +585,7 @@ TEST_CASE("concurrent local page builds publish one reusable store",
     };
     const auto preflight = loader.inspect(request);
     const pci::LocalPointPageStoreOptions options{
-        .cacheDirectory = fixture.paths().laz.parent_path() / "race-cache",
+        .cache = testCache(fixture, "race-cache"),
         .pointsPerLeaf = 2,
         .rootPreviewPoints = 2,
         .sortMemoryBytes = 4096,
@@ -634,9 +620,8 @@ TEST_CASE("local page build resources clean up with scope",
           "[component][pdal][local-pages][resources]")
 {
     const FixtureDirectory fixture;
-    const std::filesystem::path cache =
-        fixture.paths().las.parent_path() / "resource-cache";
-    std::filesystem::create_directories(cache);
+    const auto cacheContext = testCache(fixture, "resource-cache");
+    const std::filesystem::path &cache = cacheContext->directory();
     std::filesystem::path temporaryDirectory;
     {
         const pci::local_index::LocalPageBuildSession session(cache, "entry");
@@ -651,7 +636,7 @@ TEST_CASE("local page build resources clean up with scope",
         pci::local_index::LocalPageBuildLock contender(lockPath);
         CHECK(owner.tryAcquire());
         CHECK_FALSE(contender.tryAcquire());
-        CHECK(std::filesystem::is_directory(lockPath));
+        CHECK(std::filesystem::is_regular_file(lockPath));
     }
     CHECK_FALSE(std::filesystem::exists(lockPath));
 }
@@ -667,7 +652,7 @@ TEST_CASE("local page cache corruption rebuilds and source changes invalidate",
         .localPaging = {.pointThreshold = 1},
     };
     const auto options = pci::LocalPointPageStoreOptions{
-        .cacheDirectory = fixture.paths().las.parent_path() / "recovery-cache",
+        .cache = testCache(fixture, "recovery-cache"),
         .pointsPerLeaf = 2,
         .rootPreviewPoints = 2,
         .sortMemoryBytes = 4096,
@@ -675,6 +660,19 @@ TEST_CASE("local page cache corruption rebuilds and source changes invalidate",
     pci::LocalPointIndexBuilder builder;
     const auto preflight = loader.inspect(request);
     const auto first = builder.openOrBuild(preflight, 8, options);
+
+    auto wrongAuthenticationKey = options.cache->manifestAuthenticationKey();
+    wrongAuthenticationKey.front() ^= 0xffU;
+    const auto fingerprint =
+        pci::fingerprintLocalPointSource(preflight.metadata,
+                                         preflight.sourceFileBytes,
+                                         preflight.sourceModificationTime,
+                                         options);
+    CHECK_THROWS_WITH(
+        pci::readLocalPointManifest(first.storeDirectory / "manifest.pci",
+                                    fingerprint,
+                                    wrongAuthenticationKey),
+        Catch::Matchers::ContainsSubstring("authentication failed"));
 
     {
         std::fstream manifest(first.storeDirectory / "manifest.pci",
@@ -698,7 +696,7 @@ TEST_CASE("local page cache corruption rebuilds and source changes invalidate",
     CHECK(changed.storeDirectory != rebuilt.storeDirectory);
 }
 
-TEST_CASE("local page payload checksums reject corrupted detail",
+TEST_CASE("local page payload digests reject corrupted detail",
           "[component][pdal][local-pages][recovery]")
 {
     const FixtureDirectory fixture;
@@ -714,8 +712,7 @@ TEST_CASE("local page payload checksums reject corrupted detail",
         preflight,
         8,
         {
-            .cacheDirectory =
-                fixture.paths().las.parent_path() / "payload-corruption-cache",
+            .cache = testCache(fixture, "payload-corruption-cache"),
             .pointsPerLeaf = 2,
             .rootPreviewPoints = 2,
             .sortMemoryBytes = 4096,
@@ -732,7 +729,7 @@ TEST_CASE("local page payload checksums reject corrupted detail",
     }
     CHECK_THROWS_WITH(result.source->loadNode(
                           pci::childNodeId(pci::rootPointCloudNode, 0), {}),
-                      Catch::Matchers::ContainsSubstring("checksum mismatch"));
+                      Catch::Matchers::ContainsSubstring("digest mismatch"));
 }
 
 TEST_CASE("local page construction refuses an insufficient disk allowance",
@@ -746,13 +743,13 @@ TEST_CASE("local page construction refuses an insufficient disk allowance",
         .localPaging = {.pointThreshold = 1},
     };
     const auto preflight = loader.inspect(request);
-    const std::filesystem::path cache =
-        fixture.paths().las.parent_path() / "disk-limit-cache";
+    const auto cacheContext = testCache(fixture, "disk-limit-cache");
+    const std::filesystem::path &cache = cacheContext->directory();
     CHECK_THROWS_WITH(
         pci::LocalPointIndexBuilder().openOrBuild(preflight,
                                                   8,
                                                   {
-                                                      .cacheDirectory = cache,
+                                                      .cache = cacheContext,
                                                       .pointsPerLeaf = 2,
                                                       .rootPreviewPoints = 2,
                                                       .sortMemoryBytes = 4096,
@@ -787,6 +784,9 @@ TEST_CASE("cancelled local page construction never commits a partial index",
                 fixture.paths().las.parent_path() /
                 ("cancel-cache-" +
                  std::to_string(static_cast<int>(cancelStage)));
+            const auto cacheContext =
+                pci::LocalPageCacheContext::createPersistent(
+                    cache, fixture.directory() / "cache-configuration");
             std::stop_source stop;
             pci::LocalPointIndexBuilder builder;
             CHECK_THROWS_AS(
@@ -794,7 +794,7 @@ TEST_CASE("cancelled local page construction never commits a partial index",
                     preflight,
                     8,
                     {
-                        .cacheDirectory = cache,
+                        .cache = cacheContext,
                         .pointsPerLeaf = 2,
                         .rootPreviewPoints = 2,
                         .sortMemoryBytes = 4096,

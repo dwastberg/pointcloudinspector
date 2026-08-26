@@ -3,6 +3,9 @@
 #include "foundation/CheckedArithmetic.h"
 #include "import/PointCloudImport.h"
 
+#include <QByteArrayView>
+#include <QCryptographicHash>
+
 #include <algorithm>
 #include <array>
 #include <fstream>
@@ -55,7 +58,7 @@ std::vector<PointSample> ParentHierarchyBuilder::sampleChildren(
     for (const LocalPointPageRecord &child : children) {
         input.clear();
         input.seekg(static_cast<std::streamoff>(child.payloadOffset));
-        std::uint32_t checksum = 0;
+        QCryptographicHash payloadHash(QCryptographicHash::Sha256);
         for (std::uint64_t index = 0; index < child.pointCount; ++index) {
             if ((visited & 0xffffU) == 0) {
                 if (stopToken.stop_requested()) {
@@ -69,7 +72,9 @@ std::vector<PointSample> ParentHierarchyBuilder::sampleChildren(
                 throw std::runtime_error(
                     "could not read child page while building parent");
             }
-            checksum = localPointCrc32(bytes, checksum);
+            payloadHash.addData(
+                QByteArrayView(reinterpret_cast<const char *>(bytes.data()),
+                               static_cast<qsizetype>(bytes.size())));
             PointSample sample = decodeLocalPoint(bytes);
             ++visited;
             if (samples.size() < maximumPoints) {
@@ -82,9 +87,16 @@ std::vector<PointSample> ParentHierarchyBuilder::sampleChildren(
                 }
             }
         }
-        if (checksum != child.payloadChecksum) {
+        const QByteArray digestBytes = payloadHash.result();
+        LocalPointPayloadDigest digest{};
+        std::ranges::transform(
+            digestBytes, digest.begin(), [](const char value) {
+                return static_cast<std::uint8_t>(
+                    static_cast<unsigned char>(value));
+            });
+        if (digest != child.payloadDigest) {
             throw std::runtime_error(
-                "child checksum changed while building local page parent");
+                "child digest changed while building local page parent");
         }
     }
     return samples;

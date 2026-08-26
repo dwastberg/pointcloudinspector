@@ -1,7 +1,6 @@
 #include "app/ColorizeFromRasterDialog.h"
 #include "app/LayerInspectorDock.h"
 #include "app/MainWindow.h"
-#include "app/PointCloudLoadChoiceDialog.h"
 #include "app/SceneLayersDock.h"
 #include "app/SettingsDialog.h"
 #include "app/TaskDock.h"
@@ -23,26 +22,27 @@
 #include <QDialog>
 #include <QDockWidget>
 #include <QDoubleSpinBox>
+#include <QDragEnterEvent>
+#include <QDropEvent>
 #ifdef PCINSPECTOR_ENABLE_DIAGNOSTIC_UI
-#include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #endif
+#include <QFile>
 #include <QLabel>
 #include <QListView>
 #include <QListWidget>
 #include <QMenu>
+#include <QMimeData>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QSizePolicy>
 #include <QSpinBox>
 #include <QStatusBar>
+#include <QTemporaryDir>
 #include <QTest>
 #include <QTimer>
-#ifdef PCINSPECTOR_ENABLE_DIAGNOSTIC_UI
-#include <QTemporaryDir>
-#endif
 #include <QToolBar>
 #include <QToolButton>
 
@@ -386,6 +386,12 @@ public:
     inspect(const pci::VectorImportRequest &request) const override
     {
         pci::VectorImportPreflight result;
+        result.sourcePath = request.sourcePath;
+        if (request.sublayers.empty()) {
+            result.sublayers.push_back(
+                {.key = {.index = 0, .name = "default"}});
+            return result;
+        }
         for (const pci::VectorSublayerKey &key : request.sublayers) {
             result.sublayers.push_back({.key = key});
         }
@@ -939,7 +945,7 @@ TEST_CASE("main window shares its open action between menu and toolbar",
         std::make_unique<FakeViewport>(), std::move(services), 100);
 
     QAction *openAction =
-        window.findChild<QAction *>(QStringLiteral("openPointCloudAction"));
+        window.findChild<QAction *>(QStringLiteral("openFilesAction"));
     QMenu *fileMenu = window.findChild<QMenu *>(QStringLiteral("fileMenu"));
     QToolBar *toolBar =
         window.findChild<QToolBar *>(QStringLiteral("pointCloudToolBar"));
@@ -969,12 +975,13 @@ TEST_CASE("main toolbar follows data, camera, display, settings order",
     auto *toolBar =
         window.findChild<QToolBar *>(QStringLiteral("pointCloudToolBar"));
     auto *fileMenu = window.findChild<QMenu *>(QStringLiteral("fileMenu"));
-    auto *open =
-        window.findChild<QAction *>(QStringLiteral("openPointCloudAction"));
+    auto *open = window.findChild<QAction *>(QStringLiteral("openFilesAction"));
     auto *add =
         window.findChild<QAction *>(QStringLiteral("addPointCloudAction"));
     auto *vector =
         window.findChild<QAction *>(QStringLiteral("importVectorLayerAction"));
+    auto *raster =
+        window.findChild<QAction *>(QStringLiteral("importRasterLayerAction"));
     auto *fit = window.findChild<QAction *>(QStringLiteral("fitSceneAction"));
     auto *topDown =
         window.findChild<QAction *>(QStringLiteral("topDownSceneAction"));
@@ -991,8 +998,9 @@ TEST_CASE("main toolbar follows data, camera, display, settings order",
     REQUIRE(toolBar != nullptr);
     REQUIRE(fileMenu != nullptr);
     REQUIRE(open != nullptr);
-    REQUIRE(add != nullptr);
-    REQUIRE(vector != nullptr);
+    CHECK(add == nullptr);
+    CHECK(vector == nullptr);
+    CHECK(raster == nullptr);
     REQUIRE(fit != nullptr);
     REQUIRE(topDown != nullptr);
     REQUIRE(orthographic != nullptr);
@@ -1019,10 +1027,7 @@ TEST_CASE("main toolbar follows data, camera, display, settings order",
     REQUIRE(pointSizeAction != nullptr);
     REQUIRE(depthAction != nullptr);
     REQUIRE(spacerAction != nullptr);
-    CHECK_FALSE(actions.contains(add));
-    CHECK(fileMenu->actions().contains(add));
-    CHECK(ordered(open, vector));
-    CHECK(ordered(vector, fit));
+    CHECK(ordered(open, fit));
     CHECK(ordered(fit, topDown));
     CHECK(ordered(topDown, orthographic));
     CHECK(ordered(orthographic, pointSizeAction));
@@ -1035,7 +1040,6 @@ TEST_CASE("main toolbar follows data, camera, display, settings order",
     CHECK(topDown->iconText() == QStringLiteral("Top Down"));
     CHECK(orthographic->iconText() == QStringLiteral("Orthographic"));
     CHECK_FALSE(open->icon().isNull());
-    CHECK_FALSE(vector->icon().isNull());
     CHECK_FALSE(fit->icon().isNull());
     CHECK_FALSE(topDown->icon().isNull());
     CHECK_FALSE(orthographic->icon().isNull());
@@ -1043,7 +1047,7 @@ TEST_CASE("main toolbar follows data, camera, display, settings order",
     CHECK(toolBar->iconSize() == QSize(20, 20));
 }
 
-TEST_CASE("vector import remains disabled until renderer capability is known",
+TEST_CASE("unified open remains available while vector capability is unknown",
           "[ui][mainwindow][vector]")
 {
     pci::MainWindow window(
@@ -1051,15 +1055,160 @@ TEST_CASE("vector import remains disabled until renderer capability is known",
         makeTestImportServices(std::make_shared<ImmediateLoader>()),
         100);
     QAction *action =
-        window.findChild<QAction *>(QStringLiteral("importVectorLayerAction"));
+        window.findChild<QAction *>(QStringLiteral("openFilesAction"));
     QToolBar *toolBar =
         window.findChild<QToolBar *>(QStringLiteral("pointCloudToolBar"));
     REQUIRE(action);
     REQUIRE(toolBar);
-    CHECK_FALSE(action->isEnabled());
+    CHECK(action->isEnabled());
     CHECK(toolBar->actions().contains(action));
-    CHECK(action->iconText() == QStringLiteral("Vector…"));
-    CHECK(action->shortcut() == QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_V));
+    CHECK(action->iconText() == QStringLiteral("Open…"));
+    CHECK(action->shortcut() == QKeySequence::Open);
+}
+
+TEST_CASE("unified open waits for vector capability before dispatching",
+          "[ui][mainwindow][source-open][vector]")
+{
+    auto viewport = std::make_unique<FakeViewport>();
+    FakeViewport *viewportPointer = viewport.get();
+    auto services = makeTestImportServices(std::make_shared<ImmediateLoader>());
+    pci::MainWindow window(std::move(viewport), std::move(services), 100);
+
+    window.openSources({"survey.gpkg"});
+    QTest::qWait(20);
+    CHECK(viewportPointer->document() == nullptr);
+
+    viewportPointer->setVectorOverlayCapability(
+        pci::VectorOverlayCapability::Supported);
+    REQUIRE(waitFor([&] {
+        return viewportPointer->document() != nullptr &&
+               viewportPointer->document()->vectorLayerCount() == 1;
+    }));
+}
+
+TEST_CASE("unified open loads a mixed point vector and raster selection",
+          "[ui][mainwindow][source-open]")
+{
+    auto rasterLoader = std::make_shared<StubRasterLoader>();
+    auto viewport = std::make_unique<FakeViewport>();
+    FakeViewport *viewportPointer = viewport.get();
+    auto services =
+        makeTestImportServices(std::make_shared<ImmediateLoader>(),
+                               std::make_shared<DisjointVectorLoader>(),
+                               {},
+                               rasterLoader);
+    pci::MainWindow window(std::move(viewport), std::move(services), 100);
+    viewportPointer->setVectorOverlayCapability(
+        pci::VectorOverlayCapability::Supported);
+
+    window.openSources({"cloud.laz", "ortho.tif", "survey.gpkg"});
+
+    REQUIRE(waitFor([&] {
+        return viewportPointer->document() &&
+               viewportPointer->document()->layerCount() == 1 &&
+               viewportPointer->document()->vectorLayerCount() == 1 &&
+               viewportPointer->document()->rasterLayerCount() == 1;
+    }));
+    CHECK(rasterLoader->inspectCalls.load() == 1);
+    CHECK(rasterLoader->lastSourcePath == std::filesystem::path("ortho.tif"));
+}
+
+TEST_CASE("unified open routes GeoPackage exclusively to vector loading",
+          "[ui][mainwindow][source-open][gpkg]")
+{
+    auto rasterLoader = std::make_shared<StubRasterLoader>();
+    auto viewport = std::make_unique<FakeViewport>();
+    FakeViewport *viewportPointer = viewport.get();
+    auto services =
+        makeTestImportServices(std::make_shared<ImmediateLoader>(),
+                               std::make_shared<DisjointVectorLoader>(),
+                               {},
+                               rasterLoader);
+    pci::MainWindow window(std::move(viewport), std::move(services), 100);
+    viewportPointer->setVectorOverlayCapability(
+        pci::VectorOverlayCapability::Supported);
+
+    window.openSources({"catalog.gti.gpkg"});
+
+    REQUIRE(waitFor([&] {
+        return viewportPointer->document() &&
+               viewportPointer->document()->vectorLayerCount() == 1;
+    }));
+    CHECK(viewportPointer->document()->rasterLayerCount() == 0);
+    CHECK(rasterLoader->inspectCalls.load() == 0);
+}
+
+TEST_CASE("main window accepts and opens mixed local file drops",
+          "[ui][mainwindow][source-open][drag-drop]")
+{
+    QTemporaryDir directory;
+    REQUIRE(directory.isValid());
+    const QString cloudPath = directory.filePath(QStringLiteral("mätning.laz"));
+    const QString rasterPath = directory.filePath(QStringLiteral("ortho.tif"));
+    const QString vectorPath = directory.filePath(QStringLiteral("roads.gpkg"));
+    for (const QString &path : {cloudPath, rasterPath, vectorPath}) {
+        QFile file(path);
+        REQUIRE(file.open(QIODevice::WriteOnly));
+    }
+
+    auto viewport = std::make_unique<FakeViewport>();
+    FakeViewport *viewportPointer = viewport.get();
+    auto services = makeTestImportServices(std::make_shared<ImmediateLoader>());
+    pci::MainWindow window(std::move(viewport), std::move(services), 100);
+    viewportPointer->setVectorOverlayCapability(
+        pci::VectorOverlayCapability::Supported);
+
+    QMimeData mimeData;
+    mimeData.setUrls({QUrl::fromLocalFile(cloudPath),
+                      QUrl::fromLocalFile(rasterPath),
+                      QUrl::fromLocalFile(vectorPath)});
+    QDragEnterEvent enter(QPoint(10, 10),
+                          Qt::CopyAction,
+                          &mimeData,
+                          Qt::LeftButton,
+                          Qt::NoModifier);
+    QApplication::sendEvent(&window, &enter);
+    CHECK(enter.isAccepted());
+
+    QDropEvent drop(QPointF(10.0, 10.0),
+                    Qt::CopyAction,
+                    &mimeData,
+                    Qt::LeftButton,
+                    Qt::NoModifier);
+    QApplication::sendEvent(&window, &drop);
+    CHECK(drop.isAccepted());
+    REQUIRE(waitFor([&] {
+        return viewportPointer->document() &&
+               viewportPointer->document()->layerCount() == 1 &&
+               viewportPointer->document()->vectorLayerCount() == 1 &&
+               viewportPointer->document()->rasterLayerCount() == 1;
+    }));
+    CHECK(viewportPointer->document()
+              ->pointLayers()
+              .front()
+              .scene->metadata()
+              .sourcePath.filename() == std::filesystem::path(u8"mätning.laz"));
+}
+
+TEST_CASE("main window rejects non-local and directory-only drops",
+          "[ui][mainwindow][source-open][drag-drop]")
+{
+    QTemporaryDir directory;
+    REQUIRE(directory.isValid());
+    auto services = makeTestImportServices(std::make_shared<ImmediateLoader>());
+    pci::MainWindow window(
+        std::make_unique<FakeViewport>(), std::move(services), 100);
+
+    QMimeData mimeData;
+    mimeData.setUrls({QUrl(QStringLiteral("https://example.com/cloud.laz")),
+                      QUrl::fromLocalFile(directory.path())});
+    QDragEnterEvent enter(QPoint(10, 10),
+                          Qt::CopyAction,
+                          &mimeData,
+                          Qt::LeftButton,
+                          Qt::NoModifier);
+    QApplication::sendEvent(&window, &enter);
+    CHECK_FALSE(enter.isAccepted());
 }
 
 TEST_CASE("main window rejects incomplete or mismatched import services",
@@ -1118,10 +1267,6 @@ TEST_CASE("main window retains an XY-disjoint vector import hidden",
     window.show();
     viewportPointer->setVectorOverlayCapability(
         pci::VectorOverlayCapability::Supported);
-    auto *importAction =
-        window.findChild<QAction *>(QStringLiteral("importVectorLayerAction"));
-    REQUIRE(importAction != nullptr);
-    CHECK(importAction->isEnabled());
 
     pci::VectorImportRequest request;
     request.limits.maximumApplicationWorkingBytes = 1024;
@@ -1135,10 +1280,14 @@ TEST_CASE("main window retains an XY-disjoint vector import hidden",
     REQUIRE(layers.size() == 1);
     CHECK_FALSE(layers.front().visible);
     CHECK(layers.front().data->extentDisjointXY);
+    const int framedAfterFirstLayer =
+        viewportPointer->frameVisibleLayersCount();
+    CHECK(framedAfterFirstLayer == 1);
     auto *fit = window.findChild<QAction *>(QStringLiteral("fitSceneAction"));
     REQUIRE(fit != nullptr);
     fit->trigger();
-    CHECK(viewportPointer->frameVisibleLayersCount() == 1);
+    CHECK(viewportPointer->frameVisibleLayersCount() ==
+          framedAfterFirstLayer + 1);
 }
 
 TEST_CASE(
@@ -1474,29 +1623,6 @@ TEST_CASE("main window color selectors apply compatible renderer modes",
         pci::PointColorMap::LasClassification);
 }
 
-TEST_CASE(
-    "point-cloud load choice dialog completes without a nested event loop",
-    "[ui][mainwindow]")
-{
-    pci::PointCloudLoadChoiceDialog dialog;
-    std::optional<pci::PointCloudLoadMode> choice;
-    dialog.openForDecision([&choice](const auto value) {
-        choice = value;
-    });
-    REQUIRE(waitFor([&] {
-        return dialog.isVisible();
-    }));
-
-    auto *addButton =
-        dialog.findChild<QPushButton *>(QStringLiteral("addToSceneButton"));
-    REQUIRE(addButton != nullptr);
-    addButton->click();
-    REQUIRE(waitFor([&] {
-        return choice.has_value();
-    }));
-    CHECK(*choice == pci::PointCloudLoadMode::Add);
-}
-
 TEST_CASE("main window add mode keeps per-layer colors independent",
           "[ui][mainwindow]")
 {
@@ -1513,7 +1639,7 @@ TEST_CASE("main window add mode keeps per-layer colors independent",
     window.show();
 
     auto *openAction =
-        window.findChild<QAction *>(QStringLiteral("openPointCloudAction"));
+        window.findChild<QAction *>(QStringLiteral("openFilesAction"));
     auto *list =
         window.findChild<QListView *>(QStringLiteral("pointCloudLayerList"));
     auto *sources =
@@ -1873,7 +1999,7 @@ TEST_CASE("layer panel reflects and toggles document layers",
     window.show();
 
     auto *openAction =
-        window.findChild<QAction *>(QStringLiteral("openPointCloudAction"));
+        window.findChild<QAction *>(QStringLiteral("openFilesAction"));
     auto *panel =
         window.findChild<QDockWidget *>(QStringLiteral("pointCloudLayerPanel"));
     auto *toggle = window.findChild<QAction *>(
@@ -2498,7 +2624,7 @@ TEST_CASE(
     window.show();
 
     auto *openAction =
-        window.findChild<QAction *>(QStringLiteral("openPointCloudAction"));
+        window.findChild<QAction *>(QStringLiteral("openFilesAction"));
     REQUIRE(openAction != nullptr);
 
     window.loadPointClouds({"first.las", "second.las", "third.las"},
@@ -2573,7 +2699,7 @@ TEST_CASE("add batch leaves the camera where the user put it",
     window.show();
 
     auto *openAction =
-        window.findChild<QAction *>(QStringLiteral("openPointCloudAction"));
+        window.findChild<QAction *>(QStringLiteral("openFilesAction"));
     REQUIRE(openAction != nullptr);
 
     window.loadPointClouds({"first.las"}, pci::PointCloudLoadMode::Replace);
@@ -2773,7 +2899,7 @@ TEST_CASE("main window keeps replacements transactional and removes cancelled "
     window.show();
 
     auto *openAction =
-        window.findChild<QAction *>(QStringLiteral("openPointCloudAction"));
+        window.findChild<QAction *>(QStringLiteral("openFilesAction"));
     auto *cancel =
         window.findChild<QPushButton *>(QStringLiteral("loadingCancelButton"));
     REQUIRE(openAction != nullptr);
@@ -3209,31 +3335,27 @@ TEST_CASE("main window archives native Release H metrics",
 
 } // namespace
 
-TEST_CASE("main window exposes a raster import action",
+TEST_CASE("main window exposes raster opening through the unified action",
           "[ui][mainwindow][raster]")
 {
     auto services = makeTestImportServices(std::make_shared<ImmediateLoader>());
     pci::MainWindow window(
         std::make_unique<FakeViewport>(), std::move(services), 100);
 
-    auto *raster =
-        window.findChild<QAction *>(QStringLiteral("importRasterLayerAction"));
+    auto *open = window.findChild<QAction *>(QStringLiteral("openFilesAction"));
     auto *fileMenu = window.findChild<QMenu *>(QStringLiteral("fileMenu"));
     auto *toolBar =
         window.findChild<QToolBar *>(QStringLiteral("pointCloudToolBar"));
 
-    REQUIRE(raster != nullptr);
+    REQUIRE(open != nullptr);
     REQUIRE(fileMenu != nullptr);
     REQUIRE(toolBar != nullptr);
-    CHECK(fileMenu->actions().contains(raster));
-    CHECK(toolBar->actions().contains(raster));
-    CHECK(raster->shortcut() == QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_R));
-    CHECK_FALSE(raster->icon().isNull());
-
-    // Raster import is a menu and toolbar action only; unlike point clouds it
-    // takes no positional command-line input, and unlike vector overlays it
-    // does not depend on a renderer capability probe.
-    CHECK(raster->isEnabled());
+    CHECK(fileMenu->actions().contains(open));
+    CHECK(toolBar->actions().contains(open));
+    CHECK(open->shortcut() == QKeySequence::Open);
+    CHECK_FALSE(open->icon().isNull());
+    CHECK(window.findChild<QAction *>(
+              QStringLiteral("importRasterLayerAction")) == nullptr);
 }
 
 TEST_CASE("main window publishes imported rasters to the viewport",

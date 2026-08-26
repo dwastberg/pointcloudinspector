@@ -45,7 +45,7 @@ SceneSession::SceneSession(
     const std::uint64_t maximumLoadPoints,
     const std::uint64_t decodedByteBudget,
     std::optional<AutomaticMemoryBudgetParameters> automaticMemoryBudget,
-    std::filesystem::path localPageCacheDirectory,
+    LocalPageCacheContextPtr localPageCache,
     PointColorMapCatalogSnapshotPtr colorMaps,
     QObject *parent)
     : QObject(parent)
@@ -61,7 +61,7 @@ SceneSession::SceneSession(
     , maximumLoadPoints_(maximumLoadPoints)
     , decodedByteBudget_(decodedByteBudget)
     , automaticMemoryBudget_(automaticMemoryBudget)
-    , localPageCacheDirectory_(std::move(localPageCacheDirectory))
+    , localPageCache_(std::move(localPageCache))
 {
     qRegisterMetaType<SceneDocumentSnapshotPtr>();
     qRegisterMetaType<LoadingProgressState>();
@@ -160,7 +160,8 @@ bool SceneSession::batchLoading() const noexcept
 
 bool SceneSession::hasActiveVectorLoads() const noexcept
 {
-    return importServices_.vector->hasActiveJobs();
+    return !pendingVectorImports_.empty() ||
+           importServices_.vector->hasActiveJobs();
 }
 
 bool SceneSession::hasActiveRasterLoads() const noexcept
@@ -309,10 +310,11 @@ void SceneSession::connectVectorController()
                    const VectorSublayerKey &,
                    VectorLayerDataPtr data) {
                 assertOwnerThread(*this);
+                const bool wasEmpty = !document_->hasAnyLayer();
                 const bool visible = !data->extentDisjointXY;
                 static_cast<void>(
                     document_->addVectorLayer(std::move(data), visible));
-                publishDocument();
+                publishDocument(wasEmpty, false);
             });
     connect(&controller,
             &VectorLoadController::sublayerFailed,
@@ -633,7 +635,7 @@ void SceneSession::loadPointClouds(
                     .maximumPoints = maximumLoadPoints_,
                     .localPaging =
                         {
-                            .cacheDirectory = localPageCacheDirectory_,
+                            .cache = localPageCache_,
                         },
                 },
             .resources =
@@ -662,6 +664,126 @@ void SceneSession::loadPointClouds(
     });
     emit statusChanged(
         QStringLiteral("Loading %1 point clouds…").arg(sourcePaths.size()));
+}
+
+void SceneSession::openSources(std::vector<SupportedSource> sources)
+{
+    assertOwnerThread(*this);
+    if (sources.empty()) {
+        return;
+    }
+    if (loading_) {
+        emit statusChanged(
+            QStringLiteral("Finish or cancel the active point-cloud load "
+                           "before opening more files."));
+        return;
+    }
+
+    const std::string targetSpatialReferenceWkt =
+        document_->referenceSpatialReferenceWkt();
+    const std::optional<Bounds3d> targetExtent =
+        document_->visibleSceneBounds();
+    std::vector<std::filesystem::path> pointClouds;
+    std::vector<VectorImportRequest> vectors;
+    std::vector<RasterImportRequest> rasters;
+    pointClouds.reserve(sources.size());
+    vectors.reserve(sources.size());
+    rasters.reserve(sources.size());
+
+    for (SupportedSource &source : sources) {
+        switch (source.kind) {
+        case SupportedSourceKind::PointCloud:
+            pointClouds.push_back(std::move(source.path));
+            break;
+        case SupportedSourceKind::Vector:
+            vectors.push_back({
+                .sourcePath = std::move(source.path),
+                .sublayers = {},
+                .origin = std::nullopt,
+                .limits = {},
+                .targetSpatialReferenceWkt = targetSpatialReferenceWkt,
+                .targetExtent = targetExtent,
+                .stopToken = {},
+                .progress = {},
+            });
+            break;
+        case SupportedSourceKind::Raster:
+            rasters.push_back({
+                .sourcePath = std::move(source.path),
+                .targetSpatialReferenceWkt = targetSpatialReferenceWkt,
+                .targetExtent = targetExtent,
+                .stopToken = {},
+                .phase = {},
+            });
+            break;
+        }
+    }
+
+    if (!pointClouds.empty()) {
+        loadPointClouds(std::move(pointClouds), PointCloudLoadMode::Add);
+    }
+    for (RasterImportRequest &request : rasters) {
+        static_cast<void>(startRasterImport(std::move(request)));
+    }
+    if (!rasters.empty() || !vectors.empty()) {
+        emit showTasksRequested();
+    }
+
+    switch (vectorImportAvailability_) {
+    case VectorImportAvailability::Supported:
+        for (VectorImportRequest &request : vectors) {
+            static_cast<void>(startVectorImport(std::move(request)));
+        }
+        break;
+    case VectorImportAvailability::Unknown:
+        pendingVectorImports_.insert(pendingVectorImports_.end(),
+                                     std::make_move_iterator(vectors.begin()),
+                                     std::make_move_iterator(vectors.end()));
+        if (!vectors.empty()) {
+            emit statusChanged(QStringLiteral(
+                "Waiting for vector-overlay support to initialize…"));
+        }
+        break;
+    case VectorImportAvailability::Unsupported:
+        if (!vectors.empty()) {
+            emit statusChanged(
+                vectorImportUnavailableReason_.isEmpty()
+                    ? QStringLiteral(
+                          "Vector sources are not supported by the active "
+                          "renderer.")
+                    : vectorImportUnavailableReason_);
+        }
+        break;
+    }
+}
+
+void SceneSession::setVectorImportAvailability(
+    const VectorImportAvailability availability, QString reason)
+{
+    assertOwnerThread(*this);
+    vectorImportAvailability_ = availability;
+    vectorImportUnavailableReason_ = std::move(reason);
+    if (availability == VectorImportAvailability::Unknown ||
+        pendingVectorImports_.empty()) {
+        return;
+    }
+    if (availability == VectorImportAvailability::Unsupported) {
+        const std::size_t count = pendingVectorImports_.size();
+        pendingVectorImports_.clear();
+        emit statusChanged(
+            vectorImportUnavailableReason_.isEmpty()
+                ? QStringLiteral("Skipped %1 vector source(s): vector "
+                                 "overlays are unavailable.")
+                      .arg(count)
+                : vectorImportUnavailableReason_);
+        return;
+    }
+
+    std::vector<VectorImportRequest> pending = std::move(pendingVectorImports_);
+    pendingVectorImports_.clear();
+    for (VectorImportRequest &request : pending) {
+        static_cast<void>(startVectorImport(std::move(request)));
+    }
 }
 
 void SceneSession::beginLoad(const std::filesystem::path &sourcePath,
@@ -697,7 +819,7 @@ LoadJobId SceneSession::startLoadJob(const std::filesystem::path &sourcePath,
                 .maximumPoints = maximumLoadPoints_,
                 .localPaging =
                     {
-                        .cacheDirectory = localPageCacheDirectory_,
+                        .cache = localPageCache_,
                     },
             },
         .resources =
@@ -921,6 +1043,7 @@ bool SceneSession::revertPointCloudColors(const PointCloudLayerId pointLayerId)
 void SceneSession::cancelAllLoads()
 {
     assertOwnerThread(*this);
+    pendingVectorImports_.clear();
     cancelAll();
     vectorLoadController().cancelAll();
     rasterLoadController().cancelAll();

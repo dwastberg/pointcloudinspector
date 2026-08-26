@@ -3,6 +3,7 @@
 #include "pointcloud/PointCloudMetadata.h"
 #include "scene/BlockPartitioner.h"
 #include "scene/PointCloudNode.h"
+#include "storage/SecureStorage.h"
 
 #include <array>
 #include <cstddef>
@@ -14,13 +15,13 @@
 
 namespace pci {
 
-inline constexpr std::uint32_t localPointPageFormatVersion = 1;
+inline constexpr std::uint32_t localPointPageFormatVersion = 2;
 inline constexpr std::uint32_t localPointPageSchemaVersion = 1;
-inline constexpr std::uint32_t localPointPageBuildRevision = 4;
+inline constexpr std::uint32_t localPointPageBuildRevision = 5;
 inline constexpr std::size_t localPointDiskBytes = 34;
 
 struct LocalPointPageStoreOptions {
-    std::filesystem::path cacheDirectory;
+    LocalPageCacheContextPtr cache;
     std::uint32_t pointsPerLeaf = 32'768;
     std::uint32_t rootPreviewPoints = 16'384;
     std::uint64_t sortMemoryBytes = std::uint64_t{64} * 1024 * 1024;
@@ -30,6 +31,7 @@ struct LocalPointPageStoreOptions {
 };
 
 using LocalPointSourceFingerprint = std::array<std::uint8_t, 32>;
+using LocalPointPayloadDigest = std::array<std::uint8_t, 32>;
 
 struct LocalPointPageRecord {
     PointCloudNodeId id;
@@ -38,7 +40,7 @@ struct LocalPointPageRecord {
     std::uint64_t pointCount = 0;
     std::uint64_t payloadOffset = 0;
     std::uint64_t payloadBytes = 0;
-    std::uint32_t payloadChecksum = 0;
+    LocalPointPayloadDigest payloadDigest{};
 };
 
 struct LocalPointScalarRanges {
@@ -74,18 +76,20 @@ localPointFingerprintHex(const LocalPointSourceFingerprint &fingerprint);
 [[nodiscard]] std::uint64_t localPointCurrentProcessId() noexcept;
 [[nodiscard]] bool localPointProcessAlive(std::uint64_t processId) noexcept;
 
-[[nodiscard]] std::uint32_t
-localPointCrc32(std::span<const std::byte> bytes,
-                std::uint32_t previous = 0) noexcept;
+[[nodiscard]] LocalPointPayloadDigest
+localPointPayloadDigest(std::span<const std::byte> bytes);
 [[nodiscard]] std::array<std::byte, localPointDiskBytes>
 encodeLocalPoint(const PointSample &point) noexcept;
 [[nodiscard]] PointSample
 decodeLocalPoint(std::span<const std::byte, localPointDiskBytes> bytes);
 
-void writeLocalPointManifest(const std::filesystem::path &path,
-                             const LocalPointPageManifest &manifest);
+void writeLocalPointManifest(
+    const std::filesystem::path &path,
+    const LocalPointPageManifest &manifest,
+    const ManifestAuthenticationKey &authenticationKey);
 [[nodiscard]] LocalPointPageManifest
 readLocalPointManifest(const std::filesystem::path &path,
-                       const LocalPointSourceFingerprint &expectedFingerprint);
+                       const LocalPointSourceFingerprint &expectedFingerprint,
+                       const ManifestAuthenticationKey &authenticationKey);
 
 } // namespace pci

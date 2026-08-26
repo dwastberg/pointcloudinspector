@@ -5,6 +5,7 @@
 #include "platform/ProcessMemory.h"
 #include "renderer/planning/RasterLodPlanner.h"
 #include "renderer/rhi/RasterTileStreamer.h"
+#include "storage/SecureStorage.h"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -20,12 +21,21 @@ namespace {
 // The corpus is fixed in size rather than scaled to available memory. A
 // memory-relative fixture behaves differently on CI than on a workstation and
 // turns a pass/fail bound into a coin flip.
+struct GdalFixtures final {
+    GdalFixtures()
+        : directory(std::filesystem::temp_directory_path(), "pci-raster-stress")
+        , paths(pci::test::writeGdalRasterFixtures(directory.path()))
+    {
+    }
+
+    pci::PrivateTemporaryDirectory directory;
+    pci::test::GdalRasterFixturePaths paths;
+};
+
 const pci::test::GdalRasterFixturePaths &fixtures()
 {
-    static const pci::test::GdalRasterFixturePaths paths =
-        pci::test::writeGdalRasterFixtures(
-            std::filesystem::temp_directory_path() / "pci-raster-stress");
-    return paths;
+    static const GdalFixtures fixture;
+    return fixture.paths;
 }
 
 [[nodiscard]] pci::RasterLayerDataPtr load(const std::filesystem::path &path,

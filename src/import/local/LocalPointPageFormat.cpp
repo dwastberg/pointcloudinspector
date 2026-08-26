@@ -1,10 +1,14 @@
 #include "import/local/LocalPointPageFormat.h"
 
 #include "foundation/CheckedArithmetic.h"
+#include "platform/QtPath.h"
 #include "pointcloud/GpuPointProperties.h"
 
 #include <QByteArray>
 #include <QCryptographicHash>
+#include <QFile>
+#include <QIODeviceBase>
+#include <QMessageAuthenticationCode>
 
 #include <algorithm>
 #include <bit>
@@ -41,9 +45,10 @@ constexpr std::array<std::byte, 8> manifestMagic{std::byte{'P'},
                                                  std::byte{'G'},
                                                  std::byte{'S'},
                                                  std::byte{'0'},
-                                                 std::byte{'1'}};
+                                                 std::byte{'2'}};
 constexpr std::uint32_t endianMarker = 0x01020304U;
 constexpr std::uint64_t sourceSampleBytes = std::uint64_t{64} * 1024;
+constexpr std::uint64_t maximumManifestBytes = std::uint64_t{256} * 1024 * 1024;
 constexpr std::uint8_t maximumSupportedLevel = 20;
 
 template <typename Integer>
@@ -219,8 +224,10 @@ std::vector<std::byte> readFile(const std::filesystem::path &path)
                                  path.string());
     }
     const std::streamoff end = input.tellg();
-    if (end < 0 || static_cast<std::uintmax_t>(end) >
-                       std::numeric_limits<std::size_t>::max()) {
+    if (end < 0 ||
+        static_cast<std::uintmax_t>(end) >
+            std::numeric_limits<std::size_t>::max() ||
+        static_cast<std::uintmax_t>(end) > maximumManifestBytes) {
         throw std::runtime_error("local page manifest is too large");
     }
     std::vector<std::byte> bytes(static_cast<std::size_t>(end));
@@ -379,18 +386,18 @@ bool localPointProcessAlive(const std::uint64_t processId) noexcept
 #endif
 }
 
-std::uint32_t localPointCrc32(const std::span<const std::byte> bytes,
-                              const std::uint32_t previous) noexcept
+LocalPointPayloadDigest
+localPointPayloadDigest(const std::span<const std::byte> bytes)
 {
-    std::uint32_t crc = ~previous;
-    for (const std::byte byte : bytes) {
-        crc ^= std::to_integer<std::uint8_t>(byte);
-        for (int bit = 0; bit < 8; ++bit) {
-            const std::uint32_t mask = 0U - (crc & 1U);
-            crc = (crc >> 1U) ^ (0xedb88320U & mask);
-        }
-    }
-    return ~crc;
+    QCryptographicHash hash(QCryptographicHash::Sha256);
+    hash.addData(QByteArrayView(reinterpret_cast<const char *>(bytes.data()),
+                                static_cast<qsizetype>(bytes.size())));
+    const QByteArray result = hash.result();
+    LocalPointPayloadDigest digest{};
+    std::ranges::transform(result, digest.begin(), [](const char value) {
+        return static_cast<std::uint8_t>(static_cast<unsigned char>(value));
+    });
+    return digest;
 }
 
 std::array<std::byte, localPointDiskBytes>
@@ -432,7 +439,8 @@ decodeLocalPoint(const std::span<const std::byte, localPointDiskBytes> bytes)
 }
 
 void writeLocalPointManifest(const std::filesystem::path &path,
-                             const LocalPointPageManifest &manifest)
+                             const LocalPointPageManifest &manifest,
+                             const ManifestAuthenticationKey &authenticationKey)
 {
     if (!manifest.metadata.sourceBounds.valid() ||
         manifest.maximumLevel > maximumSupportedLevel ||
@@ -487,43 +495,75 @@ void writeLocalPointManifest(const std::filesystem::path &path,
         appendInteger(bytes, page.pointCount);
         appendInteger(bytes, page.payloadOffset);
         appendInteger(bytes, page.payloadBytes);
-        appendInteger(bytes, page.payloadChecksum);
+        for (const std::uint8_t value : page.payloadDigest) {
+            bytes.push_back(static_cast<std::byte>(value));
+        }
     }
-    appendInteger(bytes, localPointCrc32(bytes));
+    QMessageAuthenticationCode authentication(
+        QCryptographicHash::Sha256,
+        QByteArrayView(reinterpret_cast<const char *>(authenticationKey.data()),
+                       static_cast<qsizetype>(authenticationKey.size())));
+    authentication.addData(
+        QByteArrayView(reinterpret_cast<const char *>(bytes.data()),
+                       static_cast<qsizetype>(bytes.size())));
+    const QByteArray tag = authentication.result();
+    for (const char value : tag) {
+        bytes.push_back(
+            static_cast<std::byte>(static_cast<unsigned char>(value)));
+    }
 
-    std::ofstream output(path, std::ios::binary | std::ios::trunc);
-    if (!output) {
+    QFile output(pathToQString(path));
+    if (!output.open(QIODeviceBase::WriteOnly | QIODeviceBase::NewOnly,
+                     QFile::ReadOwner | QFile::WriteOwner)) {
         throw std::runtime_error("could not create local page manifest: " +
                                  path.string());
     }
-    output.write(reinterpret_cast<const char *>(bytes.data()),
-                 static_cast<std::streamsize>(bytes.size()));
-    output.flush();
-    if (!output) {
+    if (output.write(reinterpret_cast<const char *>(bytes.data()),
+                     static_cast<qint64>(bytes.size())) !=
+            static_cast<qint64>(bytes.size()) ||
+        !output.flush()) {
         throw std::runtime_error("could not write local page manifest");
     }
 }
 
 LocalPointPageManifest
 readLocalPointManifest(const std::filesystem::path &path,
-                       const LocalPointSourceFingerprint &expectedFingerprint)
+                       const LocalPointSourceFingerprint &expectedFingerprint,
+                       const ManifestAuthenticationKey &authenticationKey)
 {
     const std::vector<std::byte> bytes = readFile(path);
-    if (bytes.size() < manifestMagic.size() + sizeof(std::uint32_t)) {
+    constexpr std::size_t authenticationTagBytes = 32;
+    if (bytes.size() < manifestMagic.size() + authenticationTagBytes) {
         throw std::runtime_error("truncated local page manifest");
     }
     const std::span<const std::byte> manifestBytes{bytes};
-    const std::uint32_t storedChecksum = [&] {
-        ByteReader tail(manifestBytes.last(sizeof(std::uint32_t)));
-        return tail.integer<std::uint32_t>();
-    }();
-    if (localPointCrc32(manifestBytes.first(
-            bytes.size() - sizeof(std::uint32_t))) != storedChecksum) {
-        throw std::runtime_error("local page manifest checksum mismatch");
+    const std::span<const std::byte> authenticatedBytes =
+        manifestBytes.first(bytes.size() - authenticationTagBytes);
+    const std::span<const std::byte> storedTag =
+        manifestBytes.last(authenticationTagBytes);
+    QMessageAuthenticationCode authentication(
+        QCryptographicHash::Sha256,
+        QByteArrayView(reinterpret_cast<const char *>(authenticationKey.data()),
+                       static_cast<qsizetype>(authenticationKey.size())));
+    authentication.addData(QByteArrayView(
+        reinterpret_cast<const char *>(authenticatedBytes.data()),
+        static_cast<qsizetype>(authenticatedBytes.size())));
+    const QByteArray expectedTag = authentication.result();
+    if (expectedTag.size() != static_cast<qsizetype>(authenticationTagBytes)) {
+        throw std::runtime_error(
+            "could not compute local page manifest authentication tag");
+    }
+    std::uint8_t difference = 0;
+    for (std::size_t index = 0; index < authenticationTagBytes; ++index) {
+        difference |= std::to_integer<std::uint8_t>(storedTag[index]) ^
+                      static_cast<std::uint8_t>(static_cast<unsigned char>(
+                          expectedTag[static_cast<qsizetype>(index)]));
+    }
+    if (difference != 0) {
+        throw std::runtime_error("local page manifest authentication failed");
     }
 
-    ByteReader reader(
-        manifestBytes.first(bytes.size() - sizeof(std::uint32_t)));
+    ByteReader reader(authenticatedBytes);
     if (!std::ranges::equal(reader.take(manifestMagic.size()), manifestMagic)) {
         throw std::runtime_error("local page manifest magic mismatch");
     }
@@ -587,7 +627,7 @@ readLocalPointManifest(const std::filesystem::path &path,
     }
     manifest.payloadFileBytes = reader.integer<std::uint64_t>();
     const std::uint64_t pageCount = reader.integer<std::uint64_t>();
-    constexpr std::size_t minimumPageRecordBytes = 97;
+    constexpr std::size_t minimumPageRecordBytes = 125;
     if (pageCount == 0 ||
         pageCount > reader.remaining() / minimumPageRecordBytes) {
         throw std::runtime_error("invalid local page table size");
@@ -605,7 +645,11 @@ readLocalPointManifest(const std::filesystem::path &path,
         page.pointCount = reader.integer<std::uint64_t>();
         page.payloadOffset = reader.integer<std::uint64_t>();
         page.payloadBytes = reader.integer<std::uint64_t>();
-        page.payloadChecksum = reader.integer<std::uint32_t>();
+        const auto digest = reader.take(page.payloadDigest.size());
+        std::ranges::transform(
+            digest, page.payloadDigest.begin(), [](const std::byte value) {
+                return std::to_integer<std::uint8_t>(value);
+            });
         const std::uint64_t cells = std::uint64_t{1} << page.id.level;
         const auto expectedPayloadBytes = checkedMultiply<std::uint64_t>(
             page.pointCount, localPointDiskBytes);

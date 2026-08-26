@@ -1,12 +1,14 @@
 #include "app/ApplicationConfig.h"
 
 #include "foundation/CheckedArithmetic.h"
+#include "import/SupportedSource.h"
 #include "platform/QtPath.h"
 
 #include <QCommandLineOption>
 #include <QCommandLineParser>
 #include <QCoreApplication>
 
+#include <algorithm>
 #include <array>
 #include <limits>
 #include <utility>
@@ -37,8 +39,8 @@ ApplicationInvocation parseApplicationInvocation(const QStringList &arguments)
     parser.addPositionalArgument(
         QStringLiteral("files"),
         QStringLiteral(
-            "LAS, LAZ, COPC, or EPT (ept.json) sources to open. Wildcards "
-            "(*, ?, [set]) are expanded."),
+            "Point-cloud, vector, or raster sources to open. Wildcards (*, "
+            "?, [set]) are expanded."),
         QStringLiteral("[files...]"));
     const QCommandLineOption pointsOption(
         QStringList{QStringLiteral("p"), QStringLiteral("points")},
@@ -251,6 +253,13 @@ ApplicationInvocation parseApplicationInvocation(const QStringList &arguments)
     if (!positional.isEmpty() && config.sources.empty()) {
         return error(QStringLiteral("No files matched the given arguments"));
     }
+    if (config.smokeTest &&
+        std::ranges::any_of(config.sources, [](const auto &path) {
+            return supportedSourceKind(path) != SupportedSourceKind::PointCloud;
+        })) {
+        return error(
+            QStringLiteral("--smoke-test supports point-cloud sources only"));
+    }
 
 #ifdef PCINSPECTOR_ENABLE_DIAGNOSTIC_UI
     config.gpuValidation = parser.isSet(gpuValidationOption);
@@ -259,7 +268,10 @@ ApplicationInvocation parseApplicationInvocation(const QStringList &arguments)
         return error(QStringLiteral(
             "--qualification-exit requires --qualification-report"));
     }
-    if (parser.isSet(qualificationReportOption) && config.sources.empty()) {
+    if (parser.isSet(qualificationReportOption) &&
+        std::ranges::none_of(config.sources, [](const auto &path) {
+            return supportedSourceKind(path) == SupportedSourceKind::PointCloud;
+        })) {
         return error(QStringLiteral(
             "--qualification-report requires at least one point-cloud "
             "source"));
@@ -306,13 +318,19 @@ resolveMemoryBudget(const ApplicationConfig &config,
 }
 
 std::filesystem::path
-pointPageCacheDirectory(const QString &standardCacheLocation,
-                        const std::filesystem::path &temporaryDirectory)
+pointPageCacheDirectory(const QString &standardCacheLocation)
 {
-    const std::filesystem::path base =
-        standardCacheLocation.isEmpty() ? temporaryDirectory / "pcinspector"
-                                        : qStringToPath(standardCacheLocation);
-    return base / "point-pages";
+    return standardCacheLocation.isEmpty()
+               ? std::filesystem::path{}
+               : qStringToPath(standardCacheLocation) / "point-pages-v2";
+}
+
+std::filesystem::path
+pointPageCacheConfigurationDirectory(const QString &standardConfigLocation)
+{
+    return standardConfigLocation.isEmpty()
+               ? std::filesystem::path{}
+               : qStringToPath(standardConfigLocation) / "cache-security";
 }
 
 } // namespace pci

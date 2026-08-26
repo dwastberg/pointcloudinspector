@@ -4,7 +4,6 @@
 #include "app/LayerInspectorDock.h"
 #include "app/LoadingOverlay.h"
 #include "app/PerformanceSettingsStore.h"
-#include "app/PointCloudLoadChoiceDialog.h"
 #include "app/PointCloudStatisticsDialog.h"
 #include "app/RenderDiagnosticsFormatter.h"
 #include "app/SceneLayersDock.h"
@@ -19,6 +18,7 @@
 #endif
 #include "foundation/CheckedArithmetic.h"
 #include "import/PointCloudLoadController.h"
+#include "import/SupportedSource.h"
 #include "import/VectorLoadController.h"
 #include "platform/QtPath.h"
 #include "renderer/RenderViewport.h"
@@ -32,11 +32,15 @@
 #include <QApplication>
 #include <QDebug>
 #endif
+#include <QDragEnterEvent>
+#include <QDropEvent>
 #include <QFileDialog>
+#include <QFileInfo>
 #include <QLabel>
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
+#include <QMimeData>
 #include <QSignalBlocker>
 #include <QSizePolicy>
 #include <QSpinBox>
@@ -46,6 +50,7 @@
 #include <QTimer>
 #include <QToolBar>
 #include <QToolButton>
+#include <QUrl>
 #include <QVariant>
 #include <QWidget>
 
@@ -59,6 +64,27 @@ namespace pci {
 namespace {
 
 constexpr std::uint64_t bytesPerMebibyte = std::uint64_t{1024} * 1024;
+
+[[nodiscard]] std::vector<std::filesystem::path>
+localDroppedFiles(const QMimeData &mimeData)
+{
+    std::vector<std::filesystem::path> paths;
+    if (!mimeData.hasUrls()) {
+        return paths;
+    }
+    paths.reserve(static_cast<std::size_t>(mimeData.urls().size()));
+    for (const QUrl &url : mimeData.urls()) {
+        if (!url.isLocalFile()) {
+            continue;
+        }
+        const QString localPath = url.toLocalFile();
+        if (!QFileInfo(localPath).isFile()) {
+            continue;
+        }
+        paths.push_back(qStringToPath(localPath));
+    }
+    return paths;
+}
 
 QString loadingProgressDetails(const LoadingProgressState &state)
 {
@@ -157,16 +183,15 @@ MainWindow::MainWindow(
     const std::uint64_t maximumLoadPoints,
     const std::uint64_t decodedByteBudget,
     std::optional<AutomaticMemoryBudgetParameters> automaticMemoryBudget,
-    std::filesystem::path localPageCacheDirectory,
+    LocalPageCacheContextPtr localPageCache,
     PointColorMapCatalogSnapshotPtr colorMaps)
     : viewport_(std::move(viewport))
-    , session_(
-          std::make_unique<SceneSession>(std::move(importServices),
-                                         maximumLoadPoints,
-                                         decodedByteBudget,
-                                         automaticMemoryBudget,
-                                         std::move(localPageCacheDirectory),
-                                         colorMaps))
+    , session_(std::make_unique<SceneSession>(std::move(importServices),
+                                              maximumLoadPoints,
+                                              decodedByteBudget,
+                                              automaticMemoryBudget,
+                                              std::move(localPageCache),
+                                              colorMaps))
 {
     if (!viewport_) {
         throw std::invalid_argument("main window requires a viewport");
@@ -184,6 +209,7 @@ MainWindow::MainWindow(
     viewport_->setViewportSettings(
         ViewportSettingsStore::restore(viewport_->viewportSettings()));
     setWindowTitle(QStringLiteral("Point Cloud Inspector"));
+    setAcceptDrops(true);
 #ifdef PCINSPECTOR_ENABLE_DIAGNOSTIC_UI
     profileLoading_ = qEnvironmentVariableIsSet("PCI_PROFILE_LOADING");
     viewport_->setMetricsCallback([this](const RenderMetrics &metrics) {
@@ -205,10 +231,9 @@ MainWindow::MainWindow(
     centralStack->addWidget(viewport_->widget());
 
     emptySceneLabel_ = new QLabel(
-        QStringLiteral("<b>Open point-cloud files</b><br>"
+        QStringLiteral("<b>Open point clouds, vectors, or rasters</b><br>"
                        "<span style=\"color:#a9b0ba\">"
-                       "LAS, LAZ, COPC, or EPT<br>"
-                       "Use Open files or drag sources into this window."
+                       "Select multiple files or drag them into this window."
                        "</span>"),
         centralContainer);
     emptySceneLabel_->setObjectName(QStringLiteral("emptySceneLabel"));
@@ -371,12 +396,10 @@ MainWindow::MainWindow(
             &SceneLayersDock::showAllRequested,
             session_.get(),
             &SceneSession::showAllLayers);
-    connect(
-        sceneLayersDock_, &SceneLayersDock::addLayerRequested, this, [this] {
-            choosePointCloud(!session_->document()->hasPointCloudLayers()
-                                 ? PointCloudLoadMode::Replace
-                                 : PointCloudLoadMode::Add);
-        });
+    connect(sceneLayersDock_,
+            &SceneLayersDock::addLayerRequested,
+            this,
+            &MainWindow::chooseSources);
     connect(sceneLayersDock_,
             &SceneLayersDock::selectionChanged,
             this,
@@ -388,79 +411,26 @@ MainWindow::MainWindow(
 
     QMenu *fileMenu = menuBar()->addMenu(QStringLiteral("&File"));
     fileMenu->setObjectName(QStringLiteral("fileMenu"));
-    openAction_ = fileMenu->addAction(QStringLiteral("&Open Point Clouds…"));
-    openAction_->setObjectName(QStringLiteral("openPointCloudAction"));
+    openAction_ = fileMenu->addAction(QStringLiteral("&Open Files…"));
+    openAction_->setObjectName(QStringLiteral("openFilesAction"));
     openAction_->setIconText(QStringLiteral("Open…"));
     openAction_->setIcon(toolbarIcon(ToolbarIcon::Open, palette()));
     openAction_->setShortcut(QKeySequence::Open);
     openAction_->setToolTip(
-        QStringLiteral("Open point-cloud files in a new scene (%1)")
+        QStringLiteral("Open point-cloud, vector, or raster files (%1)")
             .arg(openAction_->shortcut().toString(QKeySequence::NativeText)));
-    connect(openAction_, &QAction::triggered, this, [this] {
-        choosePointCloud();
-    });
-
-    addAction_ = fileMenu->addAction(QStringLiteral("&Add Point Clouds…"));
-    addAction_->setObjectName(QStringLiteral("addPointCloudAction"));
-    addAction_->setIconText(QStringLiteral("Add…"));
-    addAction_->setIcon(style()->standardIcon(QStyle::SP_FileDialogNewFolder));
-    addAction_->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_O));
-    addAction_->setToolTip(
-        QStringLiteral("Add point-cloud files to the current scene (%1)")
-            .arg(addAction_->shortcut().toString(QKeySequence::NativeText)));
-    connect(addAction_, &QAction::triggered, this, [this] {
-        choosePointCloud(!session_->document()->hasPointCloudLayers()
-                             ? PointCloudLoadMode::Replace
-                             : PointCloudLoadMode::Add);
-    });
-
-    importVectorAction_ =
-        fileMenu->addAction(QStringLiteral("Import &Vector Layer…"));
-    importVectorAction_->setObjectName(
-        QStringLiteral("importVectorLayerAction"));
-    importVectorAction_->setIconText(QStringLiteral("Vector…"));
-    importVectorAction_->setIcon(toolbarIcon(ToolbarIcon::Vector, palette()));
-    importVectorAction_->setShortcut(
-        QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_V));
-    importVectorAction_->setToolTip(
-        QStringLiteral("Import local OGR-readable vector files (%1)")
-            .arg(importVectorAction_->shortcut().toString(
-                QKeySequence::NativeText)));
-    connect(importVectorAction_, &QAction::triggered, this, [this] {
-        chooseVectorLayers();
-    });
-    importRasterAction_ =
-        fileMenu->addAction(QStringLiteral("Import &Raster Layer…"));
-    importRasterAction_->setObjectName(
-        QStringLiteral("importRasterLayerAction"));
-    importRasterAction_->setIconText(QStringLiteral("Raster…"));
-    importRasterAction_->setIcon(toolbarIcon(ToolbarIcon::Raster, palette()));
-    importRasterAction_->setShortcut(
-        QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_R));
-    importRasterAction_->setToolTip(
-        QStringLiteral("Import local GDAL-readable raster files (%1)")
-            .arg(importRasterAction_->shortcut().toString(
-                QKeySequence::NativeText)));
-    connect(importRasterAction_, &QAction::triggered, this, [this] {
-        chooseRasterLayers();
-    });
+    connect(openAction_, &QAction::triggered, this, &MainWindow::chooseSources);
 
     const auto updateVectorImportCapability =
         [this](const VectorOverlayCapability capability,
                const QString &reason) {
-            if (!importVectorAction_)
-                return;
-            const bool enabled =
-                capability == VectorOverlayCapability::Supported;
-            importVectorAction_->setEnabled(enabled);
-            importVectorAction_->setToolTip(
-                enabled ? QStringLiteral(
-                              "Import local OGR-readable vector files (%1)")
-                              .arg(importVectorAction_->shortcut().toString(
-                                  QKeySequence::NativeText))
-                : reason.isEmpty()
-                    ? QStringLiteral("Vector overlay support is being checked")
-                    : reason);
+            session_->setVectorImportAvailability(
+                capability == VectorOverlayCapability::Supported
+                    ? VectorImportAvailability::Supported
+                : capability == VectorOverlayCapability::Unsupported
+                    ? VectorImportAvailability::Unsupported
+                    : VectorImportAvailability::Unknown,
+                reason);
         };
     viewport_->setVectorOverlayCapabilityCallback(updateVectorImportCapability);
     // A viewport may publish its capability before the window subscribes, or
@@ -690,8 +660,6 @@ MainWindow::MainWindow(
     pointCloudToolBar->setIconSize(QSize(20, 20));
     pointCloudToolBar->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     pointCloudToolBar->addAction(openAction_);
-    pointCloudToolBar->addAction(importVectorAction_);
-    pointCloudToolBar->addAction(importRasterAction_);
     pointCloudToolBar->addSeparator();
     pointCloudToolBar->addAction(fitSceneAction_);
     pointCloudToolBar->addAction(topDownSceneAction_);
@@ -844,30 +812,20 @@ MainWindow::MainWindow(
         &SceneSession::vectorSelectionRequired,
         this,
         [this](const LoadJobId jobId, const VectorImportPreflight &preflight) {
-            auto *dialog = new VectorSublayerDialog(preflight, this);
-            dialog->setProperty("vectorLoadJobId", QVariant::fromValue(jobId));
-            dialog->setAttribute(Qt::WA_DeleteOnClose);
-            connect(dialog,
-                    &QDialog::finished,
-                    this,
-                    [this, dialog, jobId](const int result) {
-                        if (result == QDialog::Accepted) {
-                            if (!session_->continueVectorImport(
-                                    jobId, dialog->selectedSublayers())) {
-                                session_->cancelJob(
-                                    {LoadJobKind::Vector, jobId});
-                            }
-                        } else {
-                            session_->cancelJob({LoadJobKind::Vector, jobId});
-                        }
-                    });
-            dialog->open();
+            enqueueVectorSelection(jobId, preflight);
         });
     connect(
         session_.get(),
         &SceneSession::vectorJobFinished,
         this,
         [this](const LoadJobId jobId) {
+            std::erase_if(pendingVectorSelections_, [jobId](const auto &item) {
+                return item.jobId == jobId;
+            });
+            if (activeVectorSelectionJob_ != jobId) {
+                return;
+            }
+            activeVectorSelectionJob_.reset();
             for (VectorSublayerDialog *dialog :
                  findChildren<VectorSublayerDialog *>()) {
                 if (dialog->property("vectorLoadJobId").value<LoadJobId>() ==
@@ -875,6 +833,7 @@ MainWindow::MainWindow(
                     dialog->reject();
                 }
             }
+            QTimer::singleShot(0, this, &MainWindow::showNextVectorSelection);
         });
 #ifdef PCINSPECTOR_ENABLE_DIAGNOSTIC_UI
     statusBar()->showMessage(QStringLiteral("Initializing %1 renderer…")
@@ -885,6 +844,36 @@ MainWindow::MainWindow(
 }
 
 MainWindow::~MainWindow() = default;
+
+void MainWindow::dragEnterEvent(QDragEnterEvent *event)
+{
+    if (!session_->loading()) {
+        const std::vector<std::filesystem::path> paths =
+            localDroppedFiles(*event->mimeData());
+        if (std::ranges::any_of(paths, [](const auto &path) {
+                return supportedSourceKind(path).has_value();
+            })) {
+            event->acceptProposedAction();
+            return;
+        }
+    }
+    event->ignore();
+}
+
+void MainWindow::dropEvent(QDropEvent *event)
+{
+    std::vector<std::filesystem::path> paths =
+        localDroppedFiles(*event->mimeData());
+    if (session_->loading() ||
+        std::ranges::none_of(paths, [](const auto &path) {
+            return supportedSourceKind(path).has_value();
+        })) {
+        event->ignore();
+        return;
+    }
+    event->acceptProposedAction();
+    openSources(std::move(paths));
+}
 
 LoadJobId MainWindow::loadVectorLayers(VectorImportRequest request)
 {
@@ -1053,69 +1042,30 @@ void MainWindow::showControlsReference()
     dialog->show();
 }
 
-void MainWindow::chooseRasterLayers()
-{
-    // The offered extensions are advisory. GDAL decides what it can actually
-    // open, so "All files" must remain available.
-    const QStringList selected = QFileDialog::getOpenFileNames(
-        this,
-        QStringLiteral("Import raster layers"),
-        {},
-        QStringLiteral("Raster files (*.tif *.tiff *.cog *.vrt *.gti *.gpkg "
-                       "*.img *.jp2 *.png *.jpg *.jpeg);;All files (*)"));
-    if (selected.isEmpty())
-        return;
-    try {
-        const std::string targetCrs =
-            session_->document()->referenceSpatialReferenceWkt();
-        // One independent job per path, so a failure in one source preserves
-        // the others.
-        for (const QString &path : selected) {
-            RasterImportRequest request;
-            request.sourcePath = qStringToPath(path);
-            request.targetSpatialReferenceWkt = targetCrs;
-            request.targetExtent = session_->document()->visibleSceneBounds();
-            static_cast<void>(session_->startRasterImport(std::move(request)));
-        }
-    } catch (const std::exception &error) {
-        QMessageBox::warning(this,
-                             QStringLiteral("Raster import"),
-                             QString::fromUtf8(error.what()));
-    }
-}
-
-void MainWindow::chooseVectorLayers()
+void MainWindow::chooseSources()
 {
     const QStringList selected = QFileDialog::getOpenFileNames(
         this,
-        QStringLiteral("Import vector layers"),
+        QStringLiteral("Open Files"),
         {},
         QStringLiteral(
-            "Vector files (*.gpkg *.geojson *.json *.shp *.kml *.gml "
-            "*.fgb *.dxf);;All files (*)"));
-    if (selected.isEmpty())
+            "Supported files (*.las *.laz *ept.json *.gpkg *.geojson *.json "
+            "*.shp *.kml *.gml *.fgb *.dxf *.tif *.tiff *.cog *.vrt *.gti "
+            "*.img *.jp2 *.png *.jpg *.jpeg);;"
+            "Point clouds (*.las *.laz *.copc.laz *ept.json);;"
+            "Vector files (*.gpkg *.geojson *.json *.shp *.kml *.gml *.fgb "
+            "*.dxf);;"
+            "Raster files (*.tif *.tiff *.cog *.vrt *.gti *.img *.jp2 *.png "
+            "*.jpg *.jpeg);;All files (*)"));
+    if (selected.isEmpty()) {
         return;
-    try {
-        // Shared with raster import so the precedence rule has one home.
-        const std::string targetCrs =
-            session_->document()->referenceSpatialReferenceWkt();
-        if (viewport_->vectorOverlayCapability() !=
-            VectorOverlayCapability::Supported) {
-            throw std::runtime_error(
-                "vector overlays are not supported by the active renderer");
-        }
-        for (const QString &path : selected) {
-            VectorImportRequest request;
-            request.sourcePath = qStringToPath(path);
-            request.targetExtent = session_->document()->visibleSceneBounds();
-            request.targetSpatialReferenceWkt = targetCrs;
-            static_cast<void>(session_->startVectorImport(std::move(request)));
-        }
-    } catch (const std::exception &error) {
-        QMessageBox::warning(this,
-                             QStringLiteral("Vector import"),
-                             QString::fromUtf8(error.what()));
     }
+    std::vector<std::filesystem::path> paths;
+    paths.reserve(selected.size());
+    for (const QString &path : selected) {
+        paths.push_back(qStringToPath(path));
+    }
+    openSources(std::move(paths));
 }
 
 void MainWindow::updateUiContext()
@@ -1136,9 +1086,6 @@ void MainWindow::updateUiContext()
         }
     }
 
-    if (addAction_) {
-        addAction_->setEnabled(!session_->loading());
-    }
     if (fitSceneAction_) {
         fitSceneAction_->setEnabled(hasLayers);
     }
@@ -1206,41 +1153,87 @@ void MainWindow::loadPointClouds(std::vector<std::filesystem::path> sourcePaths,
     session_->loadPointClouds(std::move(sourcePaths), firstMode);
 }
 
-void MainWindow::choosePointCloud(
-    const std::optional<PointCloudLoadMode> requestedMode)
+void MainWindow::openSources(std::vector<std::filesystem::path> sourcePaths)
 {
-    const QStringList sources = QFileDialog::getOpenFileNames(
-        this,
-        QStringLiteral("Open Point Clouds"),
-        {},
-        QStringLiteral(
-            "Point clouds (*.las *.laz *.copc.laz *ept.json);;All files (*)"));
-    if (!sources.isEmpty()) {
-        std::vector<std::filesystem::path> sourcePaths;
-        sourcePaths.reserve(sources.size());
-        for (const QString &source : sources) {
-            sourcePaths.push_back(qStringToPath(source));
-        }
-        if (!session_->document()->hasPointCloudLayers()) {
-            loadPointClouds(std::move(sourcePaths),
-                            PointCloudLoadMode::Replace);
-            return;
-        }
-        if (requestedMode) {
-            loadPointClouds(std::move(sourcePaths), *requestedMode);
-            return;
-        }
-
-        auto *dialog = new PointCloudLoadChoiceDialog(this);
-        dialog->setAttribute(Qt::WA_DeleteOnClose);
-        dialog->openForDecision(
-            [this, sourcePaths = std::move(sourcePaths)](
-                const std::optional<PointCloudLoadMode> mode) mutable {
-                if (mode) {
-                    loadPointClouds(std::move(sourcePaths), *mode);
-                }
-            });
+    if (sourcePaths.empty()) {
+        return;
     }
+    if (session_->loading()) {
+        statusBar()->showMessage(
+            QStringLiteral("Finish or cancel the active point-cloud load "
+                           "before opening more files."),
+            8000);
+        return;
+    }
+
+    SourceClassification classification =
+        classifySupportedSources(std::move(sourcePaths));
+    if (!classification.unsupported.empty()) {
+        QStringList names;
+        names.reserve(
+            static_cast<qsizetype>(classification.unsupported.size()));
+        for (const std::filesystem::path &path : classification.unsupported) {
+            names.push_back(displayPathName(path));
+        }
+        auto *dialog = new QMessageBox(
+            QMessageBox::Warning,
+            QStringLiteral("Unsupported files"),
+            QStringLiteral("These files were skipped because their type is "
+                           "not supported:\n%1")
+                .arg(names.join(QLatin1Char('\n'))),
+            QMessageBox::Ok,
+            this);
+        dialog->setObjectName(QStringLiteral("unsupportedFilesDialog"));
+        dialog->setAttribute(Qt::WA_DeleteOnClose);
+        dialog->show();
+    }
+    if (!classification.supported.empty()) {
+        session_->openSources(std::move(classification.supported));
+    }
+}
+
+void MainWindow::enqueueVectorSelection(const LoadJobId jobId,
+                                        VectorImportPreflight preflight)
+{
+    pendingVectorSelections_.push_back(
+        {.jobId = jobId, .preflight = std::move(preflight)});
+    showNextVectorSelection();
+}
+
+void MainWindow::showNextVectorSelection()
+{
+    if (activeVectorSelectionJob_ || pendingVectorSelections_.empty()) {
+        return;
+    }
+    PendingVectorSelection pending =
+        std::move(pendingVectorSelections_.front());
+    pendingVectorSelections_.pop_front();
+    activeVectorSelectionJob_ = pending.jobId;
+
+    auto *dialog = new VectorSublayerDialog(pending.preflight, this);
+    dialog->setProperty("vectorLoadJobId", QVariant::fromValue(pending.jobId));
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    connect(dialog,
+            &QDialog::finished,
+            this,
+            [this, dialog, jobId = pending.jobId](const int result) {
+                if (activeVectorSelectionJob_ != jobId) {
+                    showNextVectorSelection();
+                    return;
+                }
+                activeVectorSelectionJob_.reset();
+                if (result == QDialog::Accepted) {
+                    if (!session_->continueVectorImport(
+                            jobId, dialog->selectedSublayers())) {
+                        session_->cancelJob({LoadJobKind::Vector, jobId});
+                    }
+                } else {
+                    session_->cancelJob({LoadJobKind::Vector, jobId});
+                }
+                QTimer::singleShot(
+                    0, this, &MainWindow::showNextVectorSelection);
+            });
+    dialog->open();
 }
 
 void MainWindow::requestLoadCancellation()

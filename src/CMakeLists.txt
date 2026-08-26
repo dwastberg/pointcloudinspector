@@ -28,6 +28,18 @@ if(WIN32)
     target_link_libraries(pcinspector_platform PRIVATE Psapi)
 endif()
 
+add_library(pcinspector_secure_storage STATIC
+        storage/SecureStorage.cpp
+        storage/SecureStorage.h)
+add_library(pcinspector::secure_storage ALIAS pcinspector_secure_storage)
+target_include_directories(pcinspector_secure_storage PUBLIC
+        "${pcinspector_source_include_dir}")
+target_link_libraries(pcinspector_secure_storage PRIVATE Qt6::Core)
+if(WIN32)
+    target_link_libraries(pcinspector_secure_storage PRIVATE Advapi32)
+endif()
+pci_configure_target(pcinspector_secure_storage)
+
 add_library(pcinspector_navigation STATIC
         navigation/NavigationCamera.cpp
         navigation/NavigationCamera.h
@@ -184,7 +196,10 @@ target_link_libraries(pcinspector_scene PUBLIC
         pcinspector::pointcloud
         pcinspector::raster
         pcinspector::tasking
-        pcinspector::vector)
+        pcinspector::vector
+        PRIVATE
+        pcinspector::secure_storage
+        Qt6::Core)
 pci_configure_target(pcinspector_scene)
 target_link_libraries(pcinspector_renderer_planning PUBLIC
         pcinspector::pointcloud
@@ -214,7 +229,8 @@ target_include_directories(pcinspector_import_api INTERFACE
         "${pcinspector_source_include_dir}")
 target_link_libraries(pcinspector_import_api INTERFACE
         pcinspector::project_options
-        pcinspector::scene)
+        pcinspector::scene
+        pcinspector::secure_storage)
 
 add_library(pcinspector_renderer_api INTERFACE)
 add_library(pcinspector::renderer_api ALIAS pcinspector_renderer_api)
@@ -239,7 +255,9 @@ add_library(pcinspector_app_config STATIC
         app/ApplicationOptions.cpp
         app/ApplicationOptions.h
         app/MemoryBudgetPolicy.cpp
-        app/MemoryBudgetPolicy.h)
+        app/MemoryBudgetPolicy.h
+        import/SupportedSource.cpp
+        import/SupportedSource.h)
 add_library(pcinspector::app_config ALIAS pcinspector_app_config)
 target_include_directories(pcinspector_app_config PUBLIC
         "${pcinspector_source_include_dir}")
@@ -310,6 +328,7 @@ target_link_libraries(pcinspector_import_pdal
         PUBLIC
         pcinspector::import_api
         PRIVATE
+        pcinspector::secure_storage
         Qt6::Core
         PDAL::pdalcpp)
 pci_configure_target(pcinspector_import_pdal)
@@ -406,8 +425,6 @@ add_library(pcinspector_app_ui STATIC
         app/LayerInspectorDock.h
         app/MainWindow.cpp
         app/MainWindow.h
-        app/PointCloudLoadChoiceDialog.cpp
-        app/PointCloudLoadChoiceDialog.h
         app/PointCloudLoadMode.h
         app/PointCloudStatisticsDialog.cpp
         app/PointCloudStatisticsDialog.h
@@ -540,6 +557,7 @@ target_link_libraries(pcinspector PRIVATE
         pcinspector::import_pdal
         pcinspector::platform
         pcinspector::renderer)
+target_link_libraries(pcinspector PRIVATE pcinspector::secure_storage)
 target_compile_definitions(pcinspector PRIVATE
         PCINSPECTOR_VERSION="${PROJECT_VERSION}")
 set_target_properties(pcinspector PROPERTIES

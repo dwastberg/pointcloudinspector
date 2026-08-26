@@ -349,6 +349,14 @@ std::string SceneDocument::referenceSpatialReferenceWkt() const
             }
         }
     }
+    for (const SceneLayer &layer : sceneLayers_) {
+        if (const VectorLayerState *vector = vectorState(layer)) {
+            const std::string &wkt = vector->data->spatialReferenceWkt;
+            if (!wkt.empty()) {
+                return wkt;
+            }
+        }
+    }
     return {};
 }
 

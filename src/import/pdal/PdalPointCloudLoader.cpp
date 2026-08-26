@@ -299,7 +299,7 @@ PdalPointCloudLoader::load(const PointCloudLoadOptions &options,
     }
 
     if (preflight.localPaging) {
-        if (options.localPaging.cacheDirectory.empty()) {
+        if (!options.localPaging.cache) {
             throw PointCloudImportError(
                 "Local paging requires a writable application cache directory");
         }
@@ -310,7 +310,7 @@ PdalPointCloudLoader::load(const PointCloudLoadOptions &options,
                 preflight,
                 options.maximumPoints,
                 {
-                    .cacheDirectory = options.localPaging.cacheDirectory,
+                    .cache = options.localPaging.cache,
                     .pointsPerLeaf = options.localPaging.pagePoints,
                     .rootPreviewPoints = options.localPaging.rootPreviewPoints,
                     .sortMemoryBytes = options.localPaging.sortMemoryBytes,

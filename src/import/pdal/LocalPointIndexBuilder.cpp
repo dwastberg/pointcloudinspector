@@ -246,13 +246,13 @@ LocalPointPageBuildResult LocalPointIndexBuilder::openOrBuild(
         options.rootPreviewPoints == 0 ||
         options.sortMemoryBytes <
             local_index::MortonRunBuilder::recordBytes() ||
-        options.cacheDirectory.empty()) {
+        !options.cache) {
         throw std::invalid_argument("invalid local point page options");
     }
     if (stopToken.stop_requested()) {
         throw PointCloudImportCancelled();
     }
-    std::filesystem::create_directories(options.cacheDirectory);
+    const std::filesystem::path &cacheDirectory = options.cache->directory();
     const local_index::LocalPageCacheLocator cache(preflight, options);
     const LocalPointSourceFingerprint &fingerprint = cache.fingerprint();
     const std::filesystem::path &finalDirectory = cache.finalDirectory();
@@ -278,7 +278,7 @@ LocalPointPageBuildResult LocalPointIndexBuilder::openOrBuild(
     }
     std::error_code spaceError;
     const std::filesystem::space_info space =
-        std::filesystem::space(options.cacheDirectory, spaceError);
+        std::filesystem::space(cacheDirectory, spaceError);
     if (!spaceError && space.available < storage.temporaryPeakBytes) {
         throw std::runtime_error("insufficient free disk space to construct "
                                  "the local point page entry");
@@ -292,17 +292,14 @@ LocalPointPageBuildResult LocalPointIndexBuilder::openOrBuild(
         if (auto existing = cache.tryOpen(maximumPoints, rootReady)) {
             return std::move(*existing);
         }
-        if (buildLock.removeIfStale(std::chrono::minutes(5))) {
-            continue;
-        }
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
     if (auto existing = cache.tryOpen(maximumPoints, rootReady)) {
         return std::move(*existing);
     }
 
-    const local_index::LocalPageBuildSession buildSession(
-        options.cacheDirectory, cache.key());
+    const local_index::LocalPageBuildSession buildSession(cacheDirectory,
+                                                          cache.key());
     const std::filesystem::path &temporaryDirectory = buildSession.directory();
 
     const std::filesystem::path payloadPath =
@@ -542,7 +539,10 @@ LocalPointPageBuildResult LocalPointIndexBuilder::openOrBuild(
             throw PointCloudImportCancelled();
         }
         local_index::LocalPageCommitter::commit(
-            temporaryDirectory, finalDirectory, manifest);
+            temporaryDirectory,
+            finalDirectory,
+            manifest,
+            options.cache->manifestAuthenticationKey());
         PointCloudScalarRanges completeRanges;
         if (preflight.metadata.hasIntensity && haveRanges) {
             completeRanges.intensity = PointScalarRange{

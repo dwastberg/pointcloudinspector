@@ -4,11 +4,14 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <QDir>
+#include <QTemporaryDir>
+
 #include <algorithm>
 #include <array>
-#include <chrono>
 #include <filesystem>
 #include <limits>
+#include <stdexcept>
 #include <stop_token>
 #include <vector>
 
@@ -17,18 +20,12 @@ namespace {
 class TemporaryDirectory final {
 public:
     TemporaryDirectory()
+        : path_(QDir(directory_.path()).filesystemPath())
     {
-        const auto stamp =
-            std::chrono::steady_clock::now().time_since_epoch().count();
-        path_ = std::filesystem::temp_directory_path() /
-                ("pcinspector-run-store-test-" + std::to_string(stamp));
-        std::filesystem::create_directory(path_);
-    }
-
-    ~TemporaryDirectory()
-    {
-        std::error_code ignored;
-        std::filesystem::remove_all(path_, ignored);
+        if (!directory_.isValid()) {
+            throw std::runtime_error(
+                "could not create private run-store fixture");
+        }
     }
 
     [[nodiscard]] const std::filesystem::path &path() const noexcept
@@ -37,6 +34,7 @@ public:
     }
 
 private:
+    QTemporaryDir directory_;
     std::filesystem::path path_;
 };
 

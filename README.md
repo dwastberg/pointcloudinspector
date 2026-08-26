@@ -5,8 +5,8 @@ It is built with C++23, Qt 6, PDAL, and GDAL.
 
 ## Features
 
-- Open LAS, LAZ, COPC, and EPT point clouds, including multiple files in one
-  scene.
+- Open mixed batches of point clouds, vector layers, and raster layers from a
+  file dialog, the command line, or by dragging files onto the window.
 - Navigate large datasets with GPU-accelerated rendering and bounded CPU and
   GPU caches.
 - Color points by stored RGB, coordinates, intensity, classification, or
@@ -82,8 +82,9 @@ If CMake cannot find a dependency, provide its installation prefix through
 pcinspector [options] [files...]
 ```
 
-`files` may be LAS, LAZ, COPC, or EPT `ept.json` sources. Multiple files and
-wildcard patterns (`*`, `?`, and `[set]`) are supported.
+`files` may mix supported point-cloud, vector, and raster sources. Multiple
+files and wildcard patterns (`*`, `?`, and `[set]`) are supported. GeoPackage
+sources are opened as vector data in the initial unified workflow.
 
 | Argument | Description | Default |
 |---|---|---:|

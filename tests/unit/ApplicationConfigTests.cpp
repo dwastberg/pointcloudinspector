@@ -5,10 +5,13 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <QCoreApplication>
+#include <QDir>
+#include <QTemporaryDir>
 
 #include <array>
 #include <filesystem>
 #include <fstream>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -61,6 +64,26 @@ TEST_CASE("application invocation parser returns typed configuration",
     CHECK(config.smokeTest);
     REQUIRE(config.sources.size() == 1);
     CHECK(config.sources.front() == std::filesystem::path("cloud.las"));
+}
+
+TEST_CASE("application invocation accepts mixed source types",
+          "[unit][app-config][cli][source-open]")
+{
+    const pci::ApplicationConfig config = configFor({
+        QStringLiteral("pcinspector"),
+        QStringLiteral("cloud.laz"),
+        QStringLiteral("ortho.tif"),
+        QStringLiteral("survey.gpkg"),
+    });
+    CHECK(config.sources == std::vector<std::filesystem::path>{
+                                "cloud.laz", "ortho.tif", "survey.gpkg"});
+
+    const pci::ConfigEarlyExit smoke = earlyExitFor({
+        QStringLiteral("pcinspector"),
+        QStringLiteral("--smoke-test"),
+        QStringLiteral("ortho.tif"),
+    });
+    CHECK(smoke.message.contains(QStringLiteral("point-cloud")));
 }
 
 TEST_CASE("application invocation parser reports CLI failures without exiting",
@@ -140,6 +163,8 @@ TEST_CASE("application invocation parser returns help and version text",
     CHECK_FALSE(help.writeToStandardError);
     CHECK(help.message.contains(QStringLiteral("Usage:")));
     CHECK(help.message.contains(QStringLiteral("--max-points")));
+    CHECK(help.message.contains(QStringLiteral("vector")));
+    CHECK(help.message.contains(QStringLiteral("raster")));
 
     const pci::ConfigEarlyExit helpAll = earlyExitFor(
         {QStringLiteral("pcinspector"), QStringLiteral("--help-all")});
@@ -213,11 +238,13 @@ TEST_CASE("memory and cache resolution are deterministic",
              .availablePhysicalBytes = std::uint64_t{14} * 1024 * MiB});
     CHECK(rasterHeavyBudget.pointByteBudget < automaticBudget.pointByteBudget);
 
-    CHECK(pci::pointPageCacheDirectory(QStringLiteral("/cache/pcinspector"),
-                                       "/tmp") ==
-          std::filesystem::path("/cache/pcinspector/point-pages"));
-    CHECK(pci::pointPageCacheDirectory({}, "/fallback") ==
-          std::filesystem::path("/fallback/pcinspector/point-pages"));
+    CHECK(pci::pointPageCacheDirectory(QStringLiteral("/cache/pcinspector")) ==
+          std::filesystem::path("/cache/pcinspector/point-pages-v2"));
+    CHECK(pci::pointPageCacheDirectory({}).empty());
+    CHECK(pci::pointPageCacheConfigurationDirectory(
+              QStringLiteral("/config/pcinspector")) ==
+          std::filesystem::path("/config/pcinspector/cache-security"));
+    CHECK(pci::pointPageCacheConfigurationDirectory({}).empty());
 }
 
 #ifdef PCINSPECTOR_ENABLE_DIAGNOSTIC_UI
@@ -335,21 +362,15 @@ TEST_CASE("automatic memory budget has a deterministic query fallback",
 }
 
 struct ScopedGlobFixture {
+    QTemporaryDir owner;
     std::filesystem::path dir;
 
     ScopedGlobFixture()
+        : dir(QDir(owner.path()).filesystemPath())
     {
-        static int counter = 0;
-        dir = std::filesystem::temp_directory_path() /
-              ("pci-glob-test-" + std::to_string(++counter));
-        std::filesystem::remove_all(dir);
-        std::filesystem::create_directories(dir);
-    }
-
-    ~ScopedGlobFixture()
-    {
-        std::error_code ec;
-        std::filesystem::remove_all(dir, ec);
+        if (!owner.isValid()) {
+            throw std::runtime_error("could not create private glob fixture");
+        }
     }
 
     void touch(const std::string &name) const

@@ -2,6 +2,12 @@
 
 #include "import/PointCloudImport.h"
 #include "import/pdal/MortonRunRecord.h"
+#include "platform/QtPath.h"
+
+#include <QByteArrayView>
+#include <QCryptographicHash>
+#include <QFile>
+#include <QIODeviceBase>
 
 #include <algorithm>
 #include <fstream>
@@ -75,10 +81,12 @@ private:
 struct LeafPageWriter::Impl {
     Impl(const std::filesystem::path &path,
          const LocalPointPageSourcePtr &pageSource)
-        : output(path, std::ios::binary | std::ios::trunc)
+        : output(pathToQString(path))
         , source(pageSource)
+        , payloadHash(QCryptographicHash::Sha256)
     {
-        if (!output) {
+        if (!output.open(QIODeviceBase::WriteOnly | QIODeviceBase::NewOnly,
+                         QFile::ReadOwner | QFile::WriteOwner)) {
             throw std::runtime_error("could not create local point payload: " +
                                      path.string());
         }
@@ -94,6 +102,7 @@ struct LeafPageWriter::Impl {
             .tightBounds = {},
             .payloadOffset = bytesWritten,
         };
+        payloadHash.reset();
     }
 
     void append(const PointSample &sample)
@@ -102,13 +111,14 @@ struct LeafPageWriter::Impl {
             throw std::logic_error("no active local point page");
         }
         const auto bytes = encodeLocalPoint(sample);
-        output.write(reinterpret_cast<const char *>(bytes.data()),
-                     static_cast<std::streamsize>(bytes.size()));
-        if (!output) {
+        if (output.write(reinterpret_cast<const char *>(bytes.data()),
+                         static_cast<qint64>(bytes.size())) !=
+            static_cast<qint64>(bytes.size())) {
             throw std::runtime_error("could not write local point payload");
         }
-        active->payloadChecksum =
-            localPointCrc32(bytes, active->payloadChecksum);
+        payloadHash.addData(
+            QByteArrayView(reinterpret_cast<const char *>(bytes.data()),
+                           static_cast<qsizetype>(bytes.size())));
         extendBounds(
             active->tightBounds, sample.position, active->pointCount == 0);
         ++active->pointCount;
@@ -127,19 +137,25 @@ struct LeafPageWriter::Impl {
         if (hierarchyBounds) {
             active->tightBounds = *hierarchyBounds;
         }
-        output.flush();
-        if (!output) {
+        if (!output.flush()) {
             throw std::runtime_error("could not flush local point payload");
         }
+        const QByteArray digest = payloadHash.result();
+        std::ranges::transform(
+            digest, active->payloadDigest.begin(), [](const char value) {
+                return static_cast<std::uint8_t>(
+                    static_cast<unsigned char>(value));
+            });
         LocalPointPageRecord result = *active;
         active.reset();
         source->publish(result);
         return result;
     }
 
-    std::ofstream output;
+    QFile output;
     LocalPointPageSourcePtr source;
     std::optional<LocalPointPageRecord> active;
+    QCryptographicHash payloadHash;
     std::uint64_t bytesWritten = 0;
 };
 
@@ -232,9 +248,11 @@ void LeafPageWriter::close()
     if (impl_->active) {
         throw std::logic_error("unfinished local point page");
     }
-    impl_->output.flush();
+    if (!impl_->output.flush()) {
+        throw std::runtime_error("could not flush local point payload");
+    }
     impl_->output.close();
-    if (!impl_->output) {
+    if (impl_->output.error() != QFileDevice::NoError) {
         throw std::runtime_error("could not close local point payload");
     }
 }

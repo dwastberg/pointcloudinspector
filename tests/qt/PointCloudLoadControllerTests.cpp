@@ -315,13 +315,15 @@ public:
 TEST_CASE("point load options are independent value configuration",
           "[unit][async][options]")
 {
+    const auto cache = pci::LocalPageCacheContext::createTemporary(
+        std::filesystem::temp_directory_path());
     const pci::PointCloudLoadOptions first{
         .sourcePath = "survey.laz",
         .maximumPoints = 42,
         .localPaging =
             {
                 .pointThreshold = 7,
-                .cacheDirectory = "pages",
+                .cache = cache,
                 .pagePoints = 8,
             },
     };

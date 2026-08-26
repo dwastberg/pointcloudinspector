@@ -3,6 +3,7 @@
 #include "import/gdal/GdalRasterLoader.h"
 #include "renderer/rhi/RenderViewportWidget_p.h"
 #include "scene/PointCloudScene.h"
+#include "storage/SecureStorage.h"
 #include "support/RenderViewportTestAccess.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -59,12 +60,21 @@ struct Rgba {
 using LevelPainter = std::function<Rgba(
     std::uint32_t levelIndex, double basePixelX, double basePixelY)>;
 
+struct GdalFixtures final {
+    GdalFixtures()
+        : directory(std::filesystem::temp_directory_path(), "pci-raster-gpu")
+        , paths(pci::test::writeGdalRasterFixtures(directory.path()))
+    {
+    }
+
+    pci::PrivateTemporaryDirectory directory;
+    pci::test::GdalRasterFixturePaths paths;
+};
+
 const pci::test::GdalRasterFixturePaths &gdalFixtures()
 {
-    static const pci::test::GdalRasterFixturePaths paths =
-        pci::test::writeGdalRasterFixtures(
-            std::filesystem::temp_directory_path() / "pci-raster-gpu");
-    return paths;
+    static const GdalFixtures fixture;
+    return fixture.paths;
 }
 
 class RecordingRasterSource final : public pci::RasterTileSource {
