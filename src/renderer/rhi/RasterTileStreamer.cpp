@@ -176,7 +176,11 @@ void RasterTileStreamer::workerLoop(std::stop_token stop)
             const std::scoped_lock lock(mutex_);
             const auto live = liveGenerations_.find(request.key.sourceId);
             if (live == liveGenerations_.end() ||
-                live->second != request.key.renderGeneration) {
+                live->second != LiveRequestIdentity{
+                                    .renderGeneration =
+                                        request.key.renderGeneration,
+                                    .profile = request.key.profile,
+                                }) {
                 completion.tile.reset();
                 completion.error.clear();
                 completion.cancelled = true;
@@ -231,6 +235,7 @@ void RasterTileStreamer::reconcile(
     struct LayerSchedule {
         RasterSourceId sourceId{};
         std::uint64_t renderGeneration = 0;
+        RasterTilePayloadProfile profile = RasterTilePayloadProfile::ColorOnly;
         RasterTileSourcePtr source;
         std::shared_ptr<const RasterDecodeParameters> decode;
         std::span<const RasterTileKey> requests;
@@ -257,12 +262,14 @@ void RasterTileStreamer::reconcile(
                 .sourceId = layer.data->sourceId,
                 .renderGeneration = layer.renderGeneration,
                 .tile = key,
+                .profile = entry.profile,
             };
             wanted.insert(cacheKey);
         }
         layerSchedules.push_back(LayerSchedule{
             .sourceId = layer.data->sourceId,
             .renderGeneration = layer.renderGeneration,
+            .profile = entry.profile,
             .source = layer.data->source,
             .decode = std::move(decode),
             .requests = plan.requests,
@@ -284,6 +291,7 @@ void RasterTileStreamer::reconcile(
                 .sourceId = layer.sourceId,
                 .renderGeneration = layer.renderGeneration,
                 .tile = key,
+                .profile = layer.profile,
             };
             // A tile already decoded, or already known to fail for this
             // generation, is not requested again.
@@ -300,6 +308,7 @@ void RasterTileStreamer::reconcile(
                         .key = key,
                         .renderGeneration = layer.renderGeneration,
                         .decode = layer.decode,
+                        .profile = layer.profile,
                     },
             });
         }
@@ -311,8 +320,12 @@ void RasterTileStreamer::reconcile(
     const std::scoped_lock lock(mutex_);
     for (const RasterFrameLayer &entry : frame) {
         if (entry.layer && entry.layer->data) {
-            liveGenerations_.insert_or_assign(entry.layer->data->sourceId,
-                                              entry.layer->renderGeneration);
+            liveGenerations_.insert_or_assign(
+                entry.layer->data->sourceId,
+                LiveRequestIdentity{
+                    .renderGeneration = entry.layer->renderGeneration,
+                    .profile = entry.profile,
+                });
         }
     }
     // Queued work the camera has moved away from is dropped before anything

@@ -72,6 +72,10 @@ std::vector<RasterLayer> SceneDocumentSnapshot::rasterLayers() const
                 .data = raster->data,
                 .visible = layer.visible,
                 .style = raster->style,
+                .elevationStatus = raster->elevationStatus,
+                .exactElevationRange = raster->exactElevationRange,
+                .elevationFailure = raster->elevationFailure,
+                .elevationGeneration = raster->elevationGeneration,
                 .renderGeneration = raster->renderGeneration,
             });
         }
@@ -95,6 +99,10 @@ SceneDocumentSnapshot::rasterLayer(const SceneLayerId id) const
         .data = raster->data,
         .visible = found->visible,
         .style = raster->style,
+        .elevationStatus = raster->elevationStatus,
+        .exactElevationRange = raster->exactElevationRange,
+        .elevationFailure = raster->elevationFailure,
+        .elevationGeneration = raster->elevationGeneration,
         .renderGeneration = raster->renderGeneration,
     };
 }
@@ -206,7 +214,10 @@ SceneDocumentSnapshot::layerBounds(const SceneLayerId id) const
         return vectorBounds(*vector);
     }
     if (const auto *raster = std::get_if<RasterLayerState>(&found->payload)) {
-        return rasterSceneBounds(raster->data->metadata(), raster->style);
+        return rasterSceneBounds(raster->data->metadata(),
+                                 raster->style,
+                                 raster->elevationStatus,
+                                 raster->exactElevationRange);
     }
     return std::nullopt;
 }

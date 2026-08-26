@@ -3,6 +3,7 @@
 #include "import/PointCloudColorizeController.h"
 #include "import/PointCloudLoadController.h"
 #include "import/PointCloudStatistics.h"
+#include "import/RasterElevationController.h"
 #include "import/RasterLoadController.h"
 #include "import/VectorLoadController.h"
 
@@ -20,17 +21,19 @@ struct ImportServices {
     std::unique_ptr<PointCloudLoadController> pointCloud;
     std::unique_ptr<VectorLoadController> vector;
     std::unique_ptr<RasterLoadController> raster;
+    std::unique_ptr<RasterElevationController> rasterElevation;
     std::unique_ptr<PointCloudColorizeController> colorize;
     std::shared_ptr<const PointCloudStatisticsProvider> statistics;
     std::shared_ptr<const SpatialReferenceComparator> spatialReferences;
 
     [[nodiscard]] bool valid() const noexcept
     {
-        return scheduler && pointCloud && vector && raster && colorize &&
-               statistics &&
+        return scheduler && pointCloud && vector && raster &&
+               rasterElevation && colorize && statistics &&
                pointCloud->schedulerIdentity() == scheduler.get() &&
                vector->schedulerIdentity() == scheduler.get() &&
                raster->schedulerIdentity() == scheduler.get() &&
+               rasterElevation->schedulerIdentity() == scheduler.get() &&
                colorize->schedulerIdentity() == scheduler.get();
     }
     void shutdown()
@@ -39,6 +42,7 @@ struct ImportServices {
         pointCloud.reset();
         vector.reset();
         raster.reset();
+        rasterElevation.reset();
         statistics.reset();
         if (scheduler)
             scheduler->waitForIdle();

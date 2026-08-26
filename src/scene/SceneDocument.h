@@ -70,6 +70,10 @@ struct RasterLayer {
     RasterLayerDataPtr data;
     bool visible = true;
     RasterLayerStyle style;
+    RasterElevationStatus elevationStatus = RasterElevationStatus::NotApplicable;
+    std::optional<RasterElevationRange> exactElevationRange;
+    std::string elevationFailure;
+    std::uint64_t elevationGeneration = 1;
     // Bumped only when a style change alters decoded pixels, so a stale worker
     // result cannot enter the cache. Camera motion never changes it.
     std::uint64_t renderGeneration = 1;
@@ -91,6 +95,10 @@ struct VectorLayerState {
 struct RasterLayerState {
     RasterLayerDataPtr data;
     RasterLayerStyle style;
+    RasterElevationStatus elevationStatus = RasterElevationStatus::NotApplicable;
+    std::optional<RasterElevationRange> exactElevationRange;
+    std::string elevationFailure;
+    std::uint64_t elevationGeneration = 1;
     std::uint64_t renderGeneration = 1;
 };
 
@@ -162,6 +170,11 @@ public:
                                            VectorLayerStyle style);
     [[nodiscard]] bool setRasterLayerStyle(SceneLayerId id,
                                            RasterLayerStyle style);
+    [[nodiscard]] bool setRasterElevationState(
+        SceneLayerId id,
+        RasterElevationStatus status,
+        std::optional<RasterElevationRange> exactRange = std::nullopt,
+        std::string failure = {});
     [[nodiscard]] bool setLayerColorMode(PointCloudLayerId id,
                                          PointColorMode colorMode);
     [[nodiscard]] bool

@@ -346,4 +346,42 @@ TEST_CASE("reference CRS prefers point clouds over rasters",
     CHECK(document.referenceSpatialReferenceWkt() == "STUBCRS");
 }
 
+TEST_CASE("exact DEM range updates bounds without invalidating decoded color",
+          "[unit][scene][raster][surface]")
+{
+    pci::RasterLayerMetadata metadata = rasterMetadata();
+    metadata.elevation.available = true;
+    metadata.elevation.anchor = 100.0;
+    pci::SceneDocument document;
+    const pci::SceneLayerId id =
+        document.addRasterLayer(rasterData(std::move(metadata)), true);
+
+    REQUIRE(document.rasterLayer(id).has_value());
+    CHECK(document.rasterLayer(id)->elevationStatus ==
+          pci::RasterElevationStatus::Unknown);
+    const std::uint64_t renderGeneration =
+        document.rasterLayer(id)->renderGeneration;
+
+    pci::RasterLayerStyle style = document.rasterLayer(id)->style;
+    style.renderMode = pci::RasterRenderMode::Surface;
+    style.verticalExaggeration = 3.0;
+    style.zOffset = -5.0;
+    REQUIRE(document.setRasterLayerStyle(id, style));
+    CHECK(document.rasterLayer(id)->renderGeneration == renderGeneration);
+    REQUIRE(document.setRasterElevationState(
+        id,
+        pci::RasterElevationStatus::Ready,
+        pci::RasterElevationRange{.minimum = 10.0, .maximum = 20.0}));
+
+    const pci::RasterLayer layer = *document.rasterLayer(id);
+    CHECK(layer.renderGeneration == renderGeneration);
+    CHECK(layer.elevationGeneration == 1);
+    REQUIRE(document.visibleSceneBounds().has_value());
+    CHECK(document.visibleSceneBounds()->minimum[2] == 25.0);
+    CHECK(document.visibleSceneBounds()->maximum[2] == 55.0);
+    REQUIRE(document.snapshot()->rasterLayer(id).has_value());
+    CHECK(document.snapshot()->rasterLayer(id)->exactElevationRange ==
+          pci::RasterElevationRange{.minimum = 10.0, .maximum = 20.0});
+}
+
 } // namespace

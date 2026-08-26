@@ -32,6 +32,7 @@
 #include <QScrollArea>
 #include <QSignalBlocker>
 #include <QSizePolicy>
+#include <QStandardItemModel>
 #include <QStyledItemDelegate>
 #include <QVBoxLayout>
 
@@ -685,6 +686,66 @@ LayerInspectorDock::LayerInspectorDock(
                                  rasterColorRamp_);
     rasterLayout->addWidget(rasterAppearance);
 
+    rasterRenderingWidget_ =
+        new QGroupBox(QStringLiteral("Terrain rendering"),
+                      rasterPropertiesWidget_);
+    rasterRenderingWidget_->setObjectName(
+        QStringLiteral("rasterRenderingSection"));
+    auto *rasterRenderingForm =
+        new QFormLayout(rasterRenderingWidget_);
+    rasterRenderingForm->setFieldGrowthPolicy(
+        QFormLayout::ExpandingFieldsGrow);
+    rasterRenderMode_ = new QComboBox(rasterRenderingWidget_);
+    rasterRenderMode_->setObjectName(QStringLiteral("rasterRenderModeCombo"));
+    rasterRenderMode_->addItem(QStringLiteral("Flat"),
+                               static_cast<int>(RasterRenderMode::Flat));
+    rasterRenderMode_->addItem(
+        QStringLiteral("Surface (true elevation)"),
+        static_cast<int>(RasterRenderMode::Surface));
+    rasterVerticalExaggeration_ =
+        new QDoubleSpinBox(rasterRenderingWidget_);
+    rasterVerticalExaggeration_->setObjectName(
+        QStringLiteral("rasterVerticalExaggerationSpinBox"));
+    rasterVerticalExaggeration_->setRange(minimumRasterVerticalExaggeration,
+                                          maximumRasterVerticalExaggeration);
+    rasterVerticalExaggeration_->setDecimals(1);
+    rasterVerticalExaggeration_->setSingleStep(0.5);
+    rasterVerticalExaggeration_->setSuffix(QStringLiteral("×"));
+    rasterVerticalExaggeration_->setKeyboardTracking(false);
+    rasterSurfaceShading_ = new QDoubleSpinBox(rasterRenderingWidget_);
+    rasterSurfaceShading_->setObjectName(
+        QStringLiteral("rasterSurfaceShadingSpinBox"));
+    rasterSurfaceShading_->setRange(0.0, 100.0);
+    rasterSurfaceShading_->setDecimals(0);
+    rasterSurfaceShading_->setSuffix(QStringLiteral(" %"));
+    rasterSurfaceShading_->setKeyboardTracking(false);
+    rasterElevationStatus_ = new QLabel(rasterRenderingWidget_);
+    rasterElevationStatus_->setObjectName(
+        QStringLiteral("rasterElevationStatusLabel"));
+    rasterElevationStatus_->setWordWrap(true);
+    auto *elevationActions = new QWidget(rasterRenderingWidget_);
+    auto *elevationActionsLayout = new QHBoxLayout(elevationActions);
+    elevationActionsLayout->setContentsMargins(0, 0, 0, 0);
+    rasterElevationRetry_ =
+        new QPushButton(QStringLiteral("Retry analysis"), elevationActions);
+    rasterElevationRetry_->setObjectName(
+        QStringLiteral("rasterElevationRetryButton"));
+    rasterElevationCancel_ =
+        new QPushButton(QStringLiteral("Cancel analysis"), elevationActions);
+    rasterElevationCancel_->setObjectName(
+        QStringLiteral("rasterElevationCancelButton"));
+    elevationActionsLayout->addWidget(rasterElevationRetry_);
+    elevationActionsLayout->addWidget(rasterElevationCancel_);
+    rasterRenderingForm->addRow(QStringLiteral("Mode"), rasterRenderMode_);
+    rasterRenderingForm->addRow(QStringLiteral("Vertical exaggeration"),
+                                rasterVerticalExaggeration_);
+    rasterRenderingForm->addRow(QStringLiteral("Surface shading"),
+                                rasterSurfaceShading_);
+    rasterRenderingForm->addRow(QStringLiteral("Elevation"),
+                                rasterElevationStatus_);
+    rasterRenderingForm->addRow(elevationActions);
+    rasterLayout->addWidget(rasterRenderingWidget_);
+
     auto *rasterPlacement =
         new QGroupBox(QStringLiteral("Placement"), rasterPropertiesWidget_);
     rasterPlacement->setObjectName(QStringLiteral("rasterPlacementSection"));
@@ -906,7 +967,9 @@ LayerInspectorDock::LayerInspectorDock(
     for (QDoubleSpinBox *spin : {rasterOpacity_,
                                  rasterZOffset_,
                                  rasterRangeMinimum_,
-                                 rasterRangeMaximum_}) {
+                                 rasterRangeMaximum_,
+                                 rasterVerticalExaggeration_,
+                                 rasterSurfaceShading_}) {
         connect(spin, &QDoubleSpinBox::valueChanged, this, [this] {
             applyRasterStyle();
         });
@@ -914,19 +977,50 @@ LayerInspectorDock::LayerInspectorDock(
     connect(rasterColorRamp_, &QComboBox::currentIndexChanged, this, [this] {
         applyRasterStyle();
     });
+    connect(rasterRenderMode_, &QComboBox::currentIndexChanged, this, [this] {
+        applyRasterStyle();
+    });
+    connect(rasterElevationRetry_, &QPushButton::clicked, this, [this] {
+        if (const auto id = selectedLayerId()) {
+            emit retryRasterElevationRequested(*id);
+        }
+    });
+    connect(rasterElevationCancel_, &QPushButton::clicked, this, [this] {
+        if (const auto id = selectedLayerId()) {
+            emit cancelRasterElevationRequested(*id);
+        }
+    });
     // Elevation presets resolve against scene bounds at the moment they are
     // applied; they do not track later scene changes.
     connect(rasterPlaceAboveScene_, &QPushButton::clicked, this, [this] {
         const Bounds3d bounds = documentColorBounds(layers_);
-        if (bounds.valid()) {
-            rasterZOffset_->setValue(bounds.maximum[2] +
+        const auto id = selectedLayerId();
+        const RasterLayer *raster = id ? rasterLayerById(*id) : nullptr;
+        if (bounds.valid() && raster) {
+            double sourceMinimum = 0.0;
+            if (raster->style.renderMode == RasterRenderMode::Surface &&
+                raster->elevationStatus == RasterElevationStatus::Ready &&
+                raster->exactElevationRange) {
+                sourceMinimum = raster->exactElevationRange->minimum *
+                                raster->style.verticalExaggeration;
+            }
+            rasterZOffset_->setValue(bounds.maximum[2] - sourceMinimum +
                                      0.01 * bounds.maximumExtent());
         }
     });
     connect(rasterMatchSceneFloor_, &QPushButton::clicked, this, [this] {
         const Bounds3d bounds = documentColorBounds(layers_);
-        if (bounds.valid()) {
-            rasterZOffset_->setValue(bounds.minimum[2]);
+        const auto id = selectedLayerId();
+        const RasterLayer *raster = id ? rasterLayerById(*id) : nullptr;
+        if (bounds.valid() && raster) {
+            double sourceMinimum = 0.0;
+            if (raster->style.renderMode == RasterRenderMode::Surface &&
+                raster->elevationStatus == RasterElevationStatus::Ready &&
+                raster->exactElevationRange) {
+                sourceMinimum = raster->exactElevationRange->minimum *
+                                raster->style.verticalExaggeration;
+            }
+            rasterZOffset_->setValue(bounds.minimum[2] - sourceMinimum);
         }
     });
     connect(rasterResetElevation_, &QPushButton::clicked, this, [this] {
@@ -968,6 +1062,18 @@ void LayerInspectorDock::setColorizeJobState(const bool active,
     updateProperties();
 }
 
+void LayerInspectorDock::setRasterSurfaceCapability(
+    const RasterSurfaceCapability capability, QString reason)
+{
+    if (rasterSurfaceCapability_ == capability &&
+        rasterSurfaceCapabilityReason_ == reason) {
+        return;
+    }
+    rasterSurfaceCapability_ = capability;
+    rasterSurfaceCapabilityReason_ = std::move(reason);
+    updateProperties();
+}
+
 const RasterLayer *
 LayerInspectorDock::rasterLayerById(const SceneLayerId id) const
 {
@@ -986,9 +1092,91 @@ void LayerInspectorDock::updateRasterProperties(const RasterLayer &raster)
     const QSignalBlocker minimumBlock(rasterRangeMinimum_);
     const QSignalBlocker maximumBlock(rasterRangeMaximum_);
     const QSignalBlocker rampBlock(rasterColorRamp_);
+    const QSignalBlocker modeBlock(rasterRenderMode_);
+    const QSignalBlocker exaggerationBlock(rasterVerticalExaggeration_);
+    const QSignalBlocker shadingBlock(rasterSurfaceShading_);
 
     rasterOpacity_->setValue(raster.style.opacity * 100.0F);
     rasterZOffset_->setValue(raster.style.zOffset);
+    const bool elevationEligible = metadata.elevation.available;
+    rasterRenderingWidget_->setVisible(elevationEligible);
+    const int surfaceIndex = rasterRenderMode_->findData(
+        static_cast<int>(RasterRenderMode::Surface));
+    if (auto *model = qobject_cast<QStandardItemModel *>(
+            rasterRenderMode_->model());
+        model && surfaceIndex >= 0) {
+        QStandardItem *item = model->item(surfaceIndex);
+        item->setEnabled(rasterSurfaceCapability_ ==
+                         RasterSurfaceCapability::Supported);
+        item->setToolTip(
+            rasterSurfaceCapability_ == RasterSurfaceCapability::Unsupported
+                ? rasterSurfaceCapabilityReason_
+                : QString{});
+    }
+    const int modeIndex = rasterRenderMode_->findData(
+        static_cast<int>(raster.style.renderMode));
+    if (modeIndex >= 0) {
+        rasterRenderMode_->setCurrentIndex(modeIndex);
+    }
+    rasterVerticalExaggeration_->setValue(
+        raster.style.verticalExaggeration);
+    rasterSurfaceShading_->setValue(
+        raster.style.surfaceShadingStrength * 100.0F);
+    const bool surfaceRequested =
+        raster.style.renderMode == RasterRenderMode::Surface;
+    rasterVerticalExaggeration_->setVisible(surfaceRequested);
+    rasterSurfaceShading_->setVisible(surfaceRequested);
+
+    QString elevationStatus;
+    switch (raster.elevationStatus) {
+    case RasterElevationStatus::NotApplicable:
+        elevationStatus = QStringLiteral("Not an elevation source");
+        break;
+    case RasterElevationStatus::Unknown:
+        elevationStatus = QStringLiteral(
+            "Exact range will be analyzed when Surface is selected.");
+        break;
+    case RasterElevationStatus::Scanning:
+        elevationStatus = QStringLiteral(
+            "Analyzing the exact elevation range… Flat remains active.");
+        break;
+    case RasterElevationStatus::Ready:
+        if (raster.exactElevationRange) {
+            elevationStatus = QStringLiteral("%1 to %2%3")
+                                  .arg(raster.exactElevationRange->minimum,
+                                       0,
+                                       'g',
+                                       8)
+                                  .arg(raster.exactElevationRange->maximum,
+                                       0,
+                                       'g',
+                                       8)
+                                  .arg(metadata.elevation.unit.empty()
+                                           ? QString{}
+                                           : QStringLiteral(" %1").arg(
+                                                 QString::fromStdString(
+                                                     metadata.elevation.unit)));
+        } else {
+            elevationStatus = QStringLiteral("Exact range ready");
+        }
+        break;
+    case RasterElevationStatus::Failed:
+        elevationStatus = raster.elevationFailure.empty()
+                              ? QStringLiteral("Elevation analysis failed")
+                              : QString::fromStdString(
+                                    raster.elevationFailure);
+        break;
+    }
+    if (surfaceRequested && rasterSurfaceCapability_ ==
+                                RasterSurfaceCapability::Unsupported) {
+        elevationStatus += QStringLiteral("\nSurface unavailable: %1")
+                               .arg(rasterSurfaceCapabilityReason_);
+    }
+    rasterElevationStatus_->setText(elevationStatus);
+    rasterElevationRetry_->setVisible(
+        raster.elevationStatus == RasterElevationStatus::Failed);
+    rasterElevationCancel_->setVisible(
+        raster.elevationStatus == RasterElevationStatus::Scanning);
 
     // Range and ramp exist only for a single continuous scalar; an RGB source
     // has no meaningful single range and a palette is looked up, not stretched.
@@ -1035,13 +1223,28 @@ void LayerInspectorDock::updateRasterProperties(const RasterLayer &raster)
             "This raster does not label its color bands. Bands 1–3 were "
             "interpreted as RGB by position; verify the displayed colors.");
     }
+    if (surfaceRequested && metadata.elevation.unit.empty()) {
+        warnings << QStringLiteral(
+            "This DEM reports no vertical unit. Elevation is used without "
+            "implicit conversion.");
+    }
+    if (surfaceRequested && metadata.geographicCrs) {
+        warnings << QStringLiteral(
+            "This DEM uses geographic X/Y coordinates. Horizontal degrees "
+            "and linear elevation units are incompatible; reproject the "
+            "source for physically meaningful relief.");
+    }
     rasterVisibilityWarning_->setVisible(!warnings.isEmpty());
     rasterVisibilityWarningLabel_->setText(warnings.join(QChar::LineFeed));
     rasterShowAnywayButton_->setVisible(hiddenDisjoint);
 
     const Bounds3d sceneBounds = documentColorBounds(layers_);
-    rasterPlaceAboveScene_->setEnabled(sceneBounds.valid());
-    rasterMatchSceneFloor_->setEnabled(sceneBounds.valid());
+    const bool placementReady =
+        !surfaceRequested ||
+        (raster.elevationStatus == RasterElevationStatus::Ready &&
+         raster.exactElevationRange.has_value());
+    rasterPlaceAboveScene_->setEnabled(sceneBounds.valid() && placementReady);
+    rasterMatchSceneFloor_->setEnabled(sceneBounds.valid() && placementReady);
 
     rasterDimensionsValue_->setText(
         QStringLiteral("%1 x %2").arg(metadata.width).arg(metadata.height));
@@ -1129,6 +1332,13 @@ void LayerInspectorDock::applyRasterStyle()
     RasterLayerStyle style = raster->style;
     style.opacity = static_cast<float>(rasterOpacity_->value() / 100.0);
     style.zOffset = rasterZOffset_->value();
+    if (rasterRenderMode_->currentData().isValid()) {
+        style.renderMode = static_cast<RasterRenderMode>(
+            rasterRenderMode_->currentData().toInt());
+    }
+    style.verticalExaggeration = rasterVerticalExaggeration_->value();
+    style.surfaceShadingStrength =
+        static_cast<float>(rasterSurfaceShading_->value() / 100.0);
     if (raster->data->metadata().defaultDisplay.sampleKind ==
         RasterSampleKind::ContinuousScalar) {
         style.displayRange =

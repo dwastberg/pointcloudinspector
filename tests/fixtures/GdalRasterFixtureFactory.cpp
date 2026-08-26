@@ -517,6 +517,40 @@ std::filesystem::path writeTerrainFixture(const std::filesystem::path &path)
     return path;
 }
 
+std::filesystem::path
+writeTerrainAlphaFixture(const std::filesystem::path &path)
+{
+    constexpr int width = 32;
+    constexpr int height = 16;
+    DatasetPtr dataset = create(path, width, height, 2, GDT_Float32);
+    applyProjectedReference(*dataset);
+    applyTransform(*dataset, {674000.0, 1.0, 0.0, 6580000.0, 0.0, -1.0});
+    std::vector<float> elevation(static_cast<std::size_t>(width) * height);
+    std::vector<float> alpha(elevation.size(), 255.0F);
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            const std::size_t index = static_cast<std::size_t>(y) * width + x;
+            if (x < width / 2) {
+                // An extreme that must not affect the exact range because the
+                // explicit source alpha makes this half invalid.
+                elevation[index] = 10000.0F + x + y;
+                alpha[index] = 0.0F;
+            } else {
+                elevation[index] = static_cast<float>(x + y);
+            }
+        }
+    }
+    writeBand(*dataset, 1, GDT_Float32, elevation);
+    writeBand(*dataset, 2, GDT_Float32, alpha);
+    GDALRasterBand *heightBand = dataset->GetRasterBand(1);
+    heightBand->SetColorInterpretation(GCI_GrayIndex);
+    heightBand->SetScale(-2.0);
+    heightBand->SetOffset(100.0);
+    heightBand->SetUnitType("m");
+    dataset->GetRasterBand(2)->SetColorInterpretation(GCI_AlphaBand);
+    return path;
+}
+
 std::filesystem::path writeUnsigned16Fixture(const std::filesystem::path &path)
 {
     constexpr int width = 64;
@@ -953,6 +987,8 @@ writeGdalRasterFixtures(const std::filesystem::path &directory)
     paths.coverageNodata =
         writeCoverageNodataFixture(directory / "coverage-nodata.tif");
     paths.terrain = writeTerrainFixture(directory / "terrain.tif");
+    paths.terrainAlpha =
+        writeTerrainAlphaFixture(directory / "terrain-alpha.tif");
     paths.unsigned16 = writeUnsigned16Fixture(directory / "uint16.tif");
     paths.rotated = writeRotatedFixture(directory / "rotated.tif");
     paths.worldFile = writeWorldFileFixture(directory / "world-file.tif");

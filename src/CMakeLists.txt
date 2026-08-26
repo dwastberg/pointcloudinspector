@@ -391,6 +391,8 @@ add_library(pcinspector_import_async STATIC
         import/PointCloudLoadController.cpp
         import/PointCloudLoadController.h
         import/RasterImport.h
+        import/RasterElevationController.cpp
+        import/RasterElevationController.h
         import/RasterLoadController.cpp
         import/RasterLoadController.h
         import/VectorLoadController.cpp

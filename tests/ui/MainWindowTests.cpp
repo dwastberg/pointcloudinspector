@@ -559,6 +559,8 @@ makeTestImportServices(std::shared_ptr<const pci::PointCloudLoader> pointLoader,
         std::move(vectorLoader), *services.scheduler);
     services.raster = std::make_unique<pci::RasterLoadController>(
         std::move(rasterLoader), *services.scheduler);
+    services.rasterElevation =
+        std::make_unique<pci::RasterElevationController>(*services.scheduler);
     services.colorize = std::make_unique<pci::PointCloudColorizeController>(
         *services.scheduler);
     services.statistics = std::make_shared<UnavailableStatistics>();

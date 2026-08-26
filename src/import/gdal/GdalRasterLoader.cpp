@@ -427,8 +427,12 @@ sampleDisplayRange(GDALDataset &dataset,
                    const RasterBandSelection &selection,
                    const std::vector<RasterLevel> &levels,
                    const std::stop_token &stop,
-                   std::atomic<std::uint64_t> &readCount)
+                   std::atomic<std::uint64_t> &readCount,
+                   std::optional<double> *sampledMinimum)
 {
+    if (sampledMinimum != nullptr) {
+        sampledMinimum->reset();
+    }
     // Sampling reads the coarsest usable overview, so the cost is bounded by
     // the sample budget rather than by the source dimensions.
     const RasterLevel &level = levels.back();
@@ -497,6 +501,9 @@ sampleDisplayRange(GDALDataset &dataset,
         return std::nullopt;
     }
     std::ranges::sort(samples);
+    if (sampledMinimum != nullptr) {
+        *sampledMinimum = samples.front();
+    }
     const auto last = static_cast<double>(samples.size() - 1);
     const auto low =
         static_cast<std::size_t>(std::llround(last * lowerPercentile));
@@ -528,8 +535,16 @@ inspectOrSampleDisplayRange(GDALDataset &dataset,
                             const RasterBandSelection &selection,
                             const std::vector<RasterLevel> &levels,
                             const std::stop_token &stop,
-                            std::atomic<std::uint64_t> &readCount)
+                            std::atomic<std::uint64_t> &readCount,
+                            std::optional<double> *sampledMinimum,
+                            bool *samplingPerformed)
 {
+    if (sampledMinimum != nullptr) {
+        sampledMinimum->reset();
+    }
+    if (samplingPerformed != nullptr) {
+        *samplingPerformed = false;
+    }
     RasterDecodeParameters display;
     display.sampleKind = selection.sampleKind;
     if (selection.sampleKind == RasterSampleKind::Categorical) {
@@ -590,8 +605,11 @@ inspectOrSampleDisplayRange(GDALDataset &dataset,
         return display;
     }
 
-    display.displayRange =
-        sampleDisplayRange(dataset, selection, levels, stop, readCount);
+    if (samplingPerformed != nullptr) {
+        *samplingPerformed = true;
+    }
+    display.displayRange = sampleDisplayRange(
+        dataset, selection, levels, stop, readCount, sampledMinimum);
     if (!display.displayRange) {
         display.displayRange = RasterDisplayRange{
             .minimum = 0.0,
@@ -600,6 +618,212 @@ inspectOrSampleDisplayRange(GDALDataset &dataset,
         };
     }
     return display;
+}
+
+[[nodiscard]] GDALRasterBand *referencedBand(GDALDataset &dataset,
+                                             const RasterBandRef reference)
+{
+    GDALRasterBand *band = dataset.GetRasterBand(reference.band);
+    if (band != nullptr && reference.overview >= 0) {
+        band = band->GetOverview(reference.overview);
+    }
+    return band;
+}
+
+[[nodiscard]] std::optional<double> boundedElevationMinimum(
+    GDALDataset &dataset,
+    const RasterBandSelection &selection,
+    const std::vector<RasterLevel> &levels,
+    const std::stop_token &stop,
+    std::atomic<std::uint64_t> &readCount)
+{
+    if (levels.empty() || selection.colorBands.size() != 1) {
+        return std::nullopt;
+    }
+    const RasterLevel &level = levels.back();
+    GDALRasterBand *band = referencedBand(dataset, level.rgbaBands[0]);
+    GDALRasterBand *alpha = selection.alphaBand == 0
+                                ? nullptr
+                                : referencedBand(dataset, level.rgbaBands[3]);
+    GDALRasterBand *maskOwner =
+        level.maskBand ? referencedBand(dataset, *level.maskBand) : nullptr;
+    GDALRasterBand *mask = maskOwner != nullptr ? maskOwner->GetMaskBand()
+                                                : nullptr;
+    if (band == nullptr || (selection.alphaBand != 0 && alpha == nullptr) ||
+        (level.maskBand && mask == nullptr)) {
+        return std::nullopt;
+    }
+
+    double minimum = std::numeric_limits<double>::infinity();
+    const double nodata = selection.nodata.front();
+    const double scale = selection.scale.front();
+    const double offset = selection.offset.front();
+    const auto inspectWindow = [&](const int x,
+                                   const int y,
+                                   const int width,
+                                   const int height) {
+        checkCancelled(stop);
+        const std::size_t count =
+            static_cast<std::size_t>(width) * height;
+        std::vector<double> values(count);
+        std::vector<double> alphaValues(alpha != nullptr ? count : 0);
+        std::vector<unsigned char> maskValues(mask != nullptr ? count : 0);
+        const auto read = [&](GDALRasterBand &source,
+                              const GDALDataType type,
+                              void *destination) {
+            readCount.fetch_add(1, std::memory_order_relaxed);
+            return source.RasterIO(GF_Read,
+                                   x,
+                                   y,
+                                   width,
+                                   height,
+                                   destination,
+                                   width,
+                                   height,
+                                   type,
+                                   0,
+                                   0,
+                                   nullptr) == CE_None;
+        };
+        if (!read(*band, GDT_Float64, values.data()) ||
+            (alpha != nullptr &&
+             !read(*alpha, GDT_Float64, alphaValues.data())) ||
+            (mask != nullptr &&
+             !read(*mask, GDT_Byte, maskValues.data()))) {
+            return;
+        }
+        for (std::size_t index = 0; index < count; ++index) {
+            const double raw = values[index];
+            if (!std::isfinite(raw) ||
+                (std::isfinite(nodata) && raw == nodata) ||
+                (alpha != nullptr &&
+                 (!std::isfinite(alphaValues[index]) ||
+                  alphaValues[index] <= 0.0)) ||
+                (mask != nullptr && maskValues[index] == 0)) {
+                continue;
+            }
+            const double scaled = raw * scale + offset;
+            if (std::isfinite(scaled)) {
+                minimum = std::min(minimum, scaled);
+            }
+        }
+    };
+
+    const int width = static_cast<int>(level.width);
+    const int height = static_cast<int>(level.height);
+    const std::size_t pixels =
+        static_cast<std::size_t>(level.width) * level.height;
+    if (pixels <= maximumSampleValues) {
+        inspectWindow(0, 0, width, height);
+    } else {
+        const int window = static_cast<int>(sampleWindowPixels);
+        for (std::size_t row = 0; row < sampleGrid; ++row) {
+            for (std::size_t column = 0; column < sampleGrid; ++column) {
+                const int x = static_cast<int>(
+                    static_cast<std::size_t>(std::max(0, width - window)) *
+                    column / (sampleGrid - 1));
+                const int y = static_cast<int>(
+                    static_cast<std::size_t>(std::max(0, height - window)) *
+                    row / (sampleGrid - 1));
+                inspectWindow(x,
+                              y,
+                              std::min(window, width),
+                              std::min(window, height));
+            }
+        }
+    }
+    return std::isfinite(minimum) ? std::optional{minimum} : std::nullopt;
+}
+
+[[nodiscard]] RasterElevationDescriptor inspectElevationDescriptor(
+    GDALDataset &dataset,
+    const RasterBandSelection &selection,
+    const std::vector<RasterLevel> &levels,
+    const RasterDecodeParameters &display,
+    const std::optional<double> sampledMinimum,
+    const bool samplingPerformed,
+    const std::stop_token &stop,
+    std::atomic<std::uint64_t> &readCount)
+{
+    RasterElevationDescriptor descriptor;
+    if (selection.sampleKind != RasterSampleKind::ContinuousScalar ||
+        selection.colorBands.size() != 1) {
+        return descriptor;
+    }
+    GDALRasterBand *band = dataset.GetRasterBand(selection.colorBands.front());
+    if (band == nullptr) {
+        return descriptor;
+    }
+    descriptor.band = selection.colorBands.front();
+    descriptor.scale = selection.scale.front();
+    descriptor.offset = selection.offset.front();
+    if (const char *unit = band->GetUnitType(); unit != nullptr) {
+        descriptor.unit = unit;
+    }
+
+    double rawMinimum = 0.0;
+    double rawMaximum = 0.0;
+    double mean = 0.0;
+    double deviation = 0.0;
+    const char *approximate = band->GetMetadataItem("STATISTICS_APPROXIMATE");
+    const bool exactStatistics =
+        selection.alphaBand == 0 && !selection.usesDatasetMask &&
+        (approximate == nullptr || !CPLTestBool(approximate)) &&
+        band->GetStatistics(FALSE,
+                            FALSE,
+                            &rawMinimum,
+                            &rawMaximum,
+                            &mean,
+                            &deviation) == CE_None &&
+        std::isfinite(rawMinimum) && std::isfinite(rawMaximum);
+    if (exactStatistics) {
+        const double first =
+            rawMinimum * descriptor.scale + descriptor.offset;
+        const double second =
+            rawMaximum * descriptor.scale + descriptor.offset;
+        if (std::isfinite(first) && std::isfinite(second)) {
+            descriptor.available = true;
+            descriptor.cachedExactRange = RasterElevationRange{
+                .minimum = std::min(first, second),
+                .maximum = std::max(first, second),
+            };
+            descriptor.anchor = std::floor(descriptor.cachedExactRange->minimum);
+            return descriptor;
+        }
+    }
+
+    // The scalar display-range pass has already performed the same bounded
+    // sampling when there is no separate validity source. Reuse its scaled
+    // lower estimate as the precision anchor instead of doubling import I/O.
+    // Alpha and dataset-mask sources cannot take this shortcut because the
+    // display sampler intentionally does not compose their validity.
+    if (selection.alphaBand == 0 && !selection.usesDatasetMask) {
+        if (samplingPerformed) {
+            if (sampledMinimum && std::isfinite(*sampledMinimum)) {
+                descriptor.available = true;
+                descriptor.anchor = std::floor(*sampledMinimum);
+            }
+            // The completed scalar sample also proves that no valid value was
+            // found when sampledMinimum is empty. A second identical pass
+            // cannot add information.
+            return descriptor;
+        }
+        if (display.displayRange.has_value() &&
+            display.displayRange->origin !=
+                RasterDisplayRange::Origin::Metadata &&
+            std::isfinite(display.displayRange->minimum)) {
+            descriptor.available = true;
+            descriptor.anchor = std::floor(display.displayRange->minimum);
+            return descriptor;
+        }
+    }
+
+    if (const std::optional<double> minimum = boundedElevationMinimum(
+            dataset, selection, levels, stop, readCount)) {
+        descriptor.available = true;
+        descriptor.anchor = std::floor(*minimum);
+    }
+    return descriptor;
 }
 
 [[nodiscard]] std::string spatialReferenceWkt(GDALDataset &dataset,
@@ -739,11 +963,24 @@ GdalRasterLoader::inspect(const RasterImportRequest &request) const
     if (request.phase) {
         request.phase(RasterImportPhase::SamplingRange);
     }
-    metadata.defaultDisplay = inspectOrSampleDisplayRange(*dataset,
-                                                          selection,
-                                                          metadata.levels,
-                                                          request.stopToken,
-                                                          sampleReadCount_);
+    std::optional<double> sampledElevationMinimum;
+    bool displaySamplingPerformed = false;
+    metadata.defaultDisplay = inspectOrSampleDisplayRange(
+        *dataset,
+        selection,
+        metadata.levels,
+        request.stopToken,
+        sampleReadCount_,
+        &sampledElevationMinimum,
+        &displaySamplingPerformed);
+    metadata.elevation = inspectElevationDescriptor(*dataset,
+                                                    selection,
+                                                    metadata.levels,
+                                                    metadata.defaultDisplay,
+                                                    sampledElevationMinimum,
+                                                    displaySamplingPerformed,
+                                                    request.stopToken,
+                                                    sampleReadCount_);
 
     // Keep inspection and range sampling on physically backed GDAL levels.
     // The logical coverage pyramid is metadata-only here; its pixels are read

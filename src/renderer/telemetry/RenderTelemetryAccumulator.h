@@ -63,6 +63,7 @@ struct RenderResidencyTelemetry {
     std::uint64_t rasterCpuBudgetBytes = 0;
     std::uint64_t rasterCpuPeakBytes = 0;
     std::uint64_t rasterGpuBytes = 0;
+    std::uint64_t rasterHeightGpuBytes = 0;
     std::uint64_t rasterGpuBudgetBytes = 0;
     std::uint64_t rasterGpuPeakBytes = 0;
     std::uint64_t rasterTilesRequested = 0;
@@ -74,6 +75,8 @@ struct RenderResidencyTelemetry {
     std::size_t rasterResidentTiles = 0;
     std::size_t rasterSelectedTiles = 0;
     std::size_t rasterDrawnTiles = 0;
+    std::size_t rasterSurfaceDrawnTiles = 0;
+    std::uint64_t rasterSurfaceTriangles = 0;
     std::size_t rasterPendingReads = 0;
     std::uint32_t rasterFinestLevel = 0;
     std::uint32_t rasterCoarsestLevel = 0;

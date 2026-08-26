@@ -286,12 +286,22 @@ TEST_CASE("raster style clamps invalid values", "[unit][raster]")
     const pci::RasterLayerStyle clamped = pci::clampRasterLayerStyle(style);
     CHECK(clamped.opacity == 1.0F);
     CHECK(clamped.zOffset == 0.0);
+    CHECK(clamped.verticalExaggeration == 1.0);
+    CHECK(clamped.surfaceShadingStrength == 1.0F);
 
     style.opacity = -1.0F;
     style.zOffset = 1.0e9;
     const pci::RasterLayerStyle bounded = pci::clampRasterLayerStyle(style);
     CHECK(bounded.opacity == 0.0F);
     CHECK(bounded.zOffset == pci::maximumRasterZOffsetMagnitude);
+
+    style.verticalExaggeration = 1000.0;
+    style.surfaceShadingStrength = -2.0F;
+    const pci::RasterLayerStyle terrain =
+        pci::clampRasterLayerStyle(style);
+    CHECK(terrain.verticalExaggeration ==
+          pci::maximumRasterVerticalExaggeration);
+    CHECK(terrain.surfaceShadingStrength == 0.0F);
 
     pci::RasterLayerStyle ranged;
     ranged.displayRange =
@@ -322,6 +332,54 @@ TEST_CASE("raster default style colorizes scalar sources", "[unit][raster]")
     CHECK(style.displayRange->minimum == -5.0);
     CHECK(style.opacity == 1.0F);
     CHECK(style.zOffset == 0.0);
+    CHECK(style.renderMode == pci::RasterRenderMode::Flat);
+    CHECK(style.verticalExaggeration == 1.0);
+}
+
+TEST_CASE("surface bounds require a ready exact elevation range",
+          "[unit][raster][surface]")
+{
+    pci::RasterLayerMetadata metadata;
+    metadata.width = 10;
+    metadata.height = 20;
+    metadata.geoTransform = {100.0, 2.0, 0.0, 200.0, 0.0, -2.0};
+    metadata.bounds = *pci::rasterPixelEdgeBounds(
+        metadata.geoTransform, metadata.width, metadata.height);
+    metadata.elevation.available = true;
+
+    pci::RasterLayerStyle style;
+    style.renderMode = pci::RasterRenderMode::Surface;
+    style.verticalExaggeration = 2.0;
+    style.zOffset = 5.0;
+    const pci::RasterElevationRange range{.minimum = -10.0,
+                                          .maximum = 30.0};
+
+    CHECK(pci::rasterEffectiveRenderMode(metadata,
+                                         style,
+                                         pci::RasterElevationStatus::Scanning,
+                                         range) ==
+          pci::RasterRenderMode::Flat);
+    const pci::Bounds3d pending = pci::rasterSceneBounds(
+        metadata, style, pci::RasterElevationStatus::Scanning, range);
+    CHECK(pending.minimum[2] == Catch::Approx(4.5));
+    CHECK(pending.maximum[2] == Catch::Approx(5.5));
+
+    CHECK(pci::rasterEffectiveRenderMode(metadata,
+                                         style,
+                                         pci::RasterElevationStatus::Ready,
+                                         range) ==
+          pci::RasterRenderMode::Surface);
+    const pci::Bounds3d ready = pci::rasterSceneBounds(
+        metadata, style, pci::RasterElevationStatus::Ready, range);
+    CHECK(ready.minimum[2] == Catch::Approx(-15.0));
+    CHECK(ready.maximum[2] == Catch::Approx(65.0));
+
+    const pci::Bounds3d constant = pci::rasterSceneBounds(
+        metadata,
+        style,
+        pci::RasterElevationStatus::Ready,
+        pci::RasterElevationRange{.minimum = 7.0, .maximum = 7.0});
+    CHECK(constant.maximum[2] - constant.minimum[2] == Catch::Approx(1.0));
 }
 
 TEST_CASE("raster tile keys hash and order", "[unit][raster]")
@@ -352,6 +410,12 @@ TEST_CASE("raster tile data accounts its allocation", "[unit][raster]")
     tile.validHeight = 256;
     CHECK(tile.byteSize() >= pci::rasterStoredTileBytes);
     CHECK(tile.byteSize() > tile.rgba.size());
+    const std::uint64_t colorBytes = tile.byteSize();
+    tile.profile = pci::RasterTilePayloadProfile::RenderElevation;
+    tile.elevation.resize(pci::rasterStoredTilePixels *
+                          pci::rasterStoredTilePixels);
+    CHECK(tile.byteSize() >= colorBytes +
+                                 tile.elevation.size() * sizeof(float));
 }
 
 TEST_CASE("raster source identifiers are monotonic", "[unit][raster]")

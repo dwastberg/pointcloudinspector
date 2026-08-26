@@ -5,6 +5,7 @@
 #include "pointcloud/PointColorMapCatalog.h"
 #include "pointcloud/PointColorPolicy.h"
 #include "scene/SceneDocumentSnapshot.h"
+#include "renderer/RenderViewport.h"
 
 #include <QDockWidget>
 
@@ -31,6 +32,8 @@ public:
     void setDocumentSnapshot(SceneDocumentSnapshotPtr snapshot,
                              SceneLayerId selectedLayerId);
     void setColorizeJobState(bool active, bool committing);
+    void setRasterSurfaceCapability(RasterSurfaceCapability capability,
+                                    QString reason = {});
 
 signals:
     void pointColorModeChanged(pci::SceneLayerId layerId,
@@ -47,6 +50,8 @@ signals:
     void rasterStyleChanged(pci::SceneLayerId layerId,
                             pci::RasterLayerStyle style);
     void showRasterAnywayRequested(pci::SceneLayerId layerId);
+    void retryRasterElevationRequested(pci::SceneLayerId layerId);
+    void cancelRasterElevationRequested(pci::SceneLayerId layerId);
 
 private:
     void applyColorSource(int index);
@@ -115,6 +120,13 @@ private:
     QLabel *vectorCrsValue_ = nullptr;
     QLabel *vectorBoundsValue_ = nullptr;
     QDoubleSpinBox *rasterOpacity_ = nullptr;
+    QWidget *rasterRenderingWidget_ = nullptr;
+    QComboBox *rasterRenderMode_ = nullptr;
+    QDoubleSpinBox *rasterVerticalExaggeration_ = nullptr;
+    QDoubleSpinBox *rasterSurfaceShading_ = nullptr;
+    QLabel *rasterElevationStatus_ = nullptr;
+    QPushButton *rasterElevationRetry_ = nullptr;
+    QPushButton *rasterElevationCancel_ = nullptr;
     QDoubleSpinBox *rasterZOffset_ = nullptr;
     QPushButton *rasterPlaceAboveScene_ = nullptr;
     QPushButton *rasterMatchSceneFloor_ = nullptr;
@@ -143,6 +155,9 @@ private:
     PointColorMapCatalogSnapshotPtr colorMaps_;
     bool colorizeJobActive_ = false;
     bool colorizeJobCommitting_ = false;
+    RasterSurfaceCapability rasterSurfaceCapability_ =
+        RasterSurfaceCapability::Unknown;
+    QString rasterSurfaceCapabilityReason_;
 };
 
 } // namespace pci

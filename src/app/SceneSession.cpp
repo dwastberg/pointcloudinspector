@@ -98,6 +98,7 @@ SceneSession::SceneSession(
     connectController();
     connectVectorController();
     connectRasterController();
+    connectRasterElevationController();
     connectColorizeController();
 }
 
@@ -137,6 +138,11 @@ RasterLoadController &SceneSession::rasterLoadController() noexcept
     return *importServices_.raster;
 }
 
+RasterElevationController &SceneSession::rasterElevationController() noexcept
+{
+    return *importServices_.rasterElevation;
+}
+
 PointCloudColorizeController &SceneSession::colorizeController() noexcept
 {
     return *importServices_.colorize;
@@ -166,7 +172,8 @@ bool SceneSession::hasActiveVectorLoads() const noexcept
 
 bool SceneSession::hasActiveRasterLoads() const noexcept
 {
-    return importServices_.raster->hasActiveJobs();
+    return importServices_.raster->hasActiveJobs() ||
+           importServices_.rasterElevation->hasActiveJobs();
 }
 
 bool SceneSession::hasActiveColorizeJobs() const noexcept
@@ -436,6 +443,72 @@ void SceneSession::connectRasterController()
             });
 }
 
+void SceneSession::connectRasterElevationController()
+{
+    RasterElevationController &controller = rasterElevationController();
+    connect(&controller,
+            &RasterElevationController::completed,
+            this,
+            [this](const LoadJobId,
+                   const SceneLayerId layerId,
+                   const RasterSourceId sourceId,
+                   const RasterElevationRange range) {
+                assertOwnerThread(*this);
+                const auto layer = document_->rasterLayer(layerId);
+                if (!layer || !layer->data ||
+                    layer->data->sourceId != sourceId) {
+                    return;
+                }
+                if (document_->setRasterElevationState(
+                        layerId, RasterElevationStatus::Ready, range)) {
+                    publishDocument();
+                }
+                publishTaskRows();
+            });
+    connect(&controller,
+            &RasterElevationController::failed,
+            this,
+            [this](const LoadJobId,
+                   const SceneLayerId layerId,
+                   const RasterSourceId sourceId,
+                   const QString &message) {
+                assertOwnerThread(*this);
+                const auto layer = document_->rasterLayer(layerId);
+                if (!layer || !layer->data ||
+                    layer->data->sourceId != sourceId) {
+                    return;
+                }
+                if (document_->setRasterElevationState(
+                        layerId,
+                        RasterElevationStatus::Failed,
+                        std::nullopt,
+                        message.toStdString())) {
+                    publishDocument();
+                }
+                publishTaskRows();
+            });
+    connect(&controller,
+            &RasterElevationController::cancelled,
+            this,
+            [this](const LoadJobId, const SceneLayerId layerId) {
+                assertOwnerThread(*this);
+                if (document_->setRasterElevationState(
+                        layerId,
+                        RasterElevationStatus::Failed,
+                        std::nullopt,
+                        "Elevation analysis was cancelled")) {
+                    publishDocument();
+                }
+                publishTaskRows();
+            });
+    connect(&controller,
+            &RasterElevationController::jobStateChanged,
+            this,
+            [this](const LoadJobId) {
+                publishTaskRows();
+            });
+}
+
 void SceneSession::connectColorizeController()
 {
     PointCloudColorizeController &controller = colorizeController();
@@ -551,6 +624,10 @@ void SceneSession::publishTaskRows()
     rows.insert(rows.end(),
                 std::make_move_iterator(rasterRows.begin()),
                 std::make_move_iterator(rasterRows.end()));
+    LoadJobRows elevationRows = rasterElevationController().jobRows();
+    rows.insert(rows.end(),
+                std::make_move_iterator(elevationRows.begin()),
+                std::make_move_iterator(elevationRows.end()));
     LoadJobRows colorizeRows = colorizeController().jobRows();
     rows.insert(rows.end(),
                 std::make_move_iterator(colorizeRows.begin()),
@@ -1047,6 +1124,7 @@ void SceneSession::cancelAllLoads()
     cancelAll();
     vectorLoadController().cancelAll();
     rasterLoadController().cancelAll();
+    rasterElevationController().cancelAll();
     colorizeController().cancelAll();
 }
 
@@ -1069,6 +1147,9 @@ void SceneSession::cancelJob(const LoadJobKey key)
     case LoadJobKind::Colorize:
         colorizeController().cancel(key.id);
         break;
+    case LoadJobKind::RasterElevation:
+        rasterElevationController().cancel(key.id);
+        break;
     }
 }
 
@@ -1090,6 +1171,19 @@ void SceneSession::retryJob(const LoadJobKey key)
             document_->syncResidencyBudgets();
         }
         break;
+    case LoadJobKind::RasterElevation: {
+        const std::vector<RasterElevationJobState> states =
+            rasterElevationController().jobStates();
+        const auto state = std::ranges::find(states, key.id,
+                                             &RasterElevationJobState::jobId);
+        if (state != states.end()) {
+            static_cast<void>(document_->setRasterElevationState(
+                state->layerId, RasterElevationStatus::Scanning));
+            publishDocument();
+        }
+        static_cast<void>(rasterElevationController().retry(key.id));
+        break;
+    }
     }
 }
 
@@ -1125,6 +1219,11 @@ void SceneSession::dismissJob(const LoadJobKey key)
             publishTaskRows();
         }
         break;
+    case LoadJobKind::RasterElevation:
+        if (rasterElevationController().dismiss(key.id)) {
+            publishTaskRows();
+        }
+        break;
     }
 }
 
@@ -1150,9 +1249,69 @@ void SceneSession::setRasterLayerStyle(const SceneLayerId layerId,
                                        RasterLayerStyle style)
 {
     assertOwnerThread(*this);
-    if (document_->setRasterLayerStyle(layerId, std::move(style))) {
-        publishDocument();
+    if (!document_->setRasterLayerStyle(layerId, std::move(style))) {
+        return;
     }
+    const auto layer = document_->rasterLayer(layerId);
+    if (layer && layer->style.renderMode == RasterRenderMode::Surface &&
+        layer->elevationStatus == RasterElevationStatus::Unknown) {
+        static_cast<void>(document_->setRasterElevationState(
+            layerId, RasterElevationStatus::Scanning));
+        try {
+            static_cast<void>(
+                rasterElevationController().start(layerId, layer->data));
+        } catch (const std::exception &error) {
+            static_cast<void>(document_->setRasterElevationState(
+                layerId,
+                RasterElevationStatus::Failed,
+                std::nullopt,
+                error.what()));
+        }
+    }
+    publishDocument();
+}
+
+void SceneSession::retryRasterElevation(const SceneLayerId layerId)
+{
+    assertOwnerThread(*this);
+    const auto layer = document_->rasterLayer(layerId);
+    if (!layer || !layer->data ||
+        !layer->data->metadata().elevation.available) {
+        return;
+    }
+    bool accepted = false;
+    const std::vector<RasterElevationJobState> states =
+        rasterElevationController().jobStates();
+    if (const auto state = std::ranges::find(states,
+                                             layerId,
+                                             &RasterElevationJobState::layerId);
+        state != states.end()) {
+        accepted = rasterElevationController().retry(state->jobId);
+    }
+    if (!accepted) {
+        try {
+            static_cast<void>(
+                rasterElevationController().start(layerId, layer->data));
+            accepted = true;
+        } catch (const std::exception &error) {
+            static_cast<void>(document_->setRasterElevationState(
+                layerId,
+                RasterElevationStatus::Failed,
+                std::nullopt,
+                error.what()));
+        }
+    }
+    if (accepted) {
+        static_cast<void>(document_->setRasterElevationState(
+            layerId, RasterElevationStatus::Scanning));
+    }
+    publishDocument();
+}
+
+void SceneSession::cancelRasterElevation(const SceneLayerId layerId)
+{
+    assertOwnerThread(*this);
+    rasterElevationController().cancelLayer(layerId);
 }
 
 void SceneSession::setLayerColorMode(const PointCloudLayerId layerId,
@@ -1232,6 +1391,7 @@ void SceneSession::removeLayer(const SceneLayerId layerId)
     }
     if (document_->rasterLayer(layerId)) {
         colorizeController().cancelForRasterLayer(layerId);
+        rasterElevationController().cancelLayer(layerId);
     }
     if (ActiveLoad *load = activeLoadByLayerId(layerId)) {
         load->admitted = false;

@@ -73,6 +73,23 @@ private:
     return layer;
 }
 
+[[nodiscard]] pci::RasterLayer surfaceLayer()
+{
+    pci::RasterLayer layer = plannerLayer();
+    pci::RasterLayerMetadata metadata = layer.data->metadata();
+    metadata.elevation.available = true;
+    metadata.elevation.anchor = 0.0;
+    layer.data = std::make_shared<pci::RasterLayerData>(pci::RasterLayerData{
+        .sourceId = pci::nextRasterSourceId(),
+        .source = std::make_shared<PlannerRasterSource>(std::move(metadata)),
+    });
+    layer.style.renderMode = pci::RasterRenderMode::Surface;
+    layer.elevationStatus = pci::RasterElevationStatus::Ready;
+    layer.exactElevationRange =
+        pci::RasterElevationRange{.minimum = -100.0, .maximum = 100.0};
+    return layer;
+}
+
 // Looks straight down at the raster plane from the given height, centred on
 // the raster. With a 60 degree vertical field of view over 1000 pixels, one
 // world unit at height h spans 1 / (0.001155 * h) screen pixels, which is what
@@ -528,6 +545,47 @@ TEST_CASE("raster planner clips a rotated footprint to its visible region",
         CHECK(vertex[0] <= 2048.0);
         CHECK(vertex[1] <= 2048.0);
     }
+}
+
+TEST_CASE("surface planning includes frustum corners contained by the prism",
+          "[renderer][raster][lod][surface]")
+{
+    const pci::RasterLayer layer = surfaceLayer();
+    pci::FrameCamera camera;
+    camera.eye = {1024.0, -1024.0, 0.0};
+    camera.forward = {1.0, 0.0, 0.0};
+    camera.up = {0.0, 0.0, 1.0};
+    camera.right = {0.0, -1.0, 0.0};
+    camera.outputWidth = 800;
+    camera.outputHeight = 800;
+    camera.nearPlane = 1.0;
+    camera.farPlane = 100.0;
+    camera.orthographic = true;
+    camera.orthographicScale = 40.0;
+    camera.culler = pci::FrustumCuller::fromOrthographic(camera.eye,
+                                                         camera.forward,
+                                                         camera.up,
+                                                         camera.right,
+                                                         20.0,
+                                                         1.0,
+                                                         camera.nearPlane,
+                                                         camera.farPlane);
+
+    // The complete frustum lies inside the DEM volume, so clipping only the
+    // six prism faces yields no vertices. Its corners must contribute the
+    // bounded visible subregion instead of losing the Surface or falling back
+    // to the entire 2048-square source.
+    const auto polygon = pci::rasterVisiblePixelPolygon(layer, camera);
+    REQUIRE(polygon.size() >= 3);
+    double minimumX = std::numeric_limits<double>::max();
+    double maximumX = std::numeric_limits<double>::lowest();
+    for (const auto point : polygon) {
+        minimumX = std::min(minimumX, point[0]);
+        maximumX = std::max(maximumX, point[0]);
+    }
+    CHECK(minimumX > 1000.0);
+    CHECK(maximumX < 1200.0);
+    CHECK_FALSE(pci::planRasterTiles(planInput(layer, camera)).selected.empty());
 }
 
 TEST_CASE("raster projected texel size scales with distance",

@@ -12,7 +12,8 @@ enum class LoadJobKind : std::uint8_t {
     PointCloud,
     Vector,
     Raster,
-    Colorize
+    Colorize,
+    RasterElevation,
 };
 
 struct LoadJobKey {

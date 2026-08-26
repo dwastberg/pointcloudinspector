@@ -19,6 +19,7 @@
 #include <QPushButton>
 #include <QSettings>
 #include <QSignalSpy>
+#include <QStandardItemModel>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTimer>
@@ -513,6 +514,74 @@ TEST_CASE("layer inspector edits raster opacity and elevation",
     reset->click();
     CHECK(styleChanged.back().at(1).value<pci::RasterLayerStyle>().zOffset ==
           Catch::Approx(0.0));
+}
+
+TEST_CASE("layer inspector exposes true-elevation Surface controls",
+          "[ui][inspector][raster][surface]")
+{
+    pci::LayerInspectorDock inspector(
+        nullptr, pci::test::createTestPointColorMapCatalog());
+    inspector.setRasterSurfaceCapability(
+        pci::RasterSurfaceCapability::Supported);
+    pci::SceneDocumentSnapshotPtr snapshot =
+        rasterInspectorSnapshot(pci::RasterSampleKind::ContinuousScalar);
+    auto &state = const_cast<pci::RasterLayerState &>(
+        std::get<pci::RasterLayerState>(snapshot->layers[0].payload));
+    auto &metadata =
+        const_cast<pci::RasterLayerMetadata &>(state.data->metadata());
+    metadata.elevation.available = true;
+    metadata.elevation.band = 1;
+    metadata.elevation.unit = "m";
+    state.style.renderMode = pci::RasterRenderMode::Surface;
+    state.style.verticalExaggeration = 2.5;
+    state.style.surfaceShadingStrength = 0.75F;
+    state.elevationStatus = pci::RasterElevationStatus::Ready;
+    state.exactElevationRange =
+        pci::RasterElevationRange{.minimum = 10.0, .maximum = 90.0};
+    inspector.setDocumentSnapshot(snapshot, pci::SceneLayerId{1});
+
+    auto *section = inspector.findChild<QWidget *>(
+        QStringLiteral("rasterRenderingSection"));
+    auto *mode = inspector.findChild<QComboBox *>(
+        QStringLiteral("rasterRenderModeCombo"));
+    auto *exaggeration = inspector.findChild<QDoubleSpinBox *>(
+        QStringLiteral("rasterVerticalExaggerationSpinBox"));
+    auto *shading = inspector.findChild<QDoubleSpinBox *>(
+        QStringLiteral("rasterSurfaceShadingSpinBox"));
+    auto *status = inspector.findChild<QLabel *>(
+        QStringLiteral("rasterElevationStatusLabel"));
+    REQUIRE(section != nullptr);
+    REQUIRE(mode != nullptr);
+    REQUIRE(exaggeration != nullptr);
+    REQUIRE(shading != nullptr);
+    REQUIRE(status != nullptr);
+    CHECK(section->isVisibleTo(inspector.widget()));
+    CHECK(mode->currentData().toInt() ==
+          static_cast<int>(pci::RasterRenderMode::Surface));
+    CHECK(exaggeration->value() == Catch::Approx(2.5));
+    CHECK(shading->value() == Catch::Approx(75.0));
+    CHECK(status->text().contains(QStringLiteral("10")));
+    CHECK(status->text().contains(QStringLiteral("90")));
+    CHECK(status->text().contains(QStringLiteral("m")));
+
+    QSignalSpy styleChanged(&inspector,
+                            &pci::LayerInspectorDock::rasterStyleChanged);
+    exaggeration->setValue(4.0);
+    REQUIRE_FALSE(styleChanged.empty());
+    CHECK(styleChanged.back()
+              .at(1)
+              .value<pci::RasterLayerStyle>()
+              .verticalExaggeration == Catch::Approx(4.0));
+
+    inspector.setRasterSurfaceCapability(
+        pci::RasterSurfaceCapability::Unsupported,
+        QStringLiteral("No R32F support"));
+    CHECK(status->text().contains(QStringLiteral("No R32F support")));
+    auto *model = qobject_cast<QStandardItemModel *>(mode->model());
+    REQUIRE(model != nullptr);
+    CHECK_FALSE(model->item(mode->findData(
+                                static_cast<int>(pci::RasterRenderMode::Surface)))
+                    ->isEnabled());
 }
 
 TEST_CASE("layer inspector warns when a raster needs tiled rendering",

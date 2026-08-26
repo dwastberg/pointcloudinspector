@@ -32,6 +32,8 @@ struct GdalRasterFixturePaths {
     std::filesystem::path coverageNodata;
     // Float32 terrain with a nodata value and a nodata region at one edge.
     std::filesystem::path terrain;
+    // Float32 terrain plus explicit alpha, negative scale, offset, and unit.
+    std::filesystem::path terrainAlpha;
     // UInt16 occupying only part of the 0-65535 domain.
     std::filesystem::path unsigned16;
     std::filesystem::path rotated;

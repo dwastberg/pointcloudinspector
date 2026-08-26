@@ -5,6 +5,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <limits>
 #include <memory>
 #include <stdexcept>
@@ -13,6 +14,19 @@
 #include <vector>
 
 namespace pci {
+
+enum class RasterTilePayloadProfile : std::uint8_t {
+    ColorOnly,
+    RenderElevation,
+};
+
+struct RasterElevationScanProgress {
+    std::uint64_t processedBlocks = 0;
+    std::uint64_t totalBlocks = 0;
+};
+
+using RasterElevationProgressCallback =
+    std::function<void(RasterElevationScanProgress)>;
 
 // Every decoded tile is one guttered, premultiplied RGBA8 buffer of exactly
 // this size, so cache accounting and upload sizing never depend on the source.
@@ -50,6 +64,7 @@ struct RasterTileRequest {
     RasterTileKey key;
     std::uint64_t renderGeneration = 0;
     std::shared_ptr<const RasterDecodeParameters> decode;
+    RasterTilePayloadProfile profile = RasterTilePayloadProfile::ColorOnly;
 };
 
 struct RasterTileData {
@@ -58,13 +73,20 @@ struct RasterTileData {
     std::uint16_t validWidth = 0; // inner pixels, excluding the gutter
     std::uint16_t validHeight = 0;
     std::vector<std::byte> rgba; // always rasterStoredTileBytes
+    RasterTilePayloadProfile profile = RasterTilePayloadProfile::ColorOnly;
+    std::vector<float> elevation;
+    float elevationMinimum = 0.0F;
+    float elevationMaximum = 0.0F;
+    bool hasValidElevation = false;
+    bool hasTranslucentAlpha = false;
 
     // Accounted rather than logical size: the cache reserves what the
     // allocation actually holds, not what the pixels logically occupy.
     [[nodiscard]] std::uint64_t byteSize() const noexcept
     {
         return sizeof(RasterTileData) +
-               static_cast<std::uint64_t>(rgba.capacity());
+               static_cast<std::uint64_t>(rgba.capacity()) +
+               static_cast<std::uint64_t>(elevation.capacity()) * sizeof(float);
     }
 };
 
@@ -107,6 +129,19 @@ public:
     // caller can mistake a zeroed buffer for transparent imagery.
     [[nodiscard]] virtual RasterTileData readTile(const RasterTileRequest &,
                                                   std::stop_token) const = 0;
+
+    [[nodiscard]] virtual std::uint64_t
+    exactElevationScanReservationBytes() const noexcept
+    {
+        return 0;
+    }
+
+    [[nodiscard]] virtual RasterElevationRange exactElevationRange(
+        std::stop_token,
+        RasterElevationProgressCallback) const
+    {
+        throw RasterReadError("Exact raster elevation analysis is unavailable");
+    }
 };
 
 using RasterTileSourcePtr = std::shared_ptr<const RasterTileSource>;

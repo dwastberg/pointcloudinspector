@@ -25,6 +25,45 @@ struct PixelRect {
     }
 };
 
+[[nodiscard]] double cross(const Point2 origin,
+                           const Point2 a,
+                           const Point2 b) noexcept
+{
+    return (a[0] - origin[0]) * (b[1] - origin[1]) -
+           (a[1] - origin[1]) * (b[0] - origin[0]);
+}
+
+[[nodiscard]] std::vector<Point2> convexHull(std::vector<Point2> points)
+{
+    std::ranges::sort(points, [](const Point2 left, const Point2 right) {
+        return left[0] < right[0] ||
+               (left[0] == right[0] && left[1] < right[1]);
+    });
+    points.erase(std::ranges::unique(points).begin(), points.end());
+    if (points.size() < 3) {
+        return {};
+    }
+    std::vector<Point2> hull;
+    hull.reserve(points.size() * 2);
+    for (const Point2 point : points) {
+        while (hull.size() >= 2 &&
+               cross(hull[hull.size() - 2], hull.back(), point) <= 0.0) {
+            hull.pop_back();
+        }
+        hull.push_back(point);
+    }
+    const std::size_t lower = hull.size();
+    for (auto point = points.rbegin(); point != points.rend(); ++point) {
+        while (hull.size() > lower &&
+               cross(hull[hull.size() - 2], hull.back(), *point) <= 0.0) {
+            hull.pop_back();
+        }
+        hull.push_back(*point);
+    }
+    hull.pop_back();
+    return hull.size() < 3 ? std::vector<Point2>{} : hull;
+}
+
 [[nodiscard]] PixelRect polygonBounds(const std::vector<Point2> &polygon)
 {
     PixelRect bounds{std::numeric_limits<double>::max(),
@@ -233,8 +272,96 @@ std::vector<Point2> rasterVisiblePixelPolygon(const RasterLayer &layer,
         return {};
     }
 
-    // The raster's four finite corners at the styled elevation, clipped
-    // against the frustum rather than traversed from a dataset-wide root.
+    const RasterRenderMode mode = rasterEffectiveRenderMode(
+        metadata,
+        layer.style,
+        layer.elevationStatus,
+        layer.exactElevationRange);
+    if (mode == RasterRenderMode::Surface) {
+        const double low = layer.exactElevationRange->minimum *
+                               layer.style.verticalExaggeration +
+                           layer.style.zOffset;
+        const double high = layer.exactElevationRange->maximum *
+                                layer.style.verticalExaggeration +
+                            layer.style.zOffset;
+        std::array<Vec3d, 4> floor = rasterCornerPoints(
+            metadata.geoTransform, metadata.width, metadata.height);
+        std::array<Vec3d, 4> ceiling = floor;
+        for (Vec3d &corner : floor) {
+            corner.z = std::min(low, high);
+        }
+        for (Vec3d &corner : ceiling) {
+            corner.z = std::max(low, high);
+        }
+        const std::array<std::array<Vec3d, 4>, 6> faces{
+            floor,
+            ceiling,
+            std::array<Vec3d, 4>{floor[0], floor[1], ceiling[1], ceiling[0]},
+            std::array<Vec3d, 4>{floor[1], floor[2], ceiling[2], ceiling[1]},
+            std::array<Vec3d, 4>{floor[2], floor[3], ceiling[3], ceiling[2]},
+            std::array<Vec3d, 4>{floor[3], floor[0], ceiling[0], ceiling[3]},
+        };
+        std::vector<Vec3d> intersectionVertices;
+        for (const auto &face : faces) {
+            std::vector<Vec3d> clipped =
+                camera.culler.clipConvexPolygon(face);
+            intersectionVertices.insert(intersectionVertices.end(),
+                                        clipped.begin(),
+                                        clipped.end());
+        }
+        // Clipped prism faces alone are not conservative when a frustum corner
+        // lies inside the prism. Include those original intersection vertices.
+        for (const Vec3d corner : camera.culler.corners()) {
+            if (corner.z < floor[0].z || corner.z > ceiling[0].z) {
+                continue;
+            }
+            const auto pixel = rasterWorldToPixel(
+                metadata.geoTransform, corner.x, corner.y);
+            if (pixel && pixel->pixel >= 0.0 &&
+                pixel->pixel <= static_cast<double>(metadata.width) &&
+                pixel->line >= 0.0 &&
+                pixel->line <= static_cast<double>(metadata.height)) {
+                intersectionVertices.push_back(corner);
+            }
+        }
+
+        std::vector<Point2> pixels;
+        pixels.reserve(intersectionVertices.size());
+        for (const Vec3d vertex : intersectionVertices) {
+            const auto pixel = rasterWorldToPixel(
+                metadata.geoTransform, vertex.x, vertex.y);
+            if (pixel) {
+                pixels.push_back({
+                    std::clamp(pixel->pixel,
+                               0.0,
+                               static_cast<double>(metadata.width)),
+                    std::clamp(pixel->line,
+                               0.0,
+                               static_cast<double>(metadata.height)),
+                });
+            }
+        }
+        if (std::vector<Point2> hull = convexHull(std::move(pixels));
+            hull.size() >= 3) {
+            return hull;
+        }
+        if (!camera.culler.intersects(rasterSceneBounds(
+                metadata,
+                layer.style,
+                layer.elevationStatus,
+                layer.exactElevationRange))) {
+            return {};
+        }
+        // Degenerate/contained intersections deliberately over-plan rather than
+        // excluding terrain that can become visible through its height.
+        return {{0.0, 0.0},
+                {static_cast<double>(metadata.width), 0.0},
+                {static_cast<double>(metadata.width),
+                 static_cast<double>(metadata.height)},
+                {0.0, static_cast<double>(metadata.height)}};
+    }
+
+    // Flat retains the existing finite-quad clipping path.
     std::array<Vec3d, 4> corners = rasterCornerPoints(
         metadata.geoTransform, metadata.width, metadata.height);
     for (Vec3d &corner : corners) {
@@ -312,6 +439,27 @@ RasterLodPlan planRasterTiles(const RasterLodPlanInput &input)
         const PixelRect cell = tileBaseRect(metadata, key);
         const Vec3d center = tileCenterWorld(metadata, input.layer.style, cell);
         const auto texelPixels = [&](const std::uint32_t level) {
+            if (rasterEffectiveRenderMode(metadata,
+                                          input.layer.style,
+                                          input.layer.elevationStatus,
+                                          input.layer.exactElevationRange) ==
+                RasterRenderMode::Surface) {
+                const double low = input.layer.exactElevationRange->minimum *
+                                       input.layer.style.verticalExaggeration +
+                                   input.layer.style.zOffset;
+                const double high = input.layer.exactElevationRange->maximum *
+                                        input.layer.style.verticalExaggeration +
+                                    input.layer.style.zOffset;
+                return std::max(
+                    rasterProjectedTexelPixels(metadata,
+                                               metadata.levels[level],
+                                               {center.x, center.y, low},
+                                               input.camera),
+                    rasterProjectedTexelPixels(metadata,
+                                               metadata.levels[level],
+                                               {center.x, center.y, high},
+                                               input.camera));
+            }
             return rasterProjectedTexelPixels(
                 metadata, metadata.levels[level], center, input.camera);
         };

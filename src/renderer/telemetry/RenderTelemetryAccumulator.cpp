@@ -179,6 +179,7 @@ RenderMetrics projectRenderMetrics(const RenderTelemetrySnapshot &telemetry)
         .rasterCpuBudgetBytes = telemetry.residency.rasterCpuBudgetBytes,
         .rasterCpuPeakBytes = telemetry.residency.rasterCpuPeakBytes,
         .rasterGpuBytes = telemetry.residency.rasterGpuBytes,
+        .rasterHeightGpuBytes = telemetry.residency.rasterHeightGpuBytes,
         .rasterGpuBudgetBytes = telemetry.residency.rasterGpuBudgetBytes,
         .rasterGpuPeakBytes = telemetry.residency.rasterGpuPeakBytes,
         .rasterTilesRequested = telemetry.residency.rasterTilesRequested,
@@ -190,6 +191,10 @@ RenderMetrics projectRenderMetrics(const RenderTelemetrySnapshot &telemetry)
         .rasterResidentTiles = telemetry.residency.rasterResidentTiles,
         .rasterSelectedTiles = telemetry.residency.rasterSelectedTiles,
         .rasterDrawnTiles = telemetry.residency.rasterDrawnTiles,
+        .rasterSurfaceDrawnTiles =
+            telemetry.residency.rasterSurfaceDrawnTiles,
+        .rasterSurfaceTriangles =
+            telemetry.residency.rasterSurfaceTriangles,
         .rasterPendingReads = telemetry.residency.rasterPendingReads,
         .rasterFinestLevel = telemetry.residency.rasterFinestLevel,
         .rasterCoarsestLevel = telemetry.residency.rasterCoarsestLevel,

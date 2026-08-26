@@ -211,6 +211,8 @@ ImportServices createImportServices()
     // own workers so interactive imagery is not starved by point imports.
     services.raster = std::make_unique<RasterLoadController>(
         std::make_shared<GdalRasterLoader>(), *services.scheduler);
+    services.rasterElevation =
+        std::make_unique<RasterElevationController>(*services.scheduler);
     services.colorize =
         std::make_unique<PointCloudColorizeController>(*services.scheduler);
     services.spatialReferences =

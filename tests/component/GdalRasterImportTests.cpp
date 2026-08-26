@@ -72,6 +72,18 @@ readFirstTile(const pci::RasterLayerData &data, const std::uint32_t level = 0)
     return data.source->readTile(request, std::stop_token{});
 }
 
+[[nodiscard]] pci::RasterTileData
+readFirstElevationTile(const pci::RasterLayerData &data,
+                       const std::uint32_t level = 0)
+{
+    pci::RasterTileRequest request;
+    request.key = pci::RasterTileKey{level, 0, 0};
+    request.decode = std::make_shared<pci::RasterDecodeParameters>(
+        data.metadata().defaultDisplay);
+    request.profile = pci::RasterTilePayloadProfile::RenderElevation;
+    return data.source->readTile(request, std::stop_token{});
+}
+
 [[nodiscard]] std::array<std::byte, 4> texel(const pci::RasterTileData &tile,
                                              const std::uint32_t x,
                                              const std::uint32_t y)
@@ -149,6 +161,8 @@ TEST_CASE("raster band selection resolves deterministically",
               pci::RasterSampleKind::ContinuousScalar);
         CHECK(pci::defaultRasterLayerStyle(data->metadata()).colorRampKey ==
               pci::defaultRasterScalarColorRampKey);
+        CHECK(data->metadata().elevation.available);
+        CHECK(data->metadata().elevation.band == 1);
     }
 
     SECTION("unlabelled RGB bands preserve a positional warning")
@@ -158,6 +172,89 @@ TEST_CASE("raster band selection resolves deterministically",
               pci::RasterSampleKind::ContinuousColor);
         CHECK(data->metadata().positionalBandFallback);
     }
+}
+
+TEST_CASE("DEM payload stores residual heights and actual float extrema",
+          "[component][gdal][surface]")
+{
+    const pci::RasterLayerDataPtr data = load(fixtures().terrain);
+    const pci::RasterLayerMetadata &metadata = data->metadata();
+    REQUIRE(metadata.elevation.available);
+    const pci::RasterTileData tile = readFirstElevationTile(*data);
+    REQUIRE(tile.profile ==
+            pci::RasterTilePayloadProfile::RenderElevation);
+    REQUIRE(tile.elevation.size() ==
+            pci::rasterStoredTilePixels * pci::rasterStoredTilePixels);
+    REQUIRE(tile.hasValidElevation);
+
+    const auto height = [&tile](const std::uint32_t x,
+                                const std::uint32_t y) {
+        return tile.elevation[static_cast<std::size_t>(y) *
+                                  pci::rasterStoredTilePixels +
+                              x];
+    };
+    // Source (40,20) is valid and stored after the one-pixel gutter.
+    CHECK(static_cast<double>(height(41, 21)) + metadata.elevation.anchor ==
+          Catch::Approx(160.0));
+    // Source (4,20) is nodata. Invalid height storage is finite and filled
+    // with the tile minimum, while RGBA alpha remains the validity mask.
+    CHECK(height(5, 21) == tile.elevationMinimum);
+    CHECK(texel(tile, 5, 21)[3] == std::byte{0});
+    const auto [minimum, maximum] = std::ranges::minmax(tile.elevation);
+    CHECK(minimum == tile.elevationMinimum);
+    CHECK(maximum == tile.elevationMaximum);
+    CHECK(tile.byteSize() >= pci::rasterStoredTileBytes +
+                                 tile.elevation.size() * sizeof(float));
+}
+
+TEST_CASE("DEM exact analysis reports the valid scaled range and progress",
+          "[component][gdal][surface]")
+{
+    const pci::RasterLayerDataPtr data = load(fixtures().terrain);
+    std::vector<pci::RasterElevationScanProgress> progress;
+    const pci::RasterElevationRange range = data->source->exactElevationRange(
+        std::stop_token{},
+        [&progress](const pci::RasterElevationScanProgress value) {
+            progress.push_back(value);
+        });
+    CHECK(range.minimum == Catch::Approx(108.0));
+    CHECK(range.maximum == Catch::Approx(226.0));
+    REQUIRE_FALSE(progress.empty());
+    CHECK(progress.front().processedBlocks == 0);
+    CHECK(progress.back().processedBlocks == progress.back().totalBlocks);
+    CHECK(progress.back().totalBlocks > 0);
+
+    std::stop_source cancelled;
+    cancelled.request_stop();
+    CHECK_THROWS_AS(data->source->exactElevationRange(cancelled.get_token(),
+                                                      {}),
+                    pci::RasterReadCancelled);
+}
+
+TEST_CASE("DEM validity applies explicit alpha before scaled extrema",
+          "[component][gdal][surface][alpha]")
+{
+    const pci::RasterLayerDataPtr data = load(fixtures().terrainAlpha);
+    const auto &elevation = data->metadata().elevation;
+    REQUIRE(elevation.available);
+    CHECK(elevation.scale == -2.0);
+    CHECK(elevation.offset == 100.0);
+    CHECK(elevation.unit == "m");
+
+    // Valid raw samples span 16..46. Negative scale reverses their order;
+    // the transparent half contains much larger raw values and must not leak
+    // into either endpoint.
+    const pci::RasterElevationRange range =
+        data->source->exactElevationRange(std::stop_token{}, {});
+    CHECK(range.minimum == Catch::Approx(8.0));
+    CHECK(range.maximum == Catch::Approx(68.0));
+
+    const pci::RasterTileData tile = readFirstElevationTile(*data);
+    REQUIRE(tile.hasValidElevation);
+    CHECK(texel(tile, 5, 5)[3] == std::byte{0});
+    const std::size_t invalid =
+        5U * pci::rasterStoredTilePixels + 5U;
+    CHECK(tile.elevation[invalid] == tile.elevationMinimum);
 }
 
 TEST_CASE("raster levels are matched by dimension, not overview index",

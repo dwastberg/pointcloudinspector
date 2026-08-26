@@ -338,12 +338,43 @@ RasterLayerStyle defaultRasterLayerStyle(const RasterLayerMetadata &metadata)
 }
 
 Bounds3d rasterSceneBounds(const RasterLayerMetadata &metadata,
-                           const RasterLayerStyle &style) noexcept
+                           const RasterLayerStyle &style,
+                           const RasterElevationStatus elevationStatus,
+                           const std::optional<RasterElevationRange> exactRange)
+    noexcept
 {
     Bounds3d result = metadata.bounds;
+    if (rasterEffectiveRenderMode(
+            metadata, style, elevationStatus, exactRange) ==
+        RasterRenderMode::Surface) {
+        const double minimum =
+            exactRange->minimum * style.verticalExaggeration + style.zOffset;
+        const double maximum =
+            exactRange->maximum * style.verticalExaggeration + style.zOffset;
+        result.minimum[2] = std::min(minimum, maximum);
+        result.maximum[2] = std::max(minimum, maximum);
+        if (result.minimum[2] == result.maximum[2]) {
+            result.minimum[2] -= 0.5;
+            result.maximum[2] += 0.5;
+        }
+        return result;
+    }
     result.minimum[2] = style.zOffset - 0.5;
     result.maximum[2] = style.zOffset + 0.5;
     return result;
+}
+
+RasterRenderMode rasterEffectiveRenderMode(
+    const RasterLayerMetadata &metadata,
+    const RasterLayerStyle &style,
+    const RasterElevationStatus elevationStatus,
+    const std::optional<RasterElevationRange> &exactRange) noexcept
+{
+    return style.renderMode == RasterRenderMode::Surface &&
+                   metadata.elevation.available &&
+                   elevationStatus == RasterElevationStatus::Ready && exactRange
+               ? RasterRenderMode::Surface
+               : RasterRenderMode::Flat;
 }
 
 bool rasterDecodeAffectedBy(const RasterLayerStyle &before,
@@ -366,6 +397,20 @@ RasterLayerStyle clampRasterLayerStyle(RasterLayerStyle style)
     style.zOffset = std::clamp(style.zOffset,
                                -maximumRasterZOffsetMagnitude,
                                maximumRasterZOffsetMagnitude);
+
+    if (!std::isfinite(style.verticalExaggeration)) {
+        style.verticalExaggeration = 1.0;
+    }
+    style.verticalExaggeration =
+        std::clamp(style.verticalExaggeration,
+                   minimumRasterVerticalExaggeration,
+                   maximumRasterVerticalExaggeration);
+
+    if (!std::isfinite(style.surfaceShadingStrength)) {
+        style.surfaceShadingStrength = 1.0F;
+    }
+    style.surfaceShadingStrength =
+        std::clamp(style.surfaceShadingStrength, 0.0F, 1.0F);
 
     if (style.displayRange) {
         RasterDisplayRange &range = *style.displayRange;

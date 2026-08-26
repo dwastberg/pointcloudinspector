@@ -30,6 +30,22 @@ FrustumCuller FrustumCuller::fromCamera(const Vec3d position,
     culler.planes_[3] = plane(forward * halfVertical + up, position);
     culler.planes_[4] = plane(forward * halfHorizontal - right, position);
     culler.planes_[5] = plane(forward * halfHorizontal + right, position);
+    const auto writeCorners = [&](const std::size_t offset,
+                                  const double depth) {
+        const Vec3d center = position + forward * depth;
+        const double vertical = halfVertical * depth;
+        const double horizontal = halfHorizontal * depth;
+        culler.corners_[offset] =
+            center - right * horizontal - up * vertical;
+        culler.corners_[offset + 1] =
+            center + right * horizontal - up * vertical;
+        culler.corners_[offset + 2] =
+            center + right * horizontal + up * vertical;
+        culler.corners_[offset + 3] =
+            center - right * horizontal + up * vertical;
+    };
+    writeCorners(0, nearPlane);
+    writeCorners(4, farPlane);
     return culler;
 }
 
@@ -54,6 +70,20 @@ FrustumCuller FrustumCuller::fromOrthographic(const Vec3d position,
     culler.planes_[3] = plane(up * -1.0, position + up * halfVertical);
     culler.planes_[4] = plane(right, position - right * halfHorizontal);
     culler.planes_[5] = plane(right * -1.0, position + right * halfHorizontal);
+    const auto writeCorners = [&](const std::size_t offset,
+                                  const double depth) {
+        const Vec3d center = position + forward * depth;
+        culler.corners_[offset] =
+            center - right * halfHorizontal - up * halfVertical;
+        culler.corners_[offset + 1] =
+            center + right * halfHorizontal - up * halfVertical;
+        culler.corners_[offset + 2] =
+            center + right * halfHorizontal + up * halfVertical;
+        culler.corners_[offset + 3] =
+            center - right * halfHorizontal + up * halfVertical;
+    };
+    writeCorners(0, nearPlane);
+    writeCorners(4, farPlane);
     return culler;
 }
 

@@ -49,6 +49,13 @@ public:
         tile.validWidth = pci::rasterTilePixels;
         tile.validHeight = pci::rasterTilePixels;
         tile.rgba.resize(pci::rasterStoredTileBytes);
+        tile.profile = request.profile;
+        if (request.profile ==
+            pci::RasterTilePayloadProfile::RenderElevation) {
+            tile.elevation.resize(pci::rasterStoredTilePixels *
+                                  pci::rasterStoredTilePixels);
+            tile.hasValidElevation = true;
+        }
         return tile;
     }
 
@@ -101,11 +108,16 @@ struct Fixture {
 }
 
 [[nodiscard]] pci::RasterCacheKey cacheKey(const pci::RasterLayer &layer,
-                                           const pci::RasterTileKey tile)
+                                           const pci::RasterTileKey tile,
+                                           const pci::RasterTilePayloadProfile
+                                               profile = pci::
+                                                   RasterTilePayloadProfile::
+                                                       ColorOnly)
 {
     return {.sourceId = layer.data->sourceId,
             .renderGeneration = layer.renderGeneration,
-            .tile = tile};
+            .tile = tile,
+            .profile = profile};
 }
 
 // One MiB per tile is far above a guttered RGBA tile, so budget pressure is
@@ -326,6 +338,42 @@ TEST_CASE("raster streamer separates render generations",
     static_cast<void>(streamer.drainCompletions({}));
 
     CHECK(streamer.cpuResident(cacheKey(restyled, {0, 0, 0})));
+    CHECK(fixture.source->reads.load() == 2);
+}
+
+TEST_CASE("raster streamer keeps color and elevation payloads distinct",
+          "[qt][raster][stream][surface]")
+{
+    Fixture fixture = makeFixture();
+    pci::RasterTileStreamer streamer(roomyBudget, 1);
+    const pci::RasterLodPlan plan = planFor({{0, 0, 0}});
+
+    streamer.reconcile(plan, fixture.layer);
+    streamer.waitForIdle();
+    static_cast<void>(streamer.drainCompletions({}));
+    const pci::RasterCacheKey color =
+        cacheKey(fixture.layer, {0, 0, 0});
+    REQUIRE(streamer.cpuResident(color));
+    REQUIRE(streamer.tile(color) != nullptr);
+    CHECK(streamer.tile(color)->elevation.empty());
+
+    const std::array<pci::RasterFrameLayer, 1> frame{
+        pci::RasterFrameLayer{
+            .plan = &plan,
+            .layer = &fixture.layer,
+            .profile = pci::RasterTilePayloadProfile::RenderElevation,
+        }};
+    streamer.reconcile(frame);
+    streamer.waitForIdle();
+    static_cast<void>(streamer.drainCompletions({}));
+    const pci::RasterCacheKey elevation = cacheKey(
+        fixture.layer,
+        {0, 0, 0},
+        pci::RasterTilePayloadProfile::RenderElevation);
+    REQUIRE(streamer.cpuResident(elevation));
+    REQUIRE(streamer.tile(elevation) != nullptr);
+    CHECK_FALSE(streamer.tile(elevation)->elevation.empty());
+    CHECK(streamer.cpuResident(color));
     CHECK(fixture.source->reads.load() == 2);
 }
 

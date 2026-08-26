@@ -33,7 +33,8 @@ QString RenderDiagnosticsFormatter::panelText(
                      : QStringLiteral("unavailable"));
     const QString rasterTiles =
         QStringLiteral("Raster tiles: %1 drawn / %2 selected / %3 resident, "
-                       "%4 pending, levels %5-%6, coverage %7")
+                       "%4 pending, levels %5-%6, coverage %7; Surface %8 "
+                       "draws / %9 triangles, height GPU %10 MiB")
             .arg(metrics.rasterDrawnTiles)
             .arg(metrics.rasterSelectedTiles)
             .arg(metrics.rasterResidentTiles)
@@ -41,7 +42,10 @@ QString RenderDiagnosticsFormatter::panelText(
             .arg(metrics.rasterFinestLevel)
             .arg(metrics.rasterCoarsestLevel)
             .arg(metrics.rasterCoverageIncomplete ? QStringLiteral("partial")
-                                                  : QStringLiteral("complete"));
+                                                  : QStringLiteral("complete"))
+            .arg(metrics.rasterSurfaceDrawnTiles)
+            .arg(metrics.rasterSurfaceTriangles)
+            .arg(mib(metrics.rasterHeightGpuBytes), 0, 'f', 1);
     const QString rasterReads =
         QStringLiteral("Raster reads: %1 requested, %2 completed, %3 "
                        "cancelled, %4 failed, %5 uploaded, %6 evictions")

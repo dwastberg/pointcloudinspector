@@ -4,6 +4,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <cstring>
+#include <cmath>
 #include <vector>
 
 namespace {
@@ -58,6 +59,71 @@ TEST_CASE("raster uniform staging honours the device stride", "[qt][raster]")
     // A stride smaller than the block would overlap draws in the buffer.
     CHECK_THROWS_AS(pci::stageRasterLayerUniforms(draws, 8),
                     std::invalid_argument);
+}
+
+TEST_CASE("raster surface uniform block matches its std140 layout",
+          "[qt][raster][surface]")
+{
+    CHECK(sizeof(pci::RasterSurfaceUniform) == 176);
+    CHECK(alignof(pci::RasterSurfaceUniform) == 16);
+    CHECK(offsetof(pci::RasterSurfaceUniform, viewProjection) == 0);
+    CHECK(offsetof(pci::RasterSurfaceUniform, origin) == 64);
+    CHECK(offsetof(pci::RasterSurfaceUniform, edgeU) == 80);
+    CHECK(offsetof(pci::RasterSurfaceUniform, edgeV) == 96);
+    CHECK(offsetof(pci::RasterSurfaceUniform, uvRect) == 112);
+    CHECK(offsetof(pci::RasterSurfaceUniform, tileTexels) == 128);
+    CHECK(offsetof(pci::RasterSurfaceUniform, heightParams) == 144);
+    CHECK(offsetof(pci::RasterSurfaceUniform, shadingParams) == 160);
+    CHECK(pci::rasterSurfaceGridIndexCount == 24576);
+}
+
+TEST_CASE("raster surface uniform staging honours the device stride",
+          "[qt][raster][surface]")
+{
+    std::vector<pci::RasterLayerDraw> draws(2);
+    draws[0].surfaceUniform.heightParams[0] = 2.0F;
+    draws[1].surfaceUniform.heightParams[0] = 4.0F;
+    constexpr std::size_t stride = 256;
+    const auto staging = pci::stageRasterSurfaceUniforms(draws, stride);
+    REQUIRE(staging.size() == draws.size() * stride);
+    for (std::size_t index = 0; index < draws.size(); ++index) {
+        pci::RasterSurfaceUniform copy;
+        std::memcpy(&copy,
+                    staging.data() + index * stride,
+                    sizeof(copy));
+        CHECK(copy.heightParams[0] ==
+              draws[index].surfaceUniform.heightParams[0]);
+    }
+    CHECK_THROWS_AS(pci::stageRasterSurfaceUniforms(draws, 128),
+                    std::invalid_argument);
+}
+
+TEST_CASE("surface edge reconstruction closes ordinary and short tile seams",
+          "[qt][raster][surface][seam]")
+{
+    const auto reconstruct = [](const std::span<const float> stored,
+                                const float validWidth,
+                                const float unit) {
+        const float sample = static_cast<float>(pci::rasterTileGutter) +
+                                 unit * validWidth -
+                             0.5F;
+        const auto low = static_cast<std::size_t>(std::floor(sample));
+        const float weight = sample - std::floor(sample);
+        return std::lerp(stored[low], stored[low + 1], weight);
+    };
+    for (const std::uint16_t leftWidth : {std::uint16_t{256},
+                                          std::uint16_t{100}}) {
+        std::vector<float> left(pci::rasterStoredTilePixels, -99.0F);
+        std::vector<float> right(pci::rasterStoredTilePixels, -99.0F);
+        left[pci::rasterTileGutter + leftWidth - 1] = 12.0F;
+        left[pci::rasterTileGutter + leftWidth] = 20.0F;
+        right[0] = 12.0F;
+        right[1] = 20.0F;
+        CHECK(reconstruct(left, static_cast<float>(leftWidth), 1.0F) ==
+              reconstruct(right, 256.0F, 0.0F));
+        CHECK(reconstruct(left, static_cast<float>(leftWidth), 1.0F) ==
+              Catch::Approx(16.0F));
+    }
 }
 
 TEST_CASE("raster quad transform maps the unit square onto pixel edges",

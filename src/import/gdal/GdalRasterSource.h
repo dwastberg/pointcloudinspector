@@ -69,6 +69,12 @@ public:
     [[nodiscard]] RasterTileData readTile(const RasterTileRequest &request,
                                           std::stop_token stop) const override;
 
+    [[nodiscard]] std::uint64_t
+    exactElevationScanReservationBytes() const noexcept override;
+    [[nodiscard]] RasterElevationRange exactElevationRange(
+        std::stop_token stop,
+        RasterElevationProgressCallback progress) const override;
+
     // Number of GDAL RasterIO calls this source has issued. The bounded-read
     // acceptance tests assert against it, so a regression that starts scanning
     // the base image fails loudly instead of merely running slowly.

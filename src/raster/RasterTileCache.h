@@ -16,6 +16,7 @@ struct RasterCacheKey {
     // an obsolete range or ramp can never be mistaken for current ones.
     std::uint64_t renderGeneration = 0;
     RasterTileKey tile;
+    RasterTilePayloadProfile profile = RasterTilePayloadProfile::ColorOnly;
     bool operator==(const RasterCacheKey &) const = default;
 };
 

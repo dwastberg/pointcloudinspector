@@ -265,7 +265,14 @@ SceneLayerListModel::project(const SceneDocumentSnapshot &snapshot)
                                     .visible = sceneLayer.visible,
                                     .style = raster->style,
                                     .renderGeneration =
-                                        raster->renderGeneration};
+                                        raster->renderGeneration,
+                                    .elevationStatus = raster->elevationStatus,
+                                    .exactElevationRange =
+                                        raster->exactElevationRange,
+                                    .elevationFailure =
+                                        raster->elevationFailure,
+                                    .elevationGeneration =
+                                        raster->elevationGeneration};
             const RasterLayerMetadata *metadata =
                 layer.data ? &layer.data->metadata() : nullptr;
             result.push_back({

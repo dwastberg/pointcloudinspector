@@ -4,6 +4,7 @@
 #include "scene/SceneDocumentSnapshot.h"
 
 #include <algorithm>
+#include <cmath>
 #include <limits>
 #include <stdexcept>
 #include <utility>
@@ -48,6 +49,10 @@ namespace {
             .data = raster.data,
             .visible = layer.visible,
             .style = raster.style,
+            .elevationStatus = raster.elevationStatus,
+            .exactElevationRange = raster.exactElevationRange,
+            .elevationFailure = raster.elevationFailure,
+            .elevationGeneration = raster.elevationGeneration,
             .renderGeneration = raster.renderGeneration};
 }
 
@@ -257,6 +262,9 @@ SceneLayerId SceneDocument::addRasterLayer(RasterLayerDataPtr data,
     }
 
     RasterLayerStyle style = defaultRasterLayerStyle(metadata);
+    const bool elevationAvailable = metadata.elevation.available;
+    const bool exactReady =
+        elevationAvailable && metadata.elevation.cachedExactRange.has_value();
     const SceneLayerId id{nextLayerValue_++};
     sceneLayers_.push_back({
         .id = id,
@@ -265,6 +273,14 @@ SceneLayerId SceneDocument::addRasterLayer(RasterLayerDataPtr data,
             RasterLayerState{
                 .data = std::move(data),
                 .style = std::move(style),
+                .elevationStatus =
+                    exactReady ? RasterElevationStatus::Ready
+                               : (elevationAvailable
+                                      ? RasterElevationStatus::Unknown
+                                      : RasterElevationStatus::NotApplicable),
+                .exactElevationRange = metadata.elevation.cachedExactRange,
+                .elevationFailure = {},
+                .elevationGeneration = 0,
             },
     });
     markRasterChanged();
@@ -320,6 +336,46 @@ bool SceneDocument::setRasterLayerStyle(const SceneLayerId id,
         ++raster->renderGeneration;
     }
     raster->style = std::move(style);
+    markRasterChanged();
+    return true;
+}
+
+bool SceneDocument::setRasterElevationState(
+    const SceneLayerId id,
+    const RasterElevationStatus status,
+    std::optional<RasterElevationRange> exactRange,
+    std::string failure)
+{
+    const auto found = findSceneLayer(id);
+    RasterLayerState *raster =
+        found == sceneLayers_.end() ? nullptr : rasterState(*found);
+    if (!raster || !raster->data->metadata().elevation.available) {
+        return false;
+    }
+    if (status == RasterElevationStatus::Ready) {
+        if (!exactRange || !std::isfinite(exactRange->minimum) ||
+            !std::isfinite(exactRange->maximum)) {
+            return false;
+        }
+        if (exactRange->minimum > exactRange->maximum) {
+            std::swap(exactRange->minimum, exactRange->maximum);
+        }
+        failure.clear();
+    } else {
+        exactRange.reset();
+        if (status != RasterElevationStatus::Failed) {
+            failure.clear();
+        }
+    }
+    if (raster->elevationStatus == status &&
+        raster->exactElevationRange == exactRange &&
+        raster->elevationFailure == failure) {
+        return true;
+    }
+    raster->elevationStatus = status;
+    raster->exactElevationRange = std::move(exactRange);
+    raster->elevationFailure = std::move(failure);
+    ++raster->elevationGeneration;
     markRasterChanged();
     return true;
 }
@@ -536,7 +592,10 @@ std::optional<Bounds3d> SceneDocument::layerBounds(const SceneLayerId id) const
         return vectorLayerBounds(vectorProjection(*found));
     }
     if (const RasterLayerState *raster = rasterState(*found)) {
-        return rasterSceneBounds(raster->data->metadata(), raster->style);
+        return rasterSceneBounds(raster->data->metadata(),
+                                 raster->style,
+                                 raster->elevationStatus,
+                                 raster->exactElevationRange);
     }
     return std::nullopt;
 }
@@ -585,7 +644,10 @@ std::optional<Bounds3d> SceneDocument::visibleSceneBounds() const
             }
         } else if (const RasterLayerState *raster = rasterState(layer)) {
             const Bounds3d bounds =
-                rasterSceneBounds(raster->data->metadata(), raster->style);
+                rasterSceneBounds(raster->data->metadata(),
+                                  raster->style,
+                                  raster->elevationStatus,
+                                  raster->exactElevationRange);
             if (bounds.valid()) {
                 add(bounds);
             }

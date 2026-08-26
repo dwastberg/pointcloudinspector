@@ -9,7 +9,10 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <QColor>
+#include <QElapsedTimer>
+#include <QGuiApplication>
 #include <QImage>
+#include <QScreen>
 #include <QTest>
 
 #include <algorithm>
@@ -143,6 +146,18 @@ public:
         return metadata_;
     }
 
+    [[nodiscard]] std::uint64_t
+    readReservationBytes(const pci::RasterTileRequest &request) const override
+    {
+        const std::uint64_t elevationBytes =
+            request.profile == pci::RasterTilePayloadProfile::RenderElevation
+                ? static_cast<std::uint64_t>(pci::rasterStoredTilePixels) *
+                      pci::rasterStoredTilePixels * sizeof(float)
+                : 0;
+        return sizeof(pci::RasterTileData) + pci::rasterStoredTileBytes +
+               elevationBytes;
+    }
+
     [[nodiscard]] pci::RasterTileData
     readTile(const pci::RasterTileRequest &request,
              std::stop_token stop) const override
@@ -171,9 +186,18 @@ public:
         pci::RasterTileData tile;
         tile.key = request.key;
         tile.renderGeneration = request.renderGeneration;
+        tile.profile = request.profile;
         tile.validWidth = static_cast<std::uint16_t>(extent.width);
         tile.validHeight = static_cast<std::uint16_t>(extent.height);
         tile.rgba.assign(pci::rasterStoredTileBytes, std::byte{0});
+        if (request.profile ==
+            pci::RasterTilePayloadProfile::RenderElevation) {
+            tile.elevation.assign(
+                static_cast<std::size_t>(pci::rasterStoredTilePixels) *
+                    pci::rasterStoredTilePixels,
+                0.0F);
+            tile.hasValidElevation = true;
+        }
 
         const auto texelOrigin = [&](const std::uint32_t index,
                                      const double perTexel,
@@ -217,6 +241,15 @@ public:
                 tile.rgba[index + 1] = premultiply(color.green);
                 tile.rgba[index + 2] = premultiply(color.blue);
                 tile.rgba[index + 3] = static_cast<std::byte>(color.alpha);
+                if (!tile.elevation.empty()) {
+                    const float residual =
+                        static_cast<float>(50.0 * clampedX /
+                                           std::max<std::uint32_t>(
+                                               1, metadata_.width - 1));
+                    tile.elevation[index / 4] = residual;
+                    tile.elevationMaximum =
+                        std::max(tile.elevationMaximum, residual);
+                }
             }
         }
         return tile;
@@ -345,6 +378,24 @@ QImage renderFrames(pci::RenderViewportWidget &viewport, const int frames)
     }
     REQUIRE_FALSE(image.isNull());
     return image;
+}
+
+void renderFramesWithoutReadback(pci::RenderViewportWidget &viewport,
+                                 const int frames)
+{
+    viewport.show();
+    REQUIRE(QTest::qWaitForWindowExposed(&viewport, 2000));
+    for (int index = 0; index < frames; ++index) {
+        const std::uint64_t previous =
+            pci::testAccess(viewport).renderedFrameCountForTesting();
+        viewport.requestRender();
+        REQUIRE(QTest::qWaitFor(
+            [&] {
+                return pci::testAccess(viewport)
+                           .renderedFrameCountForTesting() > previous;
+            },
+            2000));
+    }
 }
 
 // Streaming is asynchronous, so a single frame proves nothing. Render until
@@ -502,14 +553,15 @@ filledVectorRectangle(const float minimumX,
     return style;
 }
 
-[[nodiscard]] std::unique_ptr<pci::RenderViewportWidget> makeViewport()
+[[nodiscard]] std::unique_ptr<pci::RenderViewportWidget>
+makeViewport(const QSize size = QSize(viewportSize, viewportSize))
 {
     auto viewport = std::make_unique<pci::RenderViewportWidget>(
         false,
         pci::UploadScheduler::defaultResidencyByteBudget,
         gpuTestGraphicsApi(),
         gpuTestValidation);
-    viewport->resize(viewportSize, viewportSize);
+    viewport->resize(size);
     return viewport;
 }
 
@@ -558,6 +610,130 @@ TEST_CASE("GPU raster streaming wakes an otherwise idle viewport",
     CHECK(pci::testAccess(*viewport).renderedFrameCountForTesting() >=
           initialFrame + 2);
     CHECK(countWhere(viewport->grabFramebuffer(), nearlyBlue) > 1000);
+}
+
+TEST_CASE("GPU Surface uploads and draws an R32F height field",
+          "[gpu][raster][surface]")
+{
+    pci::RasterLayerMetadata metadata = patternMetadata({256});
+    metadata.defaultDisplay.sampleKind =
+        pci::RasterSampleKind::ContinuousScalar;
+    metadata.elevation = {
+        .available = true,
+        .band = 1,
+        .scale = 1.0,
+        .offset = 0.0,
+        .unit = "m",
+        .anchor = 1000.0,
+        .cachedExactRange =
+            pci::RasterElevationRange{.minimum = 1000.0, .maximum = 1050.0},
+    };
+
+    auto document = std::make_shared<pci::SceneDocument>();
+    const pci::SceneLayerId layer = document->addRasterLayer(patternLayer(
+        std::move(metadata),
+        [](std::uint32_t, double, double) -> Rgba {
+            return {220, 160, 40};
+        }));
+    pci::RasterLayerStyle style = document->rasterLayer(layer)->style;
+    style.renderMode = pci::RasterRenderMode::Surface;
+    style.surfaceShadingStrength = 0.0F;
+    REQUIRE(document->setRasterLayerStyle(layer, style));
+
+    auto viewport = makeViewport();
+    viewport->setDocument(document->snapshot(), true);
+    viewport->setEyeDomeLightingEnabled(false);
+    frameWholeScene(*viewport);
+
+    REQUIRE(renderUntil(*viewport, [&](const QImage &image) {
+        return pci::testAccess(*viewport).rasterSurfaceDrawnTilesForTesting() >
+                   0 &&
+               renderedFootprint(image).valid();
+    }));
+    CHECK(viewport->rasterSurfaceCapability() ==
+          pci::RasterSurfaceCapability::Supported);
+    CHECK(pci::testAccess(*viewport).rasterHeightGpuBytesForTesting() > 0);
+}
+
+TEST_CASE("GPU Surface 4K grid characterization",
+          "[.benchmark][gpu][raster][surface-4k]")
+{
+    constexpr std::uint32_t rasterPixels = 2816; // 11 x 11 native tiles
+    pci::RasterLayerMetadata metadata =
+        patternMetadata({rasterPixels, 704, 176});
+    metadata.defaultDisplay.sampleKind =
+        pci::RasterSampleKind::ContinuousScalar;
+    metadata.elevation = {
+        .available = true,
+        .band = 1,
+        .unit = "m",
+        .anchor = 1000.0,
+        .cachedExactRange =
+            pci::RasterElevationRange{.minimum = 1000.0, .maximum = 1050.0},
+    };
+
+    auto document = std::make_shared<pci::SceneDocument>();
+    const pci::SceneLayerId layer = document->addRasterLayer(patternLayer(
+        std::move(metadata),
+        [](std::uint32_t, double, double) -> Rgba {
+            return {220, 160, 40};
+        }));
+    pci::RasterLayerStyle style = document->rasterLayer(layer)->style;
+    style.renderMode = pci::RasterRenderMode::Surface;
+    style.surfaceShadingStrength = 1.0F;
+    REQUIRE(document->setRasterLayerStyle(layer, style));
+
+    const qreal devicePixelRatio =
+        QGuiApplication::primaryScreen() != nullptr
+            ? QGuiApplication::primaryScreen()->devicePixelRatio()
+            : 1.0;
+    const QSize logicalSize(
+        static_cast<int>(std::ceil(3840.0 / devicePixelRatio)),
+        static_cast<int>(std::ceil(2160.0 / devicePixelRatio)));
+    auto viewport = makeViewport(logicalSize);
+    // Top-level widgets are otherwise capped to a fraction of the desktop on
+    // first show, which would silently turn this into a sub-4K workload.
+    viewport->setFixedSize(logicalSize);
+    viewport->setDocument(document->snapshot(), true);
+    viewport->setEyeDomeLightingEnabled(false);
+    frameWholeScene(*viewport);
+
+    bool warmed = false;
+    for (int frame = 0; frame < 180 && !warmed; ++frame) {
+        renderFramesWithoutReadback(*viewport, 1);
+        warmed =
+            pci::testAccess(*viewport).rasterSurfaceDrawnTilesForTesting() >=
+            100;
+        QTest::qWait(5);
+    }
+    REQUIRE(warmed);
+
+    constexpr int measuredFrames = 30;
+    QElapsedTimer timer;
+    timer.start();
+    renderFramesWithoutReadback(*viewport, measuredFrames);
+    const double averageMilliseconds =
+        static_cast<double>(timer.nsecsElapsed()) /
+        (1'000'000.0 * measuredFrames);
+    const QImage finalImage = viewport->grabFramebuffer();
+    const std::size_t drawnTiles =
+        pci::testAccess(*viewport).rasterSurfaceDrawnTilesForTesting();
+    const std::uint64_t triangles =
+        static_cast<std::uint64_t>(drawnTiles) *
+        pci::rasterSurfaceGridCellsPerSide *
+        pci::rasterSurfaceGridCellsPerSide * 2ULL;
+    qInfo("Surface 4K: %dx%d, %zu tiles, %llu triangles, %.3f ms/frame",
+          finalImage.width(),
+          finalImage.height(),
+          drawnTiles,
+          static_cast<unsigned long long>(triangles),
+          averageMilliseconds);
+
+    CHECK(finalImage.width() >= 3840);
+    CHECK(finalImage.height() >= 2160);
+    CHECK(drawnTiles >= 100);
+    CHECK(pci::testAccess(*viewport).rasterHeightGpuBytesForTesting() >
+          25ULL * 1024 * 1024);
 }
 
 TEST_CASE("GPU raster resources recreate from decoded tiles without rereading",

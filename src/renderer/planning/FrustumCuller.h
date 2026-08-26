@@ -30,6 +30,10 @@ public:
                      double farPlane) noexcept;
 
     [[nodiscard]] bool intersects(const Bounds3d &bounds) const noexcept;
+    [[nodiscard]] const std::array<Vec3d, 8> &corners() const noexcept
+    {
+        return corners_;
+    }
 
     // Clips a convex polygon against all six planes, returning the surviving
     // convex region and an empty result when nothing is visible. Clipping a
@@ -50,6 +54,7 @@ private:
     };
 
     std::array<Plane, 6> planes_{};
+    std::array<Vec3d, 8> corners_{};
 };
 
 } // namespace pci

@@ -65,6 +65,12 @@ enum class VectorOverlayCapability : std::uint8_t {
     Unsupported
 };
 
+enum class RasterSurfaceCapability : std::uint8_t {
+    Unknown,
+    Supported,
+    Unsupported,
+};
+
 class RenderViewport {
 public:
     using MetricsCallback = std::function<void(const RenderMetrics &)>;
@@ -73,6 +79,8 @@ public:
         std::function<void(const RenderLoadProgress &)>;
     using VectorOverlayCapabilityCallback =
         std::function<void(VectorOverlayCapability, const QString &)>;
+    using RasterSurfaceCapabilityCallback =
+        std::function<void(RasterSurfaceCapability, const QString &)>;
 
     virtual ~RenderViewport() = default;
 
@@ -121,6 +129,17 @@ public:
     {
         if (callback)
             callback(vectorOverlayCapability(), {});
+    }
+    [[nodiscard]] virtual RasterSurfaceCapability
+    rasterSurfaceCapability() const noexcept
+    {
+        return RasterSurfaceCapability::Unknown;
+    }
+    virtual void setRasterSurfaceCapabilityCallback(
+        RasterSurfaceCapabilityCallback callback)
+    {
+        if (callback)
+            callback(rasterSurfaceCapability(), {});
     }
 };
 

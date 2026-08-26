@@ -38,6 +38,8 @@ inline constexpr std::uint64_t rasterBoundedBaseReadPixels = 64ULL << 20;
 inline constexpr std::uint32_t rasterOverviewCoverageLimitPixels = 4096;
 
 inline constexpr double maximumRasterZOffsetMagnitude = 1.0e6;
+inline constexpr double minimumRasterVerticalExaggeration = 0.1;
+inline constexpr double maximumRasterVerticalExaggeration = 100.0;
 
 // A single continuous scalar band is colorized rather than presented as if it
 // were photographic grayscale.
@@ -60,6 +62,39 @@ enum class RasterSampleKind : std::uint8_t {
     ContinuousColor,
     ContinuousScalar,
     Categorical,
+};
+
+enum class RasterRenderMode : std::uint8_t {
+    Flat,
+    Surface,
+};
+
+enum class RasterElevationStatus : std::uint8_t {
+    NotApplicable,
+    Unknown,
+    Scanning,
+    Ready,
+    Failed,
+};
+
+struct RasterElevationRange {
+    double minimum = 0.0;
+    double maximum = 0.0;
+    bool operator==(const RasterElevationRange &) const = default;
+};
+
+struct RasterElevationDescriptor {
+    bool available = false;
+    int band = 0;
+    double scale = 1.0;
+    double offset = 0.0;
+    std::string unit;
+    // Subtracted before float storage. It is a precision anchor, never a bound.
+    double anchor = 0.0;
+    // Trustworthy, non-approximate cached statistics make Surface immediately
+    // ready without a redundant full-raster scan.
+    std::optional<RasterElevationRange> cachedExactRange;
+    bool operator==(const RasterElevationDescriptor &) const = default;
 };
 
 struct RasterBandRef {
@@ -138,6 +173,7 @@ struct RasterLayerMetadata {
     std::vector<RasterBandInfo> bands;
     std::vector<RasterLevel> levels;
     RasterDecodeParameters defaultDisplay;
+    RasterElevationDescriptor elevation;
     bool geographicCrs = false;
     bool crsMissing = false;
     bool crsMismatch = false;
@@ -155,6 +191,9 @@ struct RasterLayerStyle {
     double zOffset = 0.0;
     std::optional<RasterDisplayRange> displayRange;
     std::string colorRampKey; // empty for RGB; stable CPT key for scalar data
+    RasterRenderMode renderMode = RasterRenderMode::Flat;
+    double verticalExaggeration = 1.0;
+    float surfaceShadingStrength = 1.0F;
     bool operator==(const RasterLayerStyle &) const = default;
 };
 
@@ -190,7 +229,18 @@ defaultRasterLayerStyle(const RasterLayerMetadata &metadata);
 // frame while the quad still draws at exactly the configured Z.
 [[nodiscard]] Bounds3d
 rasterSceneBounds(const RasterLayerMetadata &metadata,
-                  const RasterLayerStyle &style) noexcept;
+                  const RasterLayerStyle &style,
+                  RasterElevationStatus elevationStatus =
+                      RasterElevationStatus::NotApplicable,
+                  std::optional<RasterElevationRange> exactRange =
+                      std::nullopt) noexcept;
+
+[[nodiscard]] RasterRenderMode
+rasterEffectiveRenderMode(const RasterLayerMetadata &metadata,
+                          const RasterLayerStyle &style,
+                          RasterElevationStatus elevationStatus,
+                          const std::optional<RasterElevationRange> &exactRange)
+    noexcept;
 
 // True when a style change alters decoded pixels and must therefore invalidate
 // cached tiles. Opacity and elevation are shader uniforms and do not.

@@ -88,6 +88,10 @@ public:
     vectorOverlayCapability() const noexcept override;
     void setVectorOverlayCapabilityCallback(
         VectorOverlayCapabilityCallback callback) override;
+    [[nodiscard]] RasterSurfaceCapability
+    rasterSurfaceCapability() const noexcept override;
+    void setRasterSurfaceCapabilityCallback(
+        RasterSurfaceCapabilityCallback callback) override;
 
 protected:
     void initialize(QRhiCommandBuffer *commandBuffer) override;
@@ -197,6 +201,10 @@ private:
     VectorOverlayCapabilityCallback vectorOverlayCapabilityCallback_;
     VectorOverlayCapability vectorOverlayCapability_ =
         VectorOverlayCapability::Unknown;
+    RasterSurfaceCapabilityCallback rasterSurfaceCapabilityCallback_;
+    RasterSurfaceCapability rasterSurfaceCapability_ =
+        RasterSurfaceCapability::Unknown;
+    QString rasterSurfaceCapabilityReason_;
 
     QRhi *resourceRhi_ = nullptr;
 
@@ -219,6 +227,7 @@ private:
     std::vector<RasterSourceId> knownRasterSources_;
     std::size_t rasterSelectedTiles_ = 0;
     std::size_t rasterDrawnTiles_ = 0;
+    std::size_t rasterSurfaceDrawnTiles_ = 0;
     std::uint64_t rasterUploadedTiles_ = 0;
     std::uint32_t rasterFinestLevel_ = 0;
     std::uint32_t rasterCoarsestLevel_ = 0;

@@ -112,6 +112,18 @@ public:
         return viewport_.rasterDrawnTiles_;
     }
 
+    [[nodiscard]] std::size_t
+    rasterSurfaceDrawnTilesForTesting() const noexcept
+    {
+        return viewport_.rasterSurfaceDrawnTiles_;
+    }
+
+    [[nodiscard]] std::uint64_t
+    rasterHeightGpuBytesForTesting() const noexcept
+    {
+        return viewport_.rasterLayerRenderer_.heightGpuBytes();
+    }
+
     [[nodiscard]] std::uint64_t rasterGpuBytesForTesting() const noexcept
     {
         return viewport_.rasterLayerRenderer_.gpuBytes();

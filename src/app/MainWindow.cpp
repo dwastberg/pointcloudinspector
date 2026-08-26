@@ -323,6 +323,14 @@ MainWindow::MainWindow(
             &LayerInspectorDock::rasterStyleChanged,
             session_.get(),
             &SceneSession::setRasterLayerStyle);
+    connect(layerInspectorDock_,
+            &LayerInspectorDock::retryRasterElevationRequested,
+            session_.get(),
+            &SceneSession::retryRasterElevation);
+    connect(layerInspectorDock_,
+            &LayerInspectorDock::cancelRasterElevationRequested,
+            session_.get(),
+            &SceneSession::cancelRasterElevation);
     connect(taskDock_,
             &TaskDock::jobActionRequested,
             this,
@@ -437,6 +445,13 @@ MainWindow::MainWindow(
     // deliberately defer publication while its backend is unavailable. Apply
     // the current value as well so Unknown never leaves import enabled.
     updateVectorImportCapability(viewport_->vectorOverlayCapability(), {});
+
+    viewport_->setRasterSurfaceCapabilityCallback(
+        [this](const RasterSurfaceCapability capability,
+               const QString &reason) {
+            layerInspectorDock_->setRasterSurfaceCapability(capability,
+                                                            reason);
+        });
 
     fileMenu->addSeparator();
     QAction *cancelAction =

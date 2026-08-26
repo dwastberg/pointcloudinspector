@@ -341,6 +341,7 @@ pci_add_catch_test_target(pcinspector_qt_async_tests
         qt/PointCloudLoadControllerTests.cpp
         qt/VectorLoadControllerTests.cpp
         qt/RasterLoadControllerTests.cpp
+        qt/RasterElevationControllerTests.cpp
         LIBRARIES
         pcinspector::import_async
         Qt6::Test)

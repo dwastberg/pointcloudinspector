@@ -258,6 +258,8 @@ makeServices(const std::shared_ptr<const pci::PointCloudLoader> &loader)
         std::make_shared<UnavailableVectorLoader>(), *services.scheduler);
     services.raster = std::make_unique<pci::RasterLoadController>(
         std::make_shared<UnavailableRasterLoader>(), *services.scheduler);
+    services.rasterElevation =
+        std::make_unique<pci::RasterElevationController>(*services.scheduler);
     services.colorize = std::make_unique<pci::PointCloudColorizeController>(
         *services.scheduler);
     services.statistics = std::make_shared<UnavailableStatistics>();

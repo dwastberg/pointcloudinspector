@@ -16,6 +16,7 @@ namespace pci {
 namespace {
 
 constexpr std::size_t initialUniformCapacity = 64;
+constexpr std::size_t initialSurfaceUniformCapacity = 128;
 
 // QRhi does not expose binding allocation sizes, so a conservative fixed
 // amount is accounted per tile in addition to its texture bytes.
@@ -48,6 +49,36 @@ QRhiGraphicsPipeline::TargetBlend premultipliedBlend()
     blend.srcAlpha = QRhiGraphicsPipeline::One;
     blend.dstAlpha = QRhiGraphicsPipeline::OneMinusSrcAlpha;
     return blend;
+}
+
+constexpr std::size_t surfacePipelineIndex(const bool transparent,
+                                           const bool fallback) noexcept
+{
+    return (transparent ? 2U : 0U) + (fallback ? 1U : 0U);
+}
+
+std::array<std::uint16_t, rasterSurfaceGridIndexCount> surfaceGridIndices()
+{
+    std::array<std::uint16_t, rasterSurfaceGridIndexCount> result{};
+    std::size_t output = 0;
+    for (std::uint32_t y = 0; y < rasterSurfaceGridCellsPerSide; ++y) {
+        for (std::uint32_t x = 0; x < rasterSurfaceGridCellsPerSide; ++x) {
+            const auto topLeft = static_cast<std::uint16_t>(
+                y * rasterSurfaceGridVerticesPerSide + x);
+            const auto topRight = static_cast<std::uint16_t>(topLeft + 1);
+            const auto bottomLeft = static_cast<std::uint16_t>(
+                topLeft + rasterSurfaceGridVerticesPerSide);
+            const auto bottomRight =
+                static_cast<std::uint16_t>(bottomLeft + 1);
+            result[output++] = topLeft;
+            result[output++] = bottomLeft;
+            result[output++] = topRight;
+            result[output++] = topRight;
+            result[output++] = bottomLeft;
+            result[output++] = bottomRight;
+        }
+    }
+    return result;
 }
 
 QShader shader(const QString &path)
@@ -150,6 +181,23 @@ stageRasterLayerUniforms(const std::span<const RasterLayerDraw> draws,
     return staging;
 }
 
+std::vector<std::byte>
+stageRasterSurfaceUniforms(const std::span<const RasterLayerDraw> draws,
+                           const std::size_t uniformStride)
+{
+    if (uniformStride < sizeof(RasterSurfaceUniform)) {
+        throw std::invalid_argument(
+            "surface uniform stride is smaller than the uniform block");
+    }
+    std::vector<std::byte> staging(draws.size() * uniformStride, std::byte{});
+    for (std::size_t index = 0; index < draws.size(); ++index) {
+        std::memcpy(staging.data() + index * uniformStride,
+                    &draws[index].surfaceUniform,
+                    sizeof(RasterSurfaceUniform));
+    }
+    return staging;
+}
+
 RasterLayerRenderer::RasterLayerRenderer(const std::uint64_t gpuByteBudget)
     : gpuByteBudget_(gpuByteBudget)
 {
@@ -165,9 +213,29 @@ bool RasterLayerRenderer::ready() const noexcept
     return rhi_ != nullptr && pipeline_ && uniformBuffer_;
 }
 
+bool RasterLayerRenderer::surfaceSupported() const noexcept
+{
+    return surfaceSupported_;
+}
+
+const std::string &
+RasterLayerRenderer::surfaceCapabilityReason() const noexcept
+{
+    return surfaceCapabilityReason_;
+}
+
 std::uint64_t RasterLayerRenderer::gpuBytes() const noexcept
 {
     return gpuBytes_;
+}
+
+std::uint64_t RasterLayerRenderer::heightGpuBytes() const noexcept
+{
+    std::uint64_t result = 0;
+    for (const auto &[key, tile] : tiles_) {
+        result += tile.heightBytes;
+    }
+    return result;
 }
 
 std::uint64_t RasterLayerRenderer::gpuByteBudget() const noexcept
@@ -219,6 +287,31 @@ void RasterLayerRenderer::ensureResources(QRhi *rhi,
     if (!pipeline_ || pipelineRenderPass_ != renderPass) {
         createPipeline(renderPass);
     }
+
+    if (!rhi_->isTextureFormatSupported(QRhiTexture::R32F)) {
+        releaseSurfaceResources();
+        surfaceCapabilityReason_ =
+            "This graphics backend does not support R32F textures.";
+        return;
+    }
+    if (!rhi_->isFeatureSupported(QRhi::TexelFetch)) {
+        releaseSurfaceResources();
+        surfaceCapabilityReason_ =
+            "This graphics backend does not support shader texel fetches.";
+        return;
+    }
+    if (!surfaceSupported_ || surfacePipelineRenderPass_ != renderPass) {
+        try {
+            createSurfaceResources(renderPass);
+            surfaceSupported_ = true;
+            surfaceCapabilityReason_.clear();
+        } catch (const std::exception &error) {
+            releaseSurfaceResources();
+            surfaceCapabilityReason_ =
+                "Surface rendering could not be initialized: " +
+                std::string(error.what());
+        }
+    }
 }
 
 void RasterLayerRenderer::createUniformBuffer(const std::size_t drawCapacity)
@@ -248,7 +341,11 @@ void RasterLayerRenderer::createUniformBuffer(const std::size_t drawCapacity)
             buffer.get(),
             static_cast<quint32>(sizeof(RasterLayerUniform))),
         QRhiShaderResourceBinding::sampledTexture(
-            1, QRhiShaderResourceBinding::FragmentStage, nullptr, nullptr),
+            1,
+            QRhiShaderResourceBinding::VertexStage |
+                QRhiShaderResourceBinding::FragmentStage,
+            nullptr,
+            nullptr),
     });
 
     pipelineBindings_.reset();
@@ -314,6 +411,195 @@ void RasterLayerRenderer::createPipeline(QRhiRenderPassDescriptor *renderPass)
     pipelineRenderPass_ = renderPass;
 }
 
+void RasterLayerRenderer::createSurfaceResources(
+    QRhiRenderPassDescriptor *renderPass)
+{
+    if (!surfaceUniformBuffer_) {
+        createSurfaceUniformBuffer(initialSurfaceUniformCapacity);
+    }
+    if (!surfaceIndexBuffer_) {
+        RhiResourcePtr<QRhiBuffer> indices(
+            rhi_->newBuffer(QRhiBuffer::Immutable,
+                            QRhiBuffer::IndexBuffer,
+                            static_cast<quint32>(rasterSurfaceGridIndexCount *
+                                                 sizeof(std::uint16_t))));
+        indices->setName(QByteArrayLiteral("Raster surface grid indices"));
+        requireCreated(indices->create(), "raster surface index buffer");
+        surfaceIndexBuffer_ = std::move(indices);
+        surfaceIndexUploaded_ = false;
+    }
+    createSurfacePipelines(renderPass);
+}
+
+void RasterLayerRenderer::createSurfaceUniformBuffer(
+    const std::size_t drawCapacity)
+{
+    const auto stride = static_cast<quint32>(
+        rhi_->ubufAligned(sizeof(RasterSurfaceUniform)));
+    if (drawCapacity > std::numeric_limits<quint32>::max() / stride) {
+        throw std::length_error(
+            "surface uniform capacity exceeds QRhi buffer limits");
+    }
+    RhiResourcePtr<QRhiBuffer> buffer(
+        rhi_->newBuffer(QRhiBuffer::Dynamic,
+                        QRhiBuffer::UniformBuffer,
+                        stride * static_cast<quint32>(drawCapacity)));
+    buffer->setName(QByteArrayLiteral("Raster surface uniforms"));
+    requireCreated(buffer->create(), "raster surface uniform buffer");
+
+    RhiResourcePtr<QRhiShaderResourceBindings> bindings(
+        rhi_->newShaderResourceBindings());
+    bindings->setBindings({
+        QRhiShaderResourceBinding::uniformBufferWithDynamicOffset(
+            0,
+            QRhiShaderResourceBinding::VertexStage |
+                QRhiShaderResourceBinding::FragmentStage,
+            buffer.get(),
+            static_cast<quint32>(sizeof(RasterSurfaceUniform))),
+        QRhiShaderResourceBinding::sampledTexture(
+            1,
+            QRhiShaderResourceBinding::VertexStage |
+                QRhiShaderResourceBinding::FragmentStage,
+            nullptr,
+            nullptr),
+        QRhiShaderResourceBinding::sampledTexture(
+            2,
+            QRhiShaderResourceBinding::VertexStage |
+                QRhiShaderResourceBinding::FragmentStage,
+            nullptr,
+            nullptr),
+    });
+
+    surfacePipelineBindings_.reset();
+    surfaceUniformBuffer_.reset();
+    surfaceUniformBuffer_ = std::move(buffer);
+    surfacePipelineBindings_ = std::move(bindings);
+    surfaceUniformStride_ = stride;
+    surfaceUniformCapacity_ = drawCapacity;
+    rebuildSurfaceBindings();
+}
+
+void RasterLayerRenderer::ensureSurfaceUniformCapacity(
+    const std::size_t drawCount)
+{
+    if (drawCount <= surfaceUniformCapacity_) {
+        return;
+    }
+    std::size_t capacity = std::max<std::size_t>(surfaceUniformCapacity_, 1);
+    while (capacity < drawCount) {
+        capacity *= 2;
+    }
+    createSurfaceUniformBuffer(capacity);
+    createSurfacePipelines(surfacePipelineRenderPass_);
+}
+
+void RasterLayerRenderer::rebuildSurfaceBindings()
+{
+    if (!surfaceUniformBuffer_) {
+        return;
+    }
+    for (auto &[key, tile] : tiles_) {
+        tile.surfaceBindings.reset();
+        if (!tile.elevationTexture) {
+            continue;
+        }
+        RhiResourcePtr<QRhiShaderResourceBindings> bindings(
+            rhi_->newShaderResourceBindings());
+        bindings->setBindings({
+            QRhiShaderResourceBinding::uniformBufferWithDynamicOffset(
+                0,
+                QRhiShaderResourceBinding::VertexStage |
+                    QRhiShaderResourceBinding::FragmentStage,
+                surfaceUniformBuffer_.get(),
+                static_cast<quint32>(sizeof(RasterSurfaceUniform))),
+            QRhiShaderResourceBinding::sampledTexture(
+                1,
+                QRhiShaderResourceBinding::VertexStage |
+                    QRhiShaderResourceBinding::FragmentStage,
+                tile.texture.get(),
+                tile.nearest ? nearestSampler_.get() : linearSampler_.get()),
+            QRhiShaderResourceBinding::sampledTexture(
+                2,
+                QRhiShaderResourceBinding::VertexStage |
+                    QRhiShaderResourceBinding::FragmentStage,
+                tile.elevationTexture.get(),
+                nearestSampler_.get()),
+        });
+        requireCreated(bindings->create(),
+                       "raster surface tile shader bindings");
+        tile.surfaceBindings = std::move(bindings);
+    }
+}
+
+void RasterLayerRenderer::createSurfacePipelines(
+    QRhiRenderPassDescriptor *renderPass)
+{
+    if (!renderPass || !surfacePipelineBindings_) {
+        throw std::invalid_argument(
+            "surface pipeline requires a render pass and bindings");
+    }
+    for (auto &pipeline : surfacePipelines_) {
+        pipeline.reset();
+    }
+    QRhiVertexInputLayout layout;
+    for (const bool transparent : {false, true}) {
+        for (const bool fallback : {false, true}) {
+            RhiResourcePtr<QRhiGraphicsPipeline> pipeline(
+                rhi_->newGraphicsPipeline());
+            pipeline->setName(QByteArrayLiteral("Raster surface pipeline"));
+            pipeline->setTopology(QRhiGraphicsPipeline::Triangles);
+            pipeline->setCullMode(QRhiGraphicsPipeline::None);
+            pipeline->setDepthTest(true);
+            pipeline->setDepthWrite(!transparent && !fallback);
+            pipeline->setDepthOp(!transparent && !fallback
+                                     ? QRhiGraphicsPipeline::Less
+                                     : QRhiGraphicsPipeline::LessOrEqual);
+            pipeline->setShaderStages({
+                {QRhiShaderStage::Vertex,
+                 shader(QStringLiteral(
+                     ":/shaders/raster_surface.vert.qsb"))},
+                {QRhiShaderStage::Fragment,
+                 shader(QStringLiteral(
+                     ":/shaders/raster_surface.frag.qsb"))},
+            });
+            if (transparent) {
+                pipeline->setTargetBlends({premultipliedBlend()});
+            }
+            pipeline->setVertexInputLayout(layout);
+            pipeline->setShaderResourceBindings(
+                surfacePipelineBindings_.get());
+            pipeline->setRenderPassDescriptor(renderPass);
+            requireCreated(pipeline->create(),
+                           "raster surface graphics pipeline");
+            surfacePipelines_[surfacePipelineIndex(transparent, fallback)] =
+                std::move(pipeline);
+        }
+    }
+    surfacePipelineRenderPass_ = renderPass;
+}
+
+void RasterLayerRenderer::releaseSurfaceResources() noexcept
+{
+    surfaceSupported_ = false;
+    for (auto &pipeline : surfacePipelines_) {
+        pipeline.reset();
+    }
+    for (auto &[key, tile] : tiles_) {
+        tile.surfaceBindings.reset();
+        tile.elevationTexture.reset();
+        gpuBytes_ -= std::min(gpuBytes_, tile.heightBytes);
+        tile.bytes -= std::min(tile.bytes, tile.heightBytes);
+        tile.heightBytes = 0;
+    }
+    surfacePipelineBindings_.reset();
+    surfaceIndexBuffer_.reset();
+    surfaceUniformBuffer_.reset();
+    surfacePipelineRenderPass_ = nullptr;
+    surfaceUniformStride_ = 0;
+    surfaceUniformCapacity_ = 0;
+    surfaceIndexUploaded_ = false;
+}
+
 std::size_t RasterLayerRenderer::uploadPending(
     QRhiCommandBuffer *commandBuffer,
     const std::span<const RasterPendingUpload> pending,
@@ -333,12 +619,33 @@ std::size_t RasterLayerRenderer::uploadPending(
     std::uint64_t spent = 0;
     std::size_t uploaded = 0;
     RhiResourceUpdateBatchPtr updates(rhi_->nextResourceUpdateBatch());
+    if (surfaceSupported_ && surfaceIndexBuffer_ &&
+        !surfaceIndexUploaded_) {
+        const auto indices = surfaceGridIndices();
+        updates->uploadStaticBuffer(
+            surfaceIndexBuffer_.get(), indices.data());
+        surfaceIndexUploaded_ = true;
+    }
     for (const RasterPendingUpload &entry : pending) {
         if (entry.tile == nullptr || tiles_.contains(entry.key)) {
             continue;
         }
+        const bool withElevation =
+            entry.key.profile == RasterTilePayloadProfile::RenderElevation &&
+            surfaceSupported_;
+        if (withElevation &&
+            entry.tile->elevation.size() !=
+                rasterStoredTilePixels * rasterStoredTilePixels) {
+            continue;
+        }
+        const std::uint64_t heightBytes =
+            withElevation
+                ? static_cast<std::uint64_t>(entry.tile->elevation.size()) *
+                          sizeof(float) +
+                      rasterTileBindingOverheadBytes
+                : 0;
         const auto bytes = static_cast<std::uint64_t>(entry.tile->rgba.size()) +
-                           rasterTileBindingOverheadBytes;
+                           rasterTileBindingOverheadBytes + heightBytes;
         // Spread a large refinement across frames rather than stalling one.
         if (spent + bytes > frameByteBudget && uploaded > 0) {
             break;
@@ -364,6 +671,29 @@ std::size_t RasterLayerRenderer::uploadPending(
         updates->uploadTexture(
             texture.get(), QRhiTextureUploadDescription({0, 0, subresource}));
 
+        RhiResourcePtr<QRhiTexture> elevationTexture;
+        if (withElevation) {
+            elevationTexture.reset(rhi_->newTexture(
+                QRhiTexture::R32F,
+                QSize(static_cast<int>(rasterStoredTilePixels),
+                      static_cast<int>(rasterStoredTilePixels))));
+            elevationTexture->setName(
+                QByteArrayLiteral("Raster elevation tile"));
+            requireCreated(elevationTexture->create(),
+                           "raster elevation texture");
+            QRhiTextureSubresourceUploadDescription heightSubresource;
+            heightSubresource.setData(QByteArray(
+                reinterpret_cast<const char *>(entry.tile->elevation.data()),
+                static_cast<qsizetype>(entry.tile->elevation.size() *
+                                       sizeof(float))));
+            heightSubresource.setSourceSize(
+                QSize(static_cast<int>(rasterStoredTilePixels),
+                      static_cast<int>(rasterStoredTilePixels)));
+            updates->uploadTexture(
+                elevationTexture.get(),
+                QRhiTextureUploadDescription({0, 0, heightSubresource}));
+        }
+
         RhiResourcePtr<QRhiShaderResourceBindings> bindings(
             rhi_->newShaderResourceBindings());
         bindings->setBindings({
@@ -381,15 +711,53 @@ std::size_t RasterLayerRenderer::uploadPending(
         });
         requireCreated(bindings->create(), "raster tile shader bindings");
 
+        RhiResourcePtr<QRhiShaderResourceBindings> surfaceBindings;
+        if (elevationTexture) {
+            surfaceBindings.reset(rhi_->newShaderResourceBindings());
+            surfaceBindings->setBindings({
+                QRhiShaderResourceBinding::uniformBufferWithDynamicOffset(
+                    0,
+                    QRhiShaderResourceBinding::VertexStage |
+                        QRhiShaderResourceBinding::FragmentStage,
+                    surfaceUniformBuffer_.get(),
+                    static_cast<quint32>(sizeof(RasterSurfaceUniform))),
+                QRhiShaderResourceBinding::sampledTexture(
+                    1,
+                    QRhiShaderResourceBinding::VertexStage |
+                        QRhiShaderResourceBinding::FragmentStage,
+                    texture.get(),
+                    entry.nearest ? nearestSampler_.get()
+                                  : linearSampler_.get()),
+                QRhiShaderResourceBinding::sampledTexture(
+                    2,
+                    QRhiShaderResourceBinding::VertexStage |
+                        QRhiShaderResourceBinding::FragmentStage,
+                    elevationTexture.get(),
+                    nearestSampler_.get()),
+            });
+            requireCreated(surfaceBindings->create(),
+                           "raster surface tile shader bindings");
+        }
+
         tiles_.emplace(entry.key,
                        GpuTile{
                            .texture = std::move(texture),
                            .bindings = std::move(bindings),
+                           .elevationTexture = std::move(elevationTexture),
+                           .surfaceBindings = std::move(surfaceBindings),
                            .layerId = entry.layerId,
                            .bytes = bytes,
+                           .heightBytes = heightBytes,
                            .lastUsedFrame = frameCounter_,
                            .validWidth = entry.tile->validWidth,
                            .validHeight = entry.tile->validHeight,
+                           .hasTranslucentAlpha =
+                               entry.tile->hasTranslucentAlpha,
+                           .nearest = entry.nearest,
+                           .elevationMinimum = entry.tile->elevationMinimum,
+                           .elevationMaximum = entry.tile->elevationMaximum,
+                           .hasValidElevation =
+                               entry.tile->hasValidElevation,
                        });
         gpuBytes_ += bytes;
         peakGpuBytes_ = std::max(peakGpuBytes_, gpuBytes_);
@@ -450,6 +818,21 @@ bool RasterLayerRenderer::gpuResident(const RasterCacheKey &key) const noexcept
     return tiles_.contains(key);
 }
 
+std::optional<RasterElevationRange>
+RasterLayerRenderer::tileElevationResidualRange(
+    const RasterCacheKey &key) const noexcept
+{
+    const auto tile = tiles_.find(key);
+    if (tile == tiles_.end() || !tile->second.elevationTexture ||
+        !tile->second.hasValidElevation) {
+        return std::nullopt;
+    }
+    return RasterElevationRange{
+        .minimum = tile->second.elevationMinimum,
+        .maximum = tile->second.elevationMaximum,
+    };
+}
+
 void RasterLayerRenderer::retainLayers(
     const std::span<const SceneLayerId> layerIds)
 {
@@ -494,9 +877,20 @@ std::size_t RasterLayerRenderer::residentTileCount() const noexcept
 
 std::size_t RasterLayerRenderer::tileCapacity() const noexcept
 {
+    return tileCapacity(RasterTilePayloadProfile::ColorOnly);
+}
+
+std::size_t RasterLayerRenderer::tileCapacity(
+    const RasterTilePayloadProfile profile) const noexcept
+{
     const std::uint64_t perTile =
         static_cast<std::uint64_t>(rasterStoredTileBytes) +
-        rasterTileBindingOverheadBytes;
+        rasterTileBindingOverheadBytes +
+        (profile == RasterTilePayloadProfile::RenderElevation
+             ? static_cast<std::uint64_t>(rasterStoredTilePixels) *
+                       rasterStoredTilePixels * sizeof(float) +
+                   rasterTileBindingOverheadBytes
+             : 0);
     // A quarter is held back for fallback ancestors and in-flight uploads, so
     // the planner's target set cannot pin the whole budget.
     const std::uint64_t capacity = gpuByteBudget_ / perTile;
@@ -509,6 +903,8 @@ void RasterLayerRenderer::destroyTile(GpuTile &tile) noexcept
     gpuBytes_ -= std::min(gpuBytes_, tile.bytes);
     tile.bytes = 0;
     tile.bindings.reset();
+    tile.surfaceBindings.reset();
+    tile.elevationTexture.reset();
     tile.texture.reset();
 }
 
@@ -519,17 +915,42 @@ void RasterLayerRenderer::updateUniforms(
     if (!ready() || !commandBuffer) {
         throw std::logic_error("raster renderer is not ready to update");
     }
-    ensureUniformCapacity(draws.size());
+    std::vector<RasterLayerDraw> flatDraws;
+    std::vector<RasterLayerDraw> surfaceDraws;
+    flatDraws.reserve(draws.size());
+    surfaceDraws.reserve(draws.size());
+    for (const RasterLayerDraw &draw : draws) {
+        (draw.mode == RasterDrawMode::Surface ? surfaceDraws : flatDraws)
+            .push_back(draw);
+    }
+    ensureUniformCapacity(flatDraws.size());
+    if (!surfaceDraws.empty()) {
+        if (!surfaceSupported_) {
+            throw std::logic_error(
+                "surface draws submitted to an unsupported renderer");
+        }
+        ensureSurfaceUniformCapacity(surfaceDraws.size());
+    }
     if (draws.empty()) {
         return;
     }
-    const std::vector<std::byte> staging =
-        stageRasterLayerUniforms(draws, uniformStride_);
     RhiResourceUpdateBatchPtr updates(rhi_->nextResourceUpdateBatch());
-    updates->updateDynamicBuffer(uniformBuffer_.get(),
-                                 0,
-                                 static_cast<quint32>(staging.size()),
-                                 staging.data());
+    if (!flatDraws.empty()) {
+        const std::vector<std::byte> staging =
+            stageRasterLayerUniforms(flatDraws, uniformStride_);
+        updates->updateDynamicBuffer(uniformBuffer_.get(),
+                                     0,
+                                     static_cast<quint32>(staging.size()),
+                                     staging.data());
+    }
+    if (!surfaceDraws.empty()) {
+        const std::vector<std::byte> staging = stageRasterSurfaceUniforms(
+            surfaceDraws, surfaceUniformStride_);
+        updates->updateDynamicBuffer(surfaceUniformBuffer_.get(),
+                                     0,
+                                     static_cast<quint32>(staging.size()),
+                                     staging.data());
+    }
     commandBuffer->resourceUpdate(updates.release());
 }
 
@@ -549,19 +970,52 @@ void RasterLayerRenderer::recordDraws(
                      0,
                      static_cast<float>(renderTarget->pixelSize().width()),
                      static_cast<float>(renderTarget->pixelSize().height())));
-    for (std::size_t index = 0; index < draws.size(); ++index) {
-        const RasterLayerDraw &draw = draws[index];
+    std::uint32_t flatIndex = 0;
+    std::uint32_t surfaceIndex = 0;
+    for (const RasterLayerDraw &draw : draws) {
+        const std::uint32_t drawIndex =
+            draw.mode == RasterDrawMode::Surface ? surfaceIndex++
+                                                 : flatIndex++;
         const auto found = tiles_.find(draw.tileKey);
-        if (found == tiles_.end() || !found->second.bindings) {
+        if (found == tiles_.end()) {
             continue;
         }
         found->second.lastUsedFrame = frameCounter_;
+        if (draw.mode == RasterDrawMode::Flat) {
+            if (!found->second.bindings) {
+                continue;
+            }
+            const QRhiCommandBuffer::DynamicOffset offset(
+                0, drawIndex * uniformStride_);
+            commandBuffer->setGraphicsPipeline(pipeline_.get());
+            commandBuffer->setShaderResources(
+                found->second.bindings.get(), 1, &offset);
+            commandBuffer->draw(4);
+            continue;
+        }
+
+        if (!surfaceSupported_ || !surfaceIndexUploaded_ ||
+            !found->second.surfaceBindings || !surfaceIndexBuffer_) {
+            continue;
+        }
+        const bool transparent =
+            draw.transparent || found->second.hasTranslucentAlpha;
+        const bool fallback =
+            draw.surfaceRole == RasterSurfaceDrawRole::Fallback;
         const QRhiCommandBuffer::DynamicOffset offset(
-            0, static_cast<quint32>(index) * uniformStride_);
-        commandBuffer->setGraphicsPipeline(pipeline_.get());
+            0, drawIndex * surfaceUniformStride_);
+        commandBuffer->setGraphicsPipeline(
+            surfacePipelines_[surfacePipelineIndex(transparent, fallback)]
+                .get());
         commandBuffer->setShaderResources(
-            found->second.bindings.get(), 1, &offset);
-        commandBuffer->draw(4);
+            found->second.surfaceBindings.get(), 1, &offset);
+        commandBuffer->setVertexInput(0,
+                                      0,
+                                      nullptr,
+                                      surfaceIndexBuffer_.get(),
+                                      0,
+                                      QRhiCommandBuffer::IndexUInt16);
+        commandBuffer->drawIndexed(rasterSurfaceGridIndexCount);
     }
 }
 
@@ -575,11 +1029,13 @@ void RasterLayerRenderer::releaseResources()
     pipeline_.reset();
     pipelineBindings_.reset();
     uniformBuffer_.reset();
+    releaseSurfaceResources();
     nearestSampler_.reset();
     linearSampler_.reset();
     pipelineRenderPass_ = nullptr;
     uniformCapacity_ = 0;
     uniformStride_ = 0;
+    surfaceCapabilityReason_.clear();
     rhi_ = nullptr;
 }
 

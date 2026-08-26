@@ -412,16 +412,34 @@ struct DecodeTarget {
     int offsetY = 0;
 };
 
-std::vector<std::byte>
+struct ExpandedTile {
+    std::vector<std::byte> rgba;
+    std::vector<float> elevation;
+    float elevationMinimum = 0.0F;
+    float elevationMaximum = 0.0F;
+    bool hasValidElevation = false;
+    bool hasTranslucentAlpha = false;
+};
+
+ExpandedTile
 expandPremultipliedRgba(const ChannelPlanes &planes,
                         const ReadExtent &extent,
                         const DecodeTarget &target,
                         const RasterBandSelection &selection,
-                        const RasterDecodeParameters &decode)
+                        const RasterDecodeParameters &decode,
+                        const RasterTilePayloadProfile profile,
+                        const double elevationAnchor)
 {
-    std::vector<std::byte> rgba(static_cast<std::size_t>(target.width) *
-                                    target.height * 4,
-                                std::byte{});
+    ExpandedTile result;
+    const std::size_t pixelCount =
+        static_cast<std::size_t>(target.width) * target.height;
+    result.rgba.assign(pixelCount * 4, std::byte{});
+    if (profile == RasterTilePayloadProfile::RenderElevation) {
+        result.elevation.assign(
+            pixelCount, std::numeric_limits<float>::quiet_NaN());
+        result.elevationMinimum = std::numeric_limits<float>::infinity();
+        result.elevationMaximum = -std::numeric_limits<float>::infinity();
+    }
 
     double low = 0.0;
     double high = 255.0;
@@ -506,27 +524,70 @@ expandPremultipliedRgba(const ChannelPlanes &planes,
             // colorTableAlpha * explicitAlpha * validity, composed before
             // premultiplication so the GPU's linear filter never blends an
             // invalid source color into a valid neighbour.
-            double alpha = color[3];
+            double sourceAlpha = 1.0;
             if (planes.hasAlpha()) {
-                alpha *= std::clamp(
-                    planes.alpha(sourceIndex) * alphaScale, 0.0, 1.0);
+                const double sample = planes.alpha(sourceIndex);
+                sourceAlpha = std::isfinite(sample)
+                                  ? std::clamp(sample * alphaScale, 0.0, 1.0)
+                                  : 0.0;
             }
+            bool maskValid = true;
             if (!planes.mask.empty()) {
-                alpha *= planes.mask[sourceIndex] > 0 ? 1.0 : 0.0;
+                maskValid = planes.mask[sourceIndex] > 0;
             }
-            if (!valid) {
+            const bool heightValid = valid && maskValid && sourceAlpha > 0.0 &&
+                                     std::isfinite(first);
+
+            double alpha = static_cast<double>(color[3]) * sourceAlpha *
+                           (maskValid && valid ? 1.0 : 0.0);
+            if (!std::isfinite(alpha)) {
                 alpha = 0.0;
             }
 
             const auto destination =
                 (static_cast<std::size_t>(y) * target.width + x) * 4;
-            rgba[destination] = quantize(color[0] * alpha);
-            rgba[destination + 1] = quantize(color[1] * alpha);
-            rgba[destination + 2] = quantize(color[2] * alpha);
-            rgba[destination + 3] = quantize(alpha);
+            result.rgba[destination] = quantize(color[0] * alpha);
+            result.rgba[destination + 1] = quantize(color[1] * alpha);
+            result.rgba[destination + 2] = quantize(color[2] * alpha);
+            const std::byte storedAlpha = quantize(alpha);
+            result.rgba[destination + 3] = storedAlpha;
+            const unsigned int alphaByte = std::to_integer<unsigned int>(
+                storedAlpha);
+            result.hasTranslucentAlpha =
+                result.hasTranslucentAlpha ||
+                (alphaByte > 0U && alphaByte < 255U);
+
+            if (profile == RasterTilePayloadProfile::RenderElevation &&
+                heightValid) {
+                const float residual =
+                    static_cast<float>(first - elevationAnchor);
+                if (std::isfinite(residual)) {
+                    const std::size_t heightIndex =
+                        static_cast<std::size_t>(y) * target.width + x;
+                    result.elevation[heightIndex] = residual;
+                    result.elevationMinimum =
+                        std::min(result.elevationMinimum, residual);
+                    result.elevationMaximum =
+                        std::max(result.elevationMaximum, residual);
+                    result.hasValidElevation = true;
+                }
+            }
         }
     }
-    return rgba;
+    if (!result.elevation.empty()) {
+        const float fill =
+            result.hasValidElevation ? result.elevationMinimum : 0.0F;
+        for (float &height : result.elevation) {
+            if (!std::isfinite(height)) {
+                height = fill;
+            }
+        }
+        if (!result.hasValidElevation) {
+            result.elevationMinimum = 0.0F;
+            result.elevationMaximum = 0.0F;
+        }
+    }
+    return result;
 }
 
 } // namespace
@@ -666,6 +727,157 @@ std::uint64_t GdalRasterSource::readCount() const noexcept
 }
 
 std::uint64_t
+GdalRasterSource::exactElevationScanReservationBytes() const noexcept
+{
+    constexpr std::uint64_t scanPixels = 256ULL * 256ULL;
+    // Scalar and optional alpha are widened to double; the dataset mask stays
+    // byte-sized. The same allocations are reused for every scan block.
+    return sizeof(RasterElevationRange) +
+           scanPixels * (2ULL * sizeof(double) + sizeof(unsigned char));
+}
+
+RasterElevationRange GdalRasterSource::exactElevationRange(
+    const std::stop_token stop,
+    RasterElevationProgressCallback progress) const
+{
+    if (!metadata_.elevation.available ||
+        selection_.sampleKind != RasterSampleKind::ContinuousScalar ||
+        selection_.colorBands.size() != 1) {
+        throw RasterReadError("Raster is not an elevation source");
+    }
+
+    checkCancelled(stop);
+    const HandleLease lease(*handles_, acquireHandle(*handles_, stop));
+    GDALRasterBand *band =
+        lease.dataset().GetRasterBand(selection_.colorBands.front());
+    GDALRasterBand *alpha = selection_.alphaBand == 0
+                                ? nullptr
+                                : lease.dataset().GetRasterBand(
+                                      selection_.alphaBand);
+    GDALRasterBand *mask =
+        selection_.usesDatasetMask && band != nullptr ? band->GetMaskBand()
+                                                      : nullptr;
+    if (band == nullptr || (selection_.alphaBand != 0 && alpha == nullptr) ||
+        (selection_.usesDatasetMask && mask == nullptr)) {
+        throw RasterReadError("Raster elevation bands are unavailable");
+    }
+
+    constexpr int scanBlock = 256;
+    const int width = band->GetXSize();
+    const int height = band->GetYSize();
+    const std::uint64_t blocksX =
+        static_cast<std::uint64_t>((width + scanBlock - 1) / scanBlock);
+    const std::uint64_t blocksY =
+        static_cast<std::uint64_t>((height + scanBlock - 1) / scanBlock);
+    const std::uint64_t total = blocksX * blocksY;
+    std::uint64_t processed = 0;
+    if (progress) {
+        progress({.processedBlocks = 0, .totalBlocks = total});
+    }
+
+    std::vector<double> values;
+    std::vector<double> alphaValues;
+    std::vector<unsigned char> maskValues;
+    double minimum = std::numeric_limits<double>::infinity();
+    double maximum = -std::numeric_limits<double>::infinity();
+    const double nodata = selection_.nodata.front();
+    const double scale = metadata_.elevation.scale;
+    const double offset = metadata_.elevation.offset;
+
+    const auto read = [&](GDALRasterBand &source,
+                          const int x,
+                          const int y,
+                          const int blockWidth,
+                          const int blockHeight,
+                          const GDALDataType type,
+                          void *destination) {
+        GDALRasterIOExtraArg extra;
+        INIT_RASTERIO_EXTRA_ARG(extra);
+        extra.pfnProgress = abortWhenStopRequested;
+        extra.pProgressData = const_cast<std::stop_token *>(&stop);
+        readCount_.fetch_add(1, std::memory_order_relaxed);
+        if (source.RasterIO(GF_Read,
+                            x,
+                            y,
+                            blockWidth,
+                            blockHeight,
+                            destination,
+                            blockWidth,
+                            blockHeight,
+                            type,
+                            0,
+                            0,
+                            &extra) != CE_None) {
+            checkCancelled(stop);
+            throw RasterReadError("Raster elevation block read failed");
+        }
+    };
+
+    for (int y = 0; y < height; y += scanBlock) {
+        for (int x = 0; x < width; x += scanBlock) {
+            checkCancelled(stop);
+            const int blockWidth = std::min(scanBlock, width - x);
+            const int blockHeight = std::min(scanBlock, height - y);
+            const std::size_t count =
+                static_cast<std::size_t>(blockWidth) * blockHeight;
+            values.resize(count);
+            read(*band,
+                 x,
+                 y,
+                 blockWidth,
+                 blockHeight,
+                 GDT_Float64,
+                 values.data());
+            if (alpha != nullptr) {
+                alphaValues.resize(count);
+                read(*alpha,
+                     x,
+                     y,
+                     blockWidth,
+                     blockHeight,
+                     GDT_Float64,
+                     alphaValues.data());
+            }
+            if (mask != nullptr) {
+                maskValues.resize(count);
+                read(*mask,
+                     x,
+                     y,
+                     blockWidth,
+                     blockHeight,
+                     GDT_Byte,
+                     maskValues.data());
+            }
+
+            for (std::size_t index = 0; index < count; ++index) {
+                const double raw = values[index];
+                if (!std::isfinite(raw) || matchesNodata(raw, nodata) ||
+                    (alpha != nullptr &&
+                     (!std::isfinite(alphaValues[index]) ||
+                      alphaValues[index] <= 0.0)) ||
+                    (mask != nullptr && maskValues[index] == 0)) {
+                    continue;
+                }
+                const double scaled = raw * scale + offset;
+                if (!std::isfinite(scaled)) {
+                    continue;
+                }
+                minimum = std::min(minimum, scaled);
+                maximum = std::max(maximum, scaled);
+            }
+            ++processed;
+            if (progress) {
+                progress({.processedBlocks = processed, .totalBlocks = total});
+            }
+        }
+    }
+    if (!std::isfinite(minimum) || !std::isfinite(maximum)) {
+        throw RasterReadError("Raster has no valid elevation samples");
+    }
+    return {.minimum = minimum, .maximum = maximum};
+}
+
+std::uint64_t
 GdalRasterSource::readReservationBytes(const RasterTileRequest &request) const
 {
     if (request.key.levelIndex >= metadata_.levels.size()) {
@@ -681,6 +893,10 @@ GdalRasterSource::readReservationBytes(const RasterTileRequest &request) const
     }
 
     std::uint64_t bytes = sizeof(RasterTileData) + rasterStoredTileBytes;
+    if (request.profile == RasterTilePayloadProfile::RenderElevation) {
+        bytes += static_cast<std::uint64_t>(rasterStoredTilePixels) *
+                 rasterStoredTilePixels * sizeof(float);
+    }
     const auto addPlane = [&](const std::uint64_t sampleBytes,
                               const std::uint64_t count = 1) {
         const auto samples = checkedMultiply(*pixels, sampleBytes);
@@ -741,8 +957,27 @@ RasterTileData GdalRasterSource::readTile(const RasterTileRequest &request,
         tile.renderGeneration = request.renderGeneration;
         tile.validWidth = static_cast<std::uint16_t>(window.validWidth);
         tile.validHeight = static_cast<std::uint16_t>(window.validHeight);
-        tile.rgba =
-            expandPremultipliedRgba(planes, extent, target, selection_, decode);
+        tile.profile = request.profile;
+        ExpandedTile expanded = expandPremultipliedRgba(
+            planes,
+            extent,
+            target,
+            selection_,
+            decode,
+            request.profile,
+            metadata_.elevation.anchor);
+        tile.rgba = std::move(expanded.rgba);
+        tile.elevation = std::move(expanded.elevation);
+        tile.elevationMinimum = expanded.elevationMinimum;
+        tile.elevationMaximum = expanded.elevationMaximum;
+        tile.hasValidElevation = expanded.hasValidElevation;
+        tile.hasTranslucentAlpha = expanded.hasTranslucentAlpha;
+        if (request.profile == RasterTilePayloadProfile::RenderElevation &&
+            tile.elevation.size() !=
+                static_cast<std::size_t>(rasterStoredTilePixels) *
+                    rasterStoredTilePixels) {
+            throw RasterReadError("Raster elevation payload is incomplete");
+        }
         return tile;
     } catch (const RasterReadCancelled &) {
         throw;

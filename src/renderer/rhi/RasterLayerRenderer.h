@@ -8,8 +8,10 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <span>
+#include <string>
 #include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
@@ -46,6 +48,53 @@ static_assert(offsetof(RasterLayerUniform, uvRect) == 64);
 static_assert(offsetof(RasterLayerUniform, opacity) == 80);
 static_assert(sizeof(RasterLayerUniform) == 96);
 
+inline constexpr std::uint32_t rasterSurfaceGridVerticesPerSide = 65;
+inline constexpr std::uint32_t rasterSurfaceGridCellsPerSide =
+    rasterSurfaceGridVerticesPerSide - 1;
+inline constexpr std::uint32_t rasterSurfaceGridIndexCount =
+    rasterSurfaceGridCellsPerSide * rasterSurfaceGridCellsPerSide * 6;
+static_assert(rasterSurfaceGridVerticesPerSide *
+                  rasterSurfaceGridVerticesPerSide <=
+              std::numeric_limits<std::uint16_t>::max());
+static_assert(rasterTileGutter >= 1,
+              "the fragment central-difference normal reads one texel "
+              "outside the sampled position");
+
+// Shared std140 ABI for raster_surface.vert, raster_surface.frag, and C++.
+// The absolute elevation anchor is deliberately folded into origin.z in
+// double precision instead of being narrowed into this block.
+struct alignas(16) RasterSurfaceUniform {
+    std::array<float, 16> viewProjection{};
+    std::array<float, 4> origin{};
+    std::array<float, 4> edgeU{};
+    std::array<float, 4> edgeV{};
+    std::array<float, 4> uvRect{};
+    std::array<float, 4> tileTexels{};
+    std::array<float, 4> heightParams{};
+    std::array<float, 4> shadingParams{};
+};
+static_assert(alignof(RasterSurfaceUniform) == 16);
+static_assert(std::is_standard_layout_v<RasterSurfaceUniform>);
+static_assert(offsetof(RasterSurfaceUniform, viewProjection) == 0);
+static_assert(offsetof(RasterSurfaceUniform, origin) == 64);
+static_assert(offsetof(RasterSurfaceUniform, edgeU) == 80);
+static_assert(offsetof(RasterSurfaceUniform, edgeV) == 96);
+static_assert(offsetof(RasterSurfaceUniform, uvRect) == 112);
+static_assert(offsetof(RasterSurfaceUniform, tileTexels) == 128);
+static_assert(offsetof(RasterSurfaceUniform, heightParams) == 144);
+static_assert(offsetof(RasterSurfaceUniform, shadingParams) == 160);
+static_assert(sizeof(RasterSurfaceUniform) == 176);
+
+enum class RasterDrawMode : std::uint8_t {
+    Flat,
+    Surface,
+};
+
+enum class RasterSurfaceDrawRole : std::uint8_t {
+    Detail,
+    Fallback,
+};
+
 #ifdef _MSC_VER
 #pragma warning(push)
 #pragma warning(disable : 4324)
@@ -55,6 +104,11 @@ struct RasterLayerDraw {
     RasterCacheKey tileKey;
     RasterLayerUniform uniform;
     std::uint32_t uniformIndex = 0;
+    RasterSurfaceUniform surfaceUniform;
+    std::uint32_t surfaceUniformIndex = 0;
+    RasterDrawMode mode = RasterDrawMode::Flat;
+    RasterSurfaceDrawRole surfaceRole = RasterSurfaceDrawRole::Detail;
+    bool transparent = false;
 };
 #ifdef _MSC_VER
 #pragma warning(pop)
@@ -63,6 +117,10 @@ struct RasterLayerDraw {
 [[nodiscard]] std::vector<std::byte>
 stageRasterLayerUniforms(std::span<const RasterLayerDraw> draws,
                          std::size_t uniformStride);
+
+[[nodiscard]] std::vector<std::byte>
+stageRasterSurfaceUniforms(std::span<const RasterLayerDraw> draws,
+                           std::size_t uniformStride);
 
 // Maps the unit quad onto the layer's world footprint. Computed eye-relative
 // in double precision before narrowing, matching the convention the point and
@@ -133,6 +191,8 @@ public:
                               std::span<const RasterCacheKey> protectedKeys,
                               std::uint64_t frameByteBudget);
     [[nodiscard]] bool gpuResident(const RasterCacheKey &key) const noexcept;
+    [[nodiscard]] std::optional<RasterElevationRange>
+    tileElevationResidualRange(const RasterCacheKey &key) const noexcept;
     // Drops GPU tiles for layers the document no longer owns.
     void retainLayers(std::span<const SceneLayerId> layerIds);
     void releaseSource(RasterSourceId sourceId);
@@ -142,6 +202,8 @@ public:
     // Tiles the GPU budget can hold, which the planner takes as one of its two
     // independent capacity ceilings.
     [[nodiscard]] std::size_t tileCapacity() const noexcept;
+    [[nodiscard]] std::size_t
+    tileCapacity(RasterTilePayloadProfile profile) const noexcept;
     void updateUniforms(QRhiCommandBuffer *commandBuffer,
                         std::span<const RasterLayerDraw> draws);
     void recordDraws(QRhiCommandBuffer *commandBuffer,
@@ -150,7 +212,10 @@ public:
     void releaseResources();
 
     [[nodiscard]] bool ready() const noexcept;
+    [[nodiscard]] bool surfaceSupported() const noexcept;
+    [[nodiscard]] const std::string &surfaceCapabilityReason() const noexcept;
     [[nodiscard]] std::uint64_t gpuBytes() const noexcept;
+    [[nodiscard]] std::uint64_t heightGpuBytes() const noexcept;
     [[nodiscard]] std::uint64_t gpuByteBudget() const noexcept;
     [[nodiscard]] std::uint64_t peakGpuBytes() const noexcept;
 
@@ -158,11 +223,19 @@ private:
     struct GpuTile {
         RhiResourcePtr<QRhiTexture> texture;
         RhiResourcePtr<QRhiShaderResourceBindings> bindings;
+        RhiResourcePtr<QRhiTexture> elevationTexture;
+        RhiResourcePtr<QRhiShaderResourceBindings> surfaceBindings;
         SceneLayerId layerId;
         std::uint64_t bytes = 0;
+        std::uint64_t heightBytes = 0;
         std::uint64_t lastUsedFrame = 0;
         std::uint16_t validWidth = 0;
         std::uint16_t validHeight = 0;
+        bool hasTranslucentAlpha = false;
+        bool nearest = false;
+        float elevationMinimum = 0.0F;
+        float elevationMaximum = 0.0F;
+        bool hasValidElevation = false;
     };
 
     // Eviction candidates in least-recently-used order, computed once per
@@ -178,6 +251,12 @@ private:
     void createUniformBuffer(std::size_t drawCapacity);
     void ensureUniformCapacity(std::size_t drawCount);
     void createPipeline(QRhiRenderPassDescriptor *renderPass);
+    void createSurfaceResources(QRhiRenderPassDescriptor *renderPass);
+    void releaseSurfaceResources() noexcept;
+    void createSurfaceUniformBuffer(std::size_t drawCapacity);
+    void ensureSurfaceUniformCapacity(std::size_t drawCount);
+    void rebuildSurfaceBindings();
+    void createSurfacePipelines(QRhiRenderPassDescriptor *renderPass);
     [[nodiscard]] bool makeRoom(std::uint64_t incoming, EvictionPlan &plan);
     void destroyTile(GpuTile &tile) noexcept;
 
@@ -187,9 +266,19 @@ private:
     RhiResourcePtr<QRhiSampler> nearestSampler_;
     RhiResourcePtr<QRhiShaderResourceBindings> pipelineBindings_;
     RhiResourcePtr<QRhiGraphicsPipeline> pipeline_;
+    RhiResourcePtr<QRhiBuffer> surfaceUniformBuffer_;
+    RhiResourcePtr<QRhiBuffer> surfaceIndexBuffer_;
+    RhiResourcePtr<QRhiShaderResourceBindings> surfacePipelineBindings_;
+    std::array<RhiResourcePtr<QRhiGraphicsPipeline>, 4> surfacePipelines_;
     QRhiRenderPassDescriptor *pipelineRenderPass_ = nullptr;
+    QRhiRenderPassDescriptor *surfacePipelineRenderPass_ = nullptr;
     std::uint32_t uniformStride_ = 0;
     std::size_t uniformCapacity_ = 0;
+    std::uint32_t surfaceUniformStride_ = 0;
+    std::size_t surfaceUniformCapacity_ = 0;
+    bool surfaceIndexUploaded_ = false;
+    bool surfaceSupported_ = false;
+    std::string surfaceCapabilityReason_;
     std::unordered_map<RasterCacheKey, GpuTile> tiles_;
     std::uint64_t gpuBytes_ = 0;
     std::uint64_t peakGpuBytes_ = 0;

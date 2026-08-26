@@ -69,6 +69,7 @@ struct RasterFrameLayer {
     // the frame entry prevents the streamer from silently falling back to the
     // source default when the user edits a scalar range or color ramp.
     std::shared_ptr<const RasterDecodeParameters> decode;
+    RasterTilePayloadProfile profile = RasterTilePayloadProfile::ColorOnly;
 };
 
 // Owns request generations, worker scheduling, cancellation, decoded-cache
@@ -139,6 +140,11 @@ public:
     [[nodiscard]] RasterStreamerMetrics metrics() const;
 
 private:
+    struct LiveRequestIdentity {
+        std::uint64_t renderGeneration = 0;
+        RasterTilePayloadProfile profile = RasterTilePayloadProfile::ColorOnly;
+        bool operator==(const LiveRequestIdentity &) const = default;
+    };
     struct Request {
         RasterCacheKey key;
         std::uint64_t epoch = 0;
@@ -172,7 +178,7 @@ private:
     // The current generation for sources still owned by the document. Workers
     // consult it before publishing, so a completion that races layer removal
     // or a range/ramp edit is destroyed before render-thread admission.
-    std::unordered_map<RasterSourceId, std::uint64_t> liveGenerations_;
+    std::unordered_map<RasterSourceId, LiveRequestIdentity> liveGenerations_;
     std::stop_source stop_;
     std::vector<std::jthread> workers_;
     std::size_t activeReads_ = 0;
