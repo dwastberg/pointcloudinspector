@@ -264,15 +264,15 @@ SceneLayerListModel::project(const SceneDocumentSnapshot &snapshot)
                                     .data = raster->data,
                                     .visible = sceneLayer.visible,
                                     .style = raster->style,
-                                    .renderGeneration =
-                                        raster->renderGeneration,
                                     .elevationStatus = raster->elevationStatus,
                                     .exactElevationRange =
                                         raster->exactElevationRange,
                                     .elevationFailure =
                                         raster->elevationFailure,
                                     .elevationGeneration =
-                                        raster->elevationGeneration};
+                                        raster->elevationGeneration,
+                                    .renderGeneration =
+                                        raster->renderGeneration};
             const RasterLayerMetadata *metadata =
                 layer.data ? &layer.data->metadata() : nullptr;
             result.push_back({

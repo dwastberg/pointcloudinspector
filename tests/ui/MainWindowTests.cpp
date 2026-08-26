@@ -115,6 +115,10 @@ makeSnapshot(const std::vector<pci::PointCloudLayer> &points,
                 pci::RasterLayerState{
                     .data = raster->data,
                     .style = raster->style,
+                    .elevationStatus = raster->elevationStatus,
+                    .exactElevationRange = raster->exactElevationRange,
+                    .elevationFailure = raster->elevationFailure,
+                    .elevationGeneration = raster->elevationGeneration,
                     .renderGeneration = raster->renderGeneration,
                 },
         });
