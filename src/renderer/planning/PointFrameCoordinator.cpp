@@ -14,6 +14,8 @@
 namespace pci {
 namespace {
 
+constexpr std::uint64_t hierarchyRequestPointBudget = 2'000'000;
+
 void saturatingAdd(std::uint64_t &value, const std::uint64_t increment) noexcept
 {
     value = increment > std::numeric_limits<std::uint64_t>::max() - value
@@ -479,7 +481,7 @@ PointFramePlan PointFrameCoordinator::buildPlan(const PointFrameInput &input)
                  .verticalFieldOfViewDegrees = frame.verticalFovDegrees,
                  .viewportHeight = frame.outputHeight,
                  .pointBudget = layerRemaining,
-                 .requestPointBudget = layerRemaining});
+                 .requestPointBudget = hierarchyRequestPointBudget});
             scene->requestNodes(selection.requestedNodes);
             result.nodeRequests.push_back({
                 .layerId = layer.layer.id,

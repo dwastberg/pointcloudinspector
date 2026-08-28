@@ -106,7 +106,131 @@ TEST_CASE("LOD selection respects the point budget before refining",
 
     CHECK(result.drawNodes == std::vector{pci::rootPointCloudNode});
     CHECK(result.selectedPoints == 10);
-    CHECK(result.requestedNodes.empty());
+    CHECK(result.requestedNodes.size() == 8);
+}
+
+TEST_CASE("LOD selection never partially draws a hierarchy node",
+          "[unit][renderer-planning][lod][budget]")
+{
+    pci::RenderSelection selector;
+    const std::array roots{pci::rootPointCloudNode};
+    const auto result = selector.select(
+        roots,
+        [](const pci::PointCloudNodeId id) {
+            return pci::RenderSelectionNodeState{
+                .node = descriptor(id),
+                .resident = true,
+                .residentPointCount = id.level == 0 ? 10U : 5U,
+            };
+        },
+        [](const pci::Bounds3d &) {
+            return true;
+        },
+        parameters(9));
+
+    CHECK(result.drawNodes.empty());
+    CHECK(result.selectedPoints == 0);
+}
+
+TEST_CASE("LOD reservation prevents budget exhaustion from collapsing a root",
+          "[unit][renderer-planning][lod][budget]")
+{
+    pci::RenderSelection selector;
+    const std::array roots{pci::rootPointCloudNode};
+    const auto rootChildren = pci::childNodeIds(pci::rootPointCloudNode);
+    const auto result = selector.select(
+        roots,
+        [&rootChildren](const pci::PointCloudNodeId id) {
+            pci::PointCloudNode node = descriptor(id);
+            std::uint64_t points = 10;
+            if (id.level == 1) {
+                const auto found = std::ranges::find(rootChildren, id);
+                if (found == rootChildren.end() ||
+                    std::distance(rootChildren.begin(), found) >= 5) {
+                    node.bounds = {
+                        .minimum = {1.0, 1.0, 1.0},
+                        .maximum = {0.0, 0.0, 0.0},
+                    };
+                    node.estimatedPointCount = 0;
+                    points = 0;
+                } else {
+                    node.leaf = false;
+                    node.geometricError = 1.0;
+                    node.estimatedPointCount = 5;
+                    points = 5;
+                }
+            } else if (id.level == 2) {
+                const pci::PointCloudNodeId parent{
+                    .level = 1,
+                    .x = id.x >> 1U,
+                    .y = id.y >> 1U,
+                    .z = id.z >> 1U,
+                };
+                const auto parentFound =
+                    std::ranges::find(rootChildren, parent);
+                const std::uint8_t octant = static_cast<std::uint8_t>(
+                    (id.x & 1U) | ((id.y & 1U) << 1U) | ((id.z & 1U) << 2U));
+                if (parentFound == rootChildren.end() ||
+                    std::distance(rootChildren.begin(), parentFound) >= 5 ||
+                    octant >= 2) {
+                    node.bounds = {
+                        .minimum = {1.0, 1.0, 1.0},
+                        .maximum = {0.0, 0.0, 0.0},
+                    };
+                    node.estimatedPointCount = 0;
+                    points = 0;
+                } else {
+                    node.leaf = true;
+                    node.geometricError = 0.0;
+                    node.estimatedPointCount = 4;
+                    points = 4;
+                }
+            }
+            return pci::RenderSelectionNodeState{
+                .node = node,
+                .resident = node.bounds.valid(),
+                .residentPointCount = points,
+            };
+        },
+        [](const pci::Bounds3d &) {
+            return true;
+        },
+        parameters(28));
+
+    CHECK_FALSE(result.drawNodes.empty());
+    CHECK(result.drawNodes != std::vector{pci::rootPointCloudNode});
+    CHECK(result.drawNodes.size() == 6);
+    CHECK(std::ranges::count_if(result.drawNodes, [](const auto id) {
+              return id.level == 2;
+          }) == 2);
+    CHECK(result.selectedPoints == 28);
+    CHECK(result.selectedPoints <= 28);
+}
+
+TEST_CASE("LOD requests are bounded independently of the draw budget",
+          "[unit][renderer-planning][lod][budget]")
+{
+    pci::RenderSelection selector;
+    const std::array roots{pci::rootPointCloudNode};
+    auto limited = parameters(20);
+    limited.requestPointBudget = 12;
+    const auto result = selector.select(
+        roots,
+        [](const pci::PointCloudNodeId id) {
+            return pci::RenderSelectionNodeState{
+                .node = descriptor(id),
+                .resident = id.level == 0,
+                .residentPointCount = id.level == 0 ? 10U : 5U,
+            };
+        },
+        [](const pci::Bounds3d &) {
+            return true;
+        },
+        limited);
+
+    CHECK(result.drawNodes == std::vector{pci::rootPointCloudNode});
+    CHECK(result.selectedPoints == 10);
+    CHECK(result.requestedNodes.size() == 2);
 }
 
 TEST_CASE("LOD selection requests only visible child regions",
@@ -143,9 +267,11 @@ TEST_CASE("LOD selection ignores children known not to exist",
     const std::array roots{pci::rootPointCloudNode};
     const auto children = pci::childNodeIds(pci::rootPointCloudNode);
     std::size_t visibilityTests = 0;
+    std::size_t lookups = 0;
     const auto result = selector.select(
         roots,
-        [&children](const pci::PointCloudNodeId id) {
+        [&children, &lookups](const pci::PointCloudNodeId id) {
+            ++lookups;
             pci::PointCloudNode node = descriptor(id);
             const bool exists =
                 id.level == 0 || id == children[0] || id == children[1];
@@ -173,9 +299,8 @@ TEST_CASE("LOD selection ignores children known not to exist",
     CHECK(result.drawNodes == existing);
     CHECK(result.requestedNodes == existing);
     CHECK(result.selectedPoints == 10);
-    // Root once, then each existing child during filtering and traversal.
-    // Known-nonexistent children never reach the visibility query.
-    CHECK(visibilityTests == 5);
+    CHECK(lookups == 9);
+    CHECK(visibilityTests == 3);
 }
 
 TEST_CASE("LOD selection stops at a served detail limit without claiming a "

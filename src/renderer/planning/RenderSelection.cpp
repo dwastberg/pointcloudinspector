@@ -3,6 +3,7 @@
 #include "foundation/CheckedArithmetic.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
 #include <numbers>
@@ -426,31 +427,29 @@ RenderSelection::select(const std::span<const PointCloudNodeId> roots,
         return true;
     };
 
-    const auto selectNode = [&](const auto &self,
-                                const PointCloudNodeId id) -> bool {
-        if (remaining == 0) {
-            return false;
-        }
-        const RenderSelectionNodeState state = lookup(id);
-        if (!state.node.bounds.valid() || !visible(state.node.bounds)) {
-            return true;
-        }
+    const auto selectVisibleNode =
+        [&](const auto &self,
+            const RenderSelectionNodeState &state,
+            const std::uint64_t allowance) -> std::uint64_t {
         if (!state.resident) {
             static_cast<void>(requestNode(state));
-            return false;
+            return 0;
+        }
+        if (state.residentPointCount > allowance) {
+            return 0;
         }
 
         const double errorPixels = projectedErrorPixels(state.node, parameters);
-        const bool wasRefined = refinedLastFrame_.contains(id);
+        const bool wasRefined = refinedLastFrame_.contains(state.node.id);
         const bool wantsRefinement =
             !state.node.leaf && !state.node.detailLimited &&
             errorPixels > (wasRefined ? parameters.coarsenPixelError
                                       : parameters.refinePixelError);
 
         if (wantsRefinement) {
-            nextRefined.insert(id);
+            nextRefined.insert(state.node.id);
             std::vector<RenderSelectionNodeState> visibleChildren;
-            for (const PointCloudNodeId child : childNodeIds(id)) {
+            for (const PointCloudNodeId child : childNodeIds(state.node.id)) {
                 RenderSelectionNodeState childState = lookup(child);
                 if (!childState.node.bounds.valid() ||
                     !visible(childState.node.bounds)) {
@@ -458,75 +457,70 @@ RenderSelection::select(const std::span<const PointCloudNodeId> roots,
                 }
                 visibleChildren.push_back(childState);
             }
-            std::ranges::sort(
+            std::ranges::stable_sort(
                 visibleChildren,
                 [&parameters](const RenderSelectionNodeState &left,
                               const RenderSelectionNodeState &right) {
                     return projectedErrorPixels(left.node, parameters) >
                            projectedErrorPixels(right.node, parameters);
                 });
-            const std::uint64_t estimatedChildPoints = std::accumulate(
-                visibleChildren.begin(),
-                visibleChildren.end(),
-                std::uint64_t{0},
-                [](const std::uint64_t total,
-                   const RenderSelectionNodeState &child) {
-                    const std::uint64_t points =
-                        child.resident
-                            ? child.residentPointCount
-                            : std::max(child.residentPointCount,
-                                       child.node.estimatedPointCount);
-                    return saturatingAdd(total, points);
-                });
-            if (estimatedChildPoints <= remaining) {
-                for (const RenderSelectionNodeState &child : visibleChildren) {
-                    static_cast<void>(requestNode(child));
-                }
+            for (const RenderSelectionNodeState &child : visibleChildren) {
+                static_cast<void>(requestNode(child));
             }
 
             const bool childrenReady = std::ranges::all_of(
                 visibleChildren, [](const RenderSelectionNodeState &child) {
                     return child.resident;
                 });
-            const std::uint64_t childPoints =
-                std::accumulate(visibleChildren.begin(),
-                                visibleChildren.end(),
-                                std::uint64_t{0},
-                                [](const std::uint64_t total,
-                                   const RenderSelectionNodeState &child) {
-                                    return total + child.residentPointCount;
-                                });
+            const std::uint64_t childPoints = std::accumulate(
+                visibleChildren.begin(),
+                visibleChildren.end(),
+                std::uint64_t{0},
+                [](const std::uint64_t total,
+                   const RenderSelectionNodeState &child) {
+                    return saturatingAdd(total, child.residentPointCount);
+                });
             if (!visibleChildren.empty() && childrenReady &&
-                childPoints <= remaining) {
-                const std::size_t drawStart = result.drawNodes.size();
-                const std::uint64_t pointsStart = result.selectedPoints;
-                const std::uint64_t remainingStart = remaining;
-                bool complete = true;
-                for (const RenderSelectionNodeState &child : visibleChildren) {
-                    if (!self(self, child.node.id)) {
-                        complete = false;
-                        break;
-                    }
+                childPoints <= allowance) {
+                std::array<std::uint64_t, 9> suffixPoints{};
+                for (std::size_t index = visibleChildren.size(); index > 0;
+                     --index) {
+                    suffixPoints[index - 1U] = saturatingAdd(
+                        suffixPoints[index],
+                        visibleChildren[index - 1U].residentPointCount);
                 }
-                if (complete) {
-                    return true;
+                std::uint64_t childRemaining = allowance;
+                for (std::size_t index = 0; index < visibleChildren.size();
+                     ++index) {
+                    const std::uint64_t reservedForLater =
+                        suffixPoints[index + 1U];
+                    const std::uint64_t childAllowance =
+                        childRemaining - reservedForLater;
+                    const std::uint64_t selected =
+                        self(self, visibleChildren[index], childAllowance);
+                    childRemaining -= selected;
                 }
-                result.drawNodes.resize(drawStart);
-                result.selectedPoints = pointsStart;
-                remaining = remainingStart;
+                return allowance - childRemaining;
             }
         }
 
-        result.drawNodes.push_back(id);
-        const std::uint64_t selected =
-            std::min(state.residentPointCount, remaining);
-        result.selectedPoints += selected;
-        remaining -= selected;
-        return true;
+        result.drawNodes.push_back(state.node.id);
+        result.selectedPoints =
+            saturatingAdd(result.selectedPoints, state.residentPointCount);
+        return state.residentPointCount;
     };
 
     for (const PointCloudNodeId root : roots) {
-        static_cast<void>(selectNode(selectNode, root));
+        if (remaining == 0) {
+            break;
+        }
+        const RenderSelectionNodeState state = lookup(root);
+        if (!state.node.bounds.valid() || !visible(state.node.bounds)) {
+            continue;
+        }
+        const std::uint64_t selected =
+            selectVisibleNode(selectVisibleNode, state, remaining);
+        remaining -= selected;
     }
     refinedLastFrame_ = std::move(nextRefined);
     return result;
