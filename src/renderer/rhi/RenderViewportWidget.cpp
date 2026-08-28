@@ -608,7 +608,9 @@ void RenderViewportWidget::setContinuousMetricsEnabled(const bool enabled)
     }
     continuousMetricsEnabled_ = enabled;
     telemetry_.makeNextSnapshotDue(RenderTelemetryAccumulator::Clock::now());
-    requestRender();
+    if (enabled) {
+        requestRender();
+    }
 }
 
 bool RenderViewportWidget::startQualificationCameraPath()
@@ -1330,6 +1332,7 @@ void RenderViewportWidget::render(QRhiCommandBuffer *commandBuffer)
     std::uint64_t culledBlocks = 0;
     std::uint64_t visibleLayerCount = 0;
     std::uint64_t coveredLayerCount = 0;
+    std::uint64_t rootOnlyLayerCount = 0;
     std::uint64_t requestedPoints = 0;
     std::uint64_t vectorLayersDrawn = 0;
     std::uint64_t vectorDrawCalls = 0;
@@ -1436,6 +1439,7 @@ void RenderViewportWidget::render(QRhiCommandBuffer *commandBuffer)
             culledBlocks = plan->culledBlocks;
             visibleLayerCount = plan->visibleLayerCount;
             coveredLayerCount = plan->coveredLayerCount;
+            rootOnlyLayerCount = plan->rootOnlyLayerCount;
             planNeedsAnotherFrame = plan->requiresContinuation;
             std::unordered_map<PointCloudLayerId, std::string> currentErrors;
             currentErrors.reserve(plan->layerErrors.size());
@@ -1684,6 +1688,7 @@ void RenderViewportWidget::render(QRhiCommandBuffer *commandBuffer)
         .culledBlocks = culledBlocks,
         .visibleLayerCount = visibleLayerCount,
         .coveredLayerCount = coveredLayerCount,
+        .rootOnlyLayerCount = rootOnlyLayerCount,
         .framePlanReused = framePlanReused,
         .includedUploads = uploaded > 0,
         .includedPick = frameStartedWithPick || pointPicker_.inFlight(),

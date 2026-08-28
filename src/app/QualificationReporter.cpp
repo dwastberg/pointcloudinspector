@@ -1,5 +1,6 @@
 #include "app/QualificationReporter.h"
 
+#include "app/QualificationCriteria.h"
 #include "app/SceneSession.h"
 #include "foundation/CheckedArithmetic.h"
 #include "platform/QtPath.h"
@@ -202,6 +203,8 @@ QualificationReporter::write(const QString &status,
              static_cast<qint64>(frame.visibleLayerCount)},
             {QStringLiteral("covered_sources"),
              static_cast<qint64>(frame.coveredLayerCount)},
+            {QStringLiteral("root_only_sources"),
+             static_cast<qint64>(frame.rootOnlyLayerCount)},
             {QStringLiteral("visible_blocks"),
              static_cast<qint64>(frame.visibleBlocks)},
             {QStringLiteral("culled_blocks"),
@@ -214,6 +217,8 @@ QualificationReporter::write(const QString &status,
              static_cast<qint64>(frame.decodeRequestsCompleted)},
             {QStringLiteral("uploaded_point_bytes"),
              static_cast<qint64>(frame.uploadedPointBytes)},
+            {QStringLiteral("pending_upload_bytes"),
+             static_cast<qint64>(frame.pendingUploadBytes)},
             {QStringLiteral("protected_gpu_point_bytes"),
              static_cast<qint64>(frame.protectedGpuPointBytes)},
             {QStringLiteral("gpu_resident_bytes"),
@@ -236,6 +241,29 @@ QualificationReporter::write(const QString &status,
         });
     }
 
+    const QualificationEvaluation qualification =
+        evaluateQualification(frameMetrics_);
+    QJsonArray assertions;
+    for (const QualificationAssertion &assertion :
+         qualification.assertions) {
+        assertions.append(QJsonObject{
+            {QStringLiteral("id"), assertion.id},
+            {QStringLiteral("status"),
+             !assertion.evaluated
+                 ? QStringLiteral("not_evaluated")
+                 : assertion.passed ? QStringLiteral("passed")
+                                    : QStringLiteral("failed")},
+            {QStringLiteral("observed_min"), assertion.observedMinimum},
+            {QStringLiteral("observed_max"), assertion.observedMaximum},
+            {QStringLiteral("required_min"), assertion.requiredMinimum},
+            {QStringLiteral("required_max"), assertion.requiredMaximum},
+            {QStringLiteral("sample_count"),
+             static_cast<qint64>(assertion.sampleCount)},
+            {QStringLiteral("unit"), assertion.unit},
+            {QStringLiteral("details"), assertion.details},
+        });
+    }
+
     const RenderMetrics metrics = lastRenderMetrics_.value_or(RenderMetrics{});
     const PointCloudLoadControllerMetrics loadMetrics =
         session.pointLoadMetrics();
@@ -246,6 +274,8 @@ QualificationReporter::write(const QString &status,
         {QStringLiteral("timestamp_utc"),
          QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs)},
         {QStringLiteral("status"), status},
+        {QStringLiteral("qualification_passed"), qualification.passed},
+        {QStringLiteral("qualification_assertions"), assertions},
         {QStringLiteral("os"), QSysInfo::prettyProductName()},
         {QStringLiteral("cpu_architecture"),
          QSysInfo::currentCpuArchitecture()},
@@ -370,6 +400,7 @@ QualificationReporter::write(const QString &status,
     QualificationWriteResult result{
         .written = false,
         .exitRequested = exitAfterWrite_,
+        .qualificationPassed = qualification.passed,
         .filename = pathToQString(outputPath_),
         .error = {},
     };

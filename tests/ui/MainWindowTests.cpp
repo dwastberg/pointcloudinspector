@@ -3399,7 +3399,7 @@ TEST_CASE("main window records the deterministic qualification replay",
         .sampledFrameMilliseconds = 8.0,
         .qualificationPhase = QStringLiteral("warmup"),
         .qualificationFrameIndex = 0,
-        .qualificationFrameCount = 360,
+        .qualificationFrameCount = 3,
         .qualificationFrame = true,
         .submittedFrameCount = 2,
     });
@@ -3407,8 +3407,8 @@ TEST_CASE("main window records the deterministic qualification replay",
         .timingSource = QStringLiteral("GPU"),
         .sampledFrameMilliseconds = 12.0,
         .qualificationPhase = QStringLiteral("interacting"),
-        .qualificationFrameIndex = 30,
-        .qualificationFrameCount = 360,
+        .qualificationFrameIndex = 1,
+        .qualificationFrameCount = 3,
         .qualificationFrame = true,
         .submittedFrameCount = 3,
     });
@@ -3416,8 +3416,8 @@ TEST_CASE("main window records the deterministic qualification replay",
         .timingSource = QStringLiteral("GPU"),
         .sampledFrameMilliseconds = 6.0,
         .qualificationPhase = QStringLiteral("dwell"),
-        .qualificationFrameIndex = 359,
-        .qualificationFrameCount = 360,
+        .qualificationFrameIndex = 2,
+        .qualificationFrameCount = 3,
         .qualificationFrame = true,
         .qualificationFinalFrame = true,
         .submittedFrameCount = 4,
@@ -3439,13 +3439,14 @@ TEST_CASE("main window records the deterministic qualification replay",
     CHECK(frames[1]
               .toObject()
               .value(QStringLiteral("path_frame"))
-              .toInteger() == 30);
+              .toInteger() == 1);
     CHECK(frames[2]
               .toObject()
               .value(QStringLiteral("phase"))
               .toString() == QStringLiteral("dwell"));
     CHECK(json.value(QStringLiteral("frame_ms_p95")).toDouble() ==
           Catch::Approx(8.0));
+    CHECK(json.value(QStringLiteral("qualification_passed")).toBool());
 }
 
 #endif

@@ -57,6 +57,7 @@ void RenderTelemetryAccumulator::recordFrame(
     latest_.selection.culledBlocks = sample.culledBlocks;
     latest_.selection.visibleLayerCount = sample.visibleLayerCount;
     latest_.selection.coveredLayerCount = sample.coveredLayerCount;
+    latest_.selection.rootOnlyLayerCount = sample.rootOnlyLayerCount;
     latest_.selection.framePlanReused = sample.framePlanReused;
     latest_.upload.pendingUploadBytes = sample.pendingUploadBytes;
 
@@ -277,6 +278,7 @@ RenderMetrics projectRenderMetrics(const RenderTelemetrySnapshot &telemetry)
         .reusedPersistentSources = telemetry.decode.reusedPersistentSources,
         .visibleLayerCount = telemetry.selection.visibleLayerCount,
         .coveredLayerCount = telemetry.selection.coveredLayerCount,
+        .rootOnlyLayerCount = telemetry.selection.rootOnlyLayerCount,
         .processResidentBytes = telemetry.residency.processResidentBytes,
         .peakProcessResidentBytes =
             telemetry.residency.peakProcessResidentBytes,

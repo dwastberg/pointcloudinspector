@@ -16,6 +16,7 @@ class SceneSession;
 struct QualificationWriteResult {
     bool written = false;
     bool exitRequested = false;
+    bool qualificationPassed = true;
     QString filename;
     QString error;
 };

@@ -133,6 +133,7 @@ private:
 #ifdef PCINSPECTOR_ENABLE_DIAGNOSTIC_UI
     bool profileLoading_ = false;
     bool qualificationReplayStarted_ = false;
+    bool qualificationReplayFinished_ = false;
     QualificationReporter qualificationReporter_;
 #endif
 };

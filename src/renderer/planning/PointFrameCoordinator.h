@@ -81,6 +81,7 @@ struct PointFramePlan {
     std::uint64_t culledBlocks = 0;
     std::uint64_t visibleLayerCount = 0;
     std::uint64_t coveredLayerCount = 0;
+    std::uint64_t rootOnlyLayerCount = 0;
     bool requiresContinuation = false;
 };
 

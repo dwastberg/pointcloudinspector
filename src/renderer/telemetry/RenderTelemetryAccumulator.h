@@ -46,6 +46,7 @@ struct RenderSelectionTelemetry {
     std::uint64_t culledBlocks = 0;
     std::uint64_t visibleLayerCount = 0;
     std::uint64_t coveredLayerCount = 0;
+    std::uint64_t rootOnlyLayerCount = 0;
     bool framePlanReused = false;
     double lodRefinePixelError = 3.0;
 };
@@ -158,6 +159,7 @@ struct RenderTelemetryFrameSample {
     std::uint64_t culledBlocks = 0;
     std::uint64_t visibleLayerCount = 0;
     std::uint64_t coveredLayerCount = 0;
+    std::uint64_t rootOnlyLayerCount = 0;
     bool framePlanReused = false;
     bool includedUploads = false;
     bool includedPick = false;

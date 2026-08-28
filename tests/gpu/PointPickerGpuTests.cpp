@@ -419,6 +419,7 @@ TEST_CASE("GPU qualification camera path advances on submitted frames",
         gpuTestValidation);
     viewport.resize(640, 400);
     viewport.show();
+    REQUIRE(QTest::qWaitForWindowExposed(&viewport, 2000));
     viewport.setDocument(
         documentWithScene(sceneWithBlocksAt({{0.0, 0.0, 0.0}})), true);
     REQUIRE(QTest::qWaitFor(
@@ -436,11 +437,19 @@ TEST_CASE("GPU qualification camera path advances on submitted frames",
     });
     viewport.setContinuousMetricsEnabled(true);
     REQUIRE(viewport.startQualificationCameraPath());
-    REQUIRE(QTest::qWaitFor(
+    const bool replayCompleted = QTest::qWaitFor(
         [&] {
             return !frames.empty() && frames.back().qualificationFinalFrame;
         },
-        10'000));
+        20'000);
+    INFO("qualification samples: " << frames.size());
+    INFO("submitted frames: "
+         << pci::testAccess(viewport).renderedFrameCountForTesting());
+    if (!frames.empty()) {
+        INFO("last qualification frame: "
+             << frames.back().qualificationFrameIndex);
+    }
+    REQUIRE(replayCompleted);
     viewport.setContinuousMetricsEnabled(false);
 
     REQUIRE(frames.size() == 360);

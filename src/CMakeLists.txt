@@ -437,6 +437,8 @@ add_library(pcinspector_app_ui STATIC
         app/PerformanceSettingsStore.h
         app/QualificationReporter.cpp
         app/QualificationReporter.h
+        app/QualificationCriteria.cpp
+        app/QualificationCriteria.h
         app/RasterColorizeUiState.cpp
         app/RasterColorizeUiState.h
         app/RenderDiagnosticsFormatter.cpp

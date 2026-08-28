@@ -27,6 +27,7 @@ TEST_CASE("render telemetry accumulates and publishes deterministic windows",
         .selectedPoints = 700,
         .submittedPoints = 600,
         .drawCalls = 6,
+        .rootOnlyLayerCount = 2,
         .uploadedPointBytes = 100,
         .protectedGpuPointBytes = 1'600,
         .uploadOperations = 2,
@@ -45,6 +46,7 @@ TEST_CASE("render telemetry accumulates and publishes deterministic windows",
         .selectedPoints = 750,
         .submittedPoints = 650,
         .drawCalls = 7,
+        .rootOnlyLayerCount = 1,
         .uploadedPointBytes = 200,
         .protectedGpuPointBytes = 3'200,
         .uploadOperations = 3,
@@ -62,6 +64,7 @@ TEST_CASE("render telemetry accumulates and publishes deterministic windows",
     CHECK(snapshot->frame.sceneSnapshotMilliseconds == 2.0);
     CHECK(snapshot->frame.commandRecordingMilliseconds == 5.0);
     CHECK(snapshot->selection.submittedPoints == 650);
+    CHECK(snapshot->selection.rootOnlyLayerCount == 1);
     CHECK(snapshot->selection.sourcePoints == 1000);
     CHECK(snapshot->upload.uploadedPointBytes == 300);
     CHECK(snapshot->upload.protectedGpuPointBytes == 3'200);
@@ -108,6 +111,7 @@ TEST_CASE("render telemetry projects grouped state to the stable API",
     grouped.frame.outputWidth = 1920;
     grouped.frame.outputHeight = 1080;
     grouped.selection.requestedPoints = 100;
+    grouped.selection.rootOnlyLayerCount = 3;
     grouped.upload.uploadedPointBytes = 200;
     grouped.upload.protectedGpuPointBytes = 250;
     grouped.residency.gpuPointBytes = 300;
@@ -122,6 +126,7 @@ TEST_CASE("render telemetry projects grouped state to the stable API",
     CHECK(projected.outputWidth == 1920);
     CHECK(projected.outputHeight == 1080);
     CHECK(projected.requestedPoints == 100);
+    CHECK(projected.rootOnlyLayerCount == 3);
     CHECK(projected.uploadedPointBytes == 200);
     CHECK(projected.protectedGpuPointBytes == 250);
     CHECK(projected.gpuPointBytes == 300);

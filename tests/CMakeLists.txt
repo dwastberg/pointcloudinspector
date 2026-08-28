@@ -387,6 +387,7 @@ pci_add_catch_test_target(pcinspector_ui_tests
         ui/VectorColorButtonTests.cpp
         ui/VectorSublayerDialogTests.cpp
         ui/MainWindowTests.cpp
+        ui/QualificationCriteriaTests.cpp
         ui/LayerDockCharacterizationTests.cpp
         LIBRARIES
         pcinspector::app_ui

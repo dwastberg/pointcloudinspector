@@ -332,6 +332,10 @@ PointFramePlan PointFrameCoordinator::buildPlan(const PointFrameInput &input)
                  .orthographic = frame.orthographic,
                  .pointBudget = layerRemaining,
                  .requestPointBudget = hierarchyRequestPointBudget});
+            if (selection.drawNodes.size() == 1 &&
+                selection.drawNodes.front() == rootPointCloudNode) {
+                ++result.rootOnlyLayerCount;
+            }
             scene->requestNodes(selection.requestedNodes);
             result.nodeRequests.push_back({
                 .layerId = layer.layer.id,

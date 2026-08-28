@@ -787,7 +787,8 @@ MainWindow::MainWindow(
                 if (!session_->loading() &&
                     qualificationReporter_.configured()) {
                     QTimer::singleShot(0, this, [this, status] {
-                        if (qualificationReplayStarted_) {
+                        if (qualificationReplayStarted_ ||
+                            qualificationReplayFinished_) {
                             return;
                         }
                         viewport_->setContinuousMetricsEnabled(true);
@@ -797,6 +798,7 @@ MainWindow::MainWindow(
                             return;
                         }
                         viewport_->setContinuousMetricsEnabled(false);
+                        qualificationReplayFinished_ = true;
                         writeQualificationReport(status);
                     });
                 }
@@ -1152,6 +1154,7 @@ void MainWindow::configureQualificationReport(std::filesystem::path outputPath,
 {
     qualificationReporter_.configure(std::move(outputPath), exitAfterWrite);
     qualificationReplayStarted_ = false;
+    qualificationReplayFinished_ = false;
 }
 #endif
 
@@ -1335,6 +1338,7 @@ void MainWindow::showMetrics(const RenderMetrics &metrics)
     qualificationReporter_.record(metrics);
     if (qualificationReplayStarted_ && metrics.qualificationFinalFrame) {
         qualificationReplayStarted_ = false;
+        qualificationReplayFinished_ = true;
         viewport_->setContinuousMetricsEnabled(false);
         QTimer::singleShot(0, this, [this] {
             writeQualificationReport(
@@ -1384,7 +1388,9 @@ void MainWindow::writeQualificationReport(const QString &status)
     qInfo().noquote() << QStringLiteral("Release H qualification report: %1")
                              .arg(result.filename);
     if (result.exitRequested) {
-        QTimer::singleShot(0, qApp, &QCoreApplication::quit);
+        QTimer::singleShot(0, qApp, [passed = result.qualificationPassed] {
+            QCoreApplication::exit(passed ? 0 : 3);
+        });
     }
 }
 #endif

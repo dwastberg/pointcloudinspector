@@ -175,6 +175,24 @@ TEST_CASE("point frame coordinator isolates a failed hierarchy layer",
         hierarchyRootPayload(),
         1024 * 1024);
     failedScene->markLoadingComplete();
+    const pci::PointCloudSceneSnapshot coarseSnapshot = failedScene->snapshot();
+    pci::PointFrameCoordinator coarseCoordinator;
+    const pci::PointFrameResult coarseFrame = coarseCoordinator.plan({
+        .layers = {{.layer = {.id = pci::PointCloudLayerId{1},
+                              .scene = failedScene},
+                    .snapshot = &coarseSnapshot}},
+        .camera = visibleCamera(),
+        .framePointBudget = 100,
+        .gpuByteBudget = 100 * sizeof(pci::GpuPoint),
+        .resident =
+            [](const pci::PointFrameBlockKey &) {
+                return true;
+            },
+    });
+    REQUIRE(coarseFrame.plan);
+    CHECK(coarseFrame.plan->coveredLayerCount == 1);
+    CHECK(coarseFrame.plan->rootOnlyLayerCount == 1);
+
     failedScene->requestNodes(
         std::array{pci::childNodeId(pci::rootPointCloudNode, 0)});
     const auto deadline =
