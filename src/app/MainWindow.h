@@ -132,6 +132,7 @@ private:
     GdalRuntimeInfo gdalRuntimeInfo_;
 #ifdef PCINSPECTOR_ENABLE_DIAGNOSTIC_UI
     bool profileLoading_ = false;
+    bool qualificationReplayStarted_ = false;
     QualificationReporter qualificationReporter_;
 #endif
 };

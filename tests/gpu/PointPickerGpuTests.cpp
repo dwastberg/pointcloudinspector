@@ -409,6 +409,56 @@ bool waitForStableFrameCount(pci::RenderViewportWidget &viewport)
     return false;
 }
 
+TEST_CASE("GPU qualification camera path advances on submitted frames",
+          "[gpu][qualification][camera-path]")
+{
+    pci::RenderViewportWidget viewport(
+        false,
+        pci::UploadScheduler::defaultResidencyByteBudget,
+        gpuTestGraphicsApi(),
+        gpuTestValidation);
+    viewport.resize(640, 400);
+    viewport.show();
+    viewport.setDocument(
+        documentWithScene(sceneWithBlocksAt({{0.0, 0.0, 0.0}})), true);
+    REQUIRE(QTest::qWaitFor(
+        [&] {
+            return pci::testAccess(viewport).renderedFrameCountForTesting() > 0;
+        },
+        5000));
+    REQUIRE(waitForStableFrameCount(viewport));
+
+    std::vector<pci::RenderMetrics> frames;
+    viewport.setMetricsCallback([&frames](const pci::RenderMetrics &metrics) {
+        if (metrics.qualificationFrame) {
+            frames.push_back(metrics);
+        }
+    });
+    viewport.setContinuousMetricsEnabled(true);
+    REQUIRE(viewport.startQualificationCameraPath());
+    REQUIRE(QTest::qWaitFor(
+        [&] {
+            return !frames.empty() && frames.back().qualificationFinalFrame;
+        },
+        10'000));
+    viewport.setContinuousMetricsEnabled(false);
+
+    REQUIRE(frames.size() == 360);
+    for (std::size_t index = 0; index < frames.size(); ++index) {
+        CHECK(frames[index].qualificationFrameIndex == index);
+        CHECK(frames[index].qualificationFrameCount == frames.size());
+    }
+    CHECK(std::ranges::count(frames,
+                             QStringLiteral("warmup"),
+                             &pci::RenderMetrics::qualificationPhase) == 30);
+    CHECK(std::ranges::count(frames,
+                             QStringLiteral("interacting"),
+                             &pci::RenderMetrics::qualificationPhase) == 210);
+    CHECK(std::ranges::count(frames,
+                             QStringLiteral("dwell"),
+                             &pci::RenderMetrics::qualificationPhase) == 120);
+}
+
 std::uint64_t brightPixelCount(const QImage &image)
 {
     std::uint64_t result = 0;

@@ -611,6 +611,30 @@ void RenderViewportWidget::setContinuousMetricsEnabled(const bool enabled)
     requestRender();
 }
 
+bool RenderViewportWidget::startQualificationCameraPath()
+{
+    const SceneDocumentSnapshotPtr &document = sceneSnapshotCache_.document();
+    if (!document || !document->visibleBounds ||
+        !document->visibleBounds->valid()) {
+        return false;
+    }
+    qualificationCameraPath_.emplace(*document->visibleBounds);
+    orthographic_ = false;
+    camera_.setOrthographic(false);
+    applyQualificationCameraFrame();
+    requestRender();
+    return true;
+}
+
+void RenderViewportWidget::applyQualificationCameraFrame()
+{
+    if (!qualificationCameraPath_) {
+        return;
+    }
+    const QualificationCameraFrame frame = qualificationCameraPath_->current();
+    camera_.setView(frame.pose.position, frame.pose.pivot);
+}
+
 void RenderViewportWidget::setFailureCallback(FailureCallback callback)
 {
     failureCallback_ = std::move(callback);
@@ -1680,7 +1704,9 @@ void RenderViewportWidget::render(QRhiCommandBuffer *commandBuffer)
         .pickReadback = pointPicker_.inFlight(),
         .pendingUploads = uploadsNeedAnotherFrame || planNeedsAnotherFrame ||
                           rasterNeedsAnotherFrame,
-        .sceneInvalidation = sceneInvalidationPending_,
+        .sceneInvalidation = sceneInvalidationPending_ ||
+                             (qualificationCameraPath_ &&
+                              !qualificationCameraPath_->current().finalFrame),
         .pendingSmokeFrames = smokeTest_ && telemetry_.frameCount() < 3,
     });
     // Event-driven rendering may not submit another frame for a long time.
@@ -1688,6 +1714,14 @@ void RenderViewportWidget::render(QRhiCommandBuffer *commandBuffer)
     // diagnostics capture the final selected/submitted counts and frame total.
     publishMetrics(continuousMetricsEnabled_ || !continueRendering ||
                    telemetry_.frameCount() == 1);
+
+    if (qualificationCameraPath_) {
+        if (qualificationCameraPath_->advance()) {
+            applyQualificationCameraFrame();
+        } else {
+            qualificationCameraPath_.reset();
+        }
+    }
 
     if (smokeTest_ && telemetry_.frameCount() >= 3) {
         QTimer::singleShot(0, QCoreApplication::instance(), [] {
@@ -2422,7 +2456,17 @@ void RenderViewportWidget::publishMetrics(const bool force)
             .decodedResidentPoints = decodedResidentPoints,
             .decodedPointBytes = decodedPointBytes,
         };
-        const RenderMetrics metrics = projectRenderMetrics(*telemetry);
+        RenderMetrics metrics = projectRenderMetrics(*telemetry);
+        if (qualificationCameraPath_) {
+            const QualificationCameraFrame frame =
+                qualificationCameraPath_->current();
+            metrics.qualificationPhase = QString::fromLatin1(
+                qualificationFramePhaseName(frame.phase));
+            metrics.qualificationFrameIndex = frame.frameIndex;
+            metrics.qualificationFrameCount = frame.totalFrames;
+            metrics.qualificationFrame = true;
+            metrics.qualificationFinalFrame = frame.finalFrame;
+        }
 #ifdef PCINSPECTOR_ENABLE_DIAGNOSTIC_UI
         if (profileRendering_) {
             qInfo().noquote()

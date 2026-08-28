@@ -743,6 +743,32 @@ public:
         metricsCallback_ = std::move(callback);
     }
 
+    void setContinuousMetricsEnabled(const bool enabled) override
+    {
+        continuousMetricsEnabled_ = enabled;
+    }
+
+    bool startQualificationCameraPath() override
+    {
+        ++qualificationPathStartCount_;
+        return qualificationPathSupported_;
+    }
+
+    void setQualificationPathSupported(const bool supported)
+    {
+        qualificationPathSupported_ = supported;
+    }
+
+    [[nodiscard]] bool continuousMetricsEnabled() const noexcept
+    {
+        return continuousMetricsEnabled_;
+    }
+
+    [[nodiscard]] int qualificationPathStartCount() const noexcept
+    {
+        return qualificationPathStartCount_;
+    }
+
     void setFailureCallback(FailureCallback callback) override
     {
         failureCallback_ = std::move(callback);
@@ -866,8 +892,11 @@ private:
     int gpuByteBudgetSetCount_ = 0;
     int frameVisibleLayersCount_ = 0;
     int frameVisibleLayersTopDownCount_ = 0;
+    int qualificationPathStartCount_ = 0;
     bool orthographic_ = false;
     bool lastDocumentWasFramed_ = false;
+    bool continuousMetricsEnabled_ = false;
+    bool qualificationPathSupported_ = false;
     pci::ViewportSettings viewportSettings_;
     std::uint64_t gpuByteBudget_ = std::uint64_t{512} * 1024 * 1024;
     int pointSizePixels_ = pci::defaultPointSizePixels;
@@ -3330,6 +3359,93 @@ TEST_CASE("main window archives native Release H metrics",
     // so a "looks wrong" bug can be triaged without the file.
     CHECK(raster.contains(QStringLiteral("insufficient_overviews")));
     CHECK(raster.contains(QStringLiteral("driver")));
+}
+
+TEST_CASE("main window records the deterministic qualification replay",
+          "[ui][mainwindow][metrics][qualification][camera-path]")
+{
+    QTemporaryDir directory;
+    REQUIRE(directory.isValid());
+    auto viewport = std::make_unique<FakeViewport>();
+    FakeViewport *viewportPointer = viewport.get();
+    viewportPointer->setQualificationPathSupported(true);
+    auto services = makeTestImportServices(std::make_shared<ImmediateLoader>());
+    pci::MainWindow window(std::move(viewport), std::move(services), 100);
+    const std::filesystem::path report =
+        pci::qStringToPath(directory.path()) / "camera-path.json";
+    window.configureQualificationReport(report);
+    window.show();
+
+    window.loadPointCloud("qualified-path.las");
+    REQUIRE(waitFor([&] {
+        return viewportPointer->document() &&
+               viewportPointer->document()->layerCount() == 1;
+    }));
+    // This load-time sample must be discarded when replay begins.
+    viewportPointer->emitMetrics({
+        .frameMilliseconds = 99.0,
+        .submittedFrameCount = 1,
+    });
+    viewportPointer->emitDisplayReady(
+        viewportPointer->document()->pointLayers().front().id);
+    REQUIRE(waitFor([&] {
+        return viewportPointer->qualificationPathStartCount() == 1;
+    }));
+    CHECK(viewportPointer->continuousMetricsEnabled());
+    CHECK_FALSE(std::filesystem::exists(report));
+
+    viewportPointer->emitMetrics({
+        .timingSource = QStringLiteral("GPU"),
+        .sampledFrameMilliseconds = 8.0,
+        .qualificationPhase = QStringLiteral("warmup"),
+        .qualificationFrameIndex = 0,
+        .qualificationFrameCount = 360,
+        .qualificationFrame = true,
+        .submittedFrameCount = 2,
+    });
+    viewportPointer->emitMetrics({
+        .timingSource = QStringLiteral("GPU"),
+        .sampledFrameMilliseconds = 12.0,
+        .qualificationPhase = QStringLiteral("interacting"),
+        .qualificationFrameIndex = 30,
+        .qualificationFrameCount = 360,
+        .qualificationFrame = true,
+        .submittedFrameCount = 3,
+    });
+    viewportPointer->emitMetrics({
+        .timingSource = QStringLiteral("GPU"),
+        .sampledFrameMilliseconds = 6.0,
+        .qualificationPhase = QStringLiteral("dwell"),
+        .qualificationFrameIndex = 359,
+        .qualificationFrameCount = 360,
+        .qualificationFrame = true,
+        .qualificationFinalFrame = true,
+        .submittedFrameCount = 4,
+    });
+
+    REQUIRE(waitFor([&] {
+        return std::filesystem::exists(report);
+    }));
+    CHECK_FALSE(viewportPointer->continuousMetricsEnabled());
+    QFile input(pci::pathToQString(report));
+    REQUIRE(input.open(QIODevice::ReadOnly));
+    const QJsonObject json = QJsonDocument::fromJson(input.readAll()).object();
+    const QJsonArray frames = json.value(QStringLiteral("frames")).toArray();
+    REQUIRE(frames.size() == 3);
+    CHECK(frames[0]
+              .toObject()
+              .value(QStringLiteral("phase"))
+              .toString() == QStringLiteral("warmup"));
+    CHECK(frames[1]
+              .toObject()
+              .value(QStringLiteral("path_frame"))
+              .toInteger() == 30);
+    CHECK(frames[2]
+              .toObject()
+              .value(QStringLiteral("phase"))
+              .toString() == QStringLiteral("dwell"));
+    CHECK(json.value(QStringLiteral("frame_ms_p95")).toDouble() ==
+          Catch::Approx(8.0));
 }
 
 #endif

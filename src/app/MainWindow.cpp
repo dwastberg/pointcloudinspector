@@ -787,6 +787,16 @@ MainWindow::MainWindow(
                 if (!session_->loading() &&
                     qualificationReporter_.configured()) {
                     QTimer::singleShot(0, this, [this, status] {
+                        if (qualificationReplayStarted_) {
+                            return;
+                        }
+                        viewport_->setContinuousMetricsEnabled(true);
+                        if (viewport_->startQualificationCameraPath()) {
+                            qualificationReporter_.beginReplay();
+                            qualificationReplayStarted_ = true;
+                            return;
+                        }
+                        viewport_->setContinuousMetricsEnabled(false);
                         writeQualificationReport(status);
                     });
                 }
@@ -1141,7 +1151,7 @@ void MainWindow::configureQualificationReport(std::filesystem::path outputPath,
                                               const bool exitAfterWrite)
 {
     qualificationReporter_.configure(std::move(outputPath), exitAfterWrite);
-    viewport_->setContinuousMetricsEnabled(true);
+    qualificationReplayStarted_ = false;
 }
 #endif
 
@@ -1323,6 +1333,14 @@ void MainWindow::setLoadingProgress(const LoadingProgressState &state)
 void MainWindow::showMetrics(const RenderMetrics &metrics)
 {
     qualificationReporter_.record(metrics);
+    if (qualificationReplayStarted_ && metrics.qualificationFinalFrame) {
+        qualificationReplayStarted_ = false;
+        viewport_->setContinuousMetricsEnabled(false);
+        QTimer::singleShot(0, this, [this] {
+            writeQualificationReport(
+                QStringLiteral("Qualification camera path complete"));
+        });
+    }
     const PointCloudLoadControllerMetrics loadMetrics =
         session_->pointLoadMetrics();
     if (diagnosticsDock_) {

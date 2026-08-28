@@ -2,6 +2,7 @@
 
 #include "navigation/NavigationCamera.h"
 #include "navigation/NavigationInputState.h"
+#include "navigation/QualificationCameraPath.h"
 #include "renderer/RenderViewport.h"
 #include "renderer/planning/AdaptivePointBudget.h"
 #include "renderer/planning/MeasurementController.h"
@@ -84,6 +85,7 @@ public:
     void setActiveTool(ViewportTool tool) override;
     void setMetricsCallback(MetricsCallback callback) override;
     void setContinuousMetricsEnabled(bool enabled) override;
+    [[nodiscard]] bool startQualificationCameraPath() override;
     void setFailureCallback(FailureCallback callback) override;
     void setLoadProgressCallback(LoadProgressCallback callback) override;
     [[nodiscard]] VectorOverlayCapability
@@ -123,6 +125,7 @@ private:
 
     void refreshDocumentState(const std::vector<LayerFrameState> &layers);
     void queueSceneInvalidation();
+    void applyQualificationCameraFrame();
     void frameBounds(const std::optional<Bounds3d> &bounds,
                      double distanceMultiplier = 2.0);
     [[nodiscard]] std::uint64_t
@@ -266,6 +269,7 @@ private:
     bool sceneInvalidationPending_ = false;
     bool frameTimingContinuous_ = false;
     bool continuousMetricsEnabled_ = false;
+    std::optional<QualificationCameraPath> qualificationCameraPath_;
     std::chrono::steady_clock::time_point previousCpuFrame_;
     QElapsedTimer navigationTimer_;
 };

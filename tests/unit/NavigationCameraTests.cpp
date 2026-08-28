@@ -38,6 +38,18 @@ TEST_CASE("navigation translation moves the pivot with the camera",
     CHECK(camera.pivot().y == Catch::Approx(5.0));
 }
 
+TEST_CASE("navigation camera accepts deterministic replay poses",
+          "[unit][navigation]")
+{
+    pci::NavigationCamera camera;
+    camera.setView({10.0, -20.0, 15.0}, {2.0, 3.0, 4.0});
+
+    CHECK(camera.position() == pci::Vec3d{10.0, -20.0, 15.0});
+    CHECK(camera.pivot() == pci::Vec3d{2.0, 3.0, 4.0});
+    CHECK(camera.forward() ==
+          pci::normalized(camera.pivot() - camera.position()));
+}
+
 TEST_CASE("navigation dolly has no arbitrary minimum distance",
           "[unit][navigation]")
 {

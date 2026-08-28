@@ -35,6 +35,8 @@ public:
     [[nodiscard]] bool isOrthographic() const noexcept;
     [[nodiscard]] double orthographicScale() const noexcept;
     void setPivot(Vec3d pivot) noexcept;
+    // Sets an explicit replayable view without accumulating drag deltas.
+    void setView(Vec3d position, Vec3d pivot) noexcept;
     void setNavigationReference(Vec3d point) noexcept;
     void orbitFromDrag(double horizontalPixels, double verticalPixels) noexcept;
     void panFromDrag(double horizontalPixels,

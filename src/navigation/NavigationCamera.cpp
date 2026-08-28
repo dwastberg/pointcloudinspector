@@ -143,6 +143,24 @@ void NavigationCamera::setPivot(const Vec3d pivot) noexcept
     markChanged();
 }
 
+void NavigationCamera::setView(const Vec3d position,
+                               const Vec3d pivot) noexcept
+{
+    if (!isFinite(position) || !isFinite(pivot)) {
+        return;
+    }
+    const Vec3d forward = normalized(pivot - position);
+    if (length(forward) == 0.0 ||
+        length(cross(forward, NavigationCamera::worldUp)) == 0.0) {
+        return;
+    }
+    position_ = position;
+    pivot_ = pivot;
+    forward_ = forward;
+    navigationReference_.reset();
+    markChanged();
+}
+
 void NavigationCamera::setNavigationReference(const Vec3d point) noexcept
 {
     if (!isFinite(point)) {

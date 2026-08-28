@@ -20,6 +20,11 @@ struct RenderMetrics {
     double sampledFrameMilliseconds = 0.0;
     int outputWidth = 0;
     int outputHeight = 0;
+    QString qualificationPhase;
+    std::uint32_t qualificationFrameIndex = 0;
+    std::uint32_t qualificationFrameCount = 0;
+    bool qualificationFrame = false;
+    bool qualificationFinalFrame = false;
     // Geometry budget requested by the adaptive controller for the latest
     // frame, before visibility, residency, and upload readiness are applied.
     std::uint64_t requestedPoints = 0;

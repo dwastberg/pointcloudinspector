@@ -125,6 +125,13 @@ public:
     {
         static_cast<void>(enabled);
     }
+    // Starts the built-in frame-indexed qualification path over the current
+    // visible bounds. Returns false when the implementation cannot replay a
+    // camera path or no valid scene is available.
+    [[nodiscard]] virtual bool startQualificationCameraPath()
+    {
+        return false;
+    }
     virtual void setFailureCallback(FailureCallback callback) = 0;
     virtual void setLoadProgressCallback(LoadProgressCallback callback) = 0;
     [[nodiscard]] virtual VectorOverlayCapability

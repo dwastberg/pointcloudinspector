@@ -44,7 +44,9 @@ add_library(pcinspector_navigation STATIC
         navigation/NavigationCamera.cpp
         navigation/NavigationCamera.h
         navigation/NavigationInputState.cpp
-        navigation/NavigationInputState.h)
+        navigation/NavigationInputState.h
+        navigation/QualificationCameraPath.cpp
+        navigation/QualificationCameraPath.h)
 add_library(pcinspector::navigation ALIAS pcinspector_navigation)
 target_include_directories(pcinspector_navigation PUBLIC
         "${pcinspector_source_include_dir}")
@@ -244,6 +246,7 @@ target_include_directories(pcinspector_renderer_api INTERFACE
         "${pcinspector_source_include_dir}")
 target_link_libraries(pcinspector_renderer_api INTERFACE
         pcinspector::project_options
+        pcinspector::navigation
         pcinspector::scene
         Qt6::Core)
 

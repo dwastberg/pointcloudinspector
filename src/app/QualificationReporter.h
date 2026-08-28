@@ -32,6 +32,8 @@ public:
     [[nodiscard]] bool configured() const noexcept;
     // Installed by the application layer, which owns the GDAL link.
     void setGdalRuntimeInfo(GdalRuntimeInfo info);
+    // Drops load-time samples immediately before deterministic replay.
+    void beginReplay();
     void record(const RenderMetrics &metrics);
     [[nodiscard]] QualificationWriteResult
     write(const QString &status,

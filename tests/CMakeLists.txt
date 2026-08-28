@@ -40,6 +40,7 @@ pci_add_catch_test_target(pcinspector_navigation_tests
         unit/NavigationCameraTests.cpp
         unit/NavigationCameraSceneTests.cpp
         unit/NavigationInputStateTests.cpp
+        unit/QualificationCameraPathTests.cpp
         LIBRARIES pcinspector::navigation)
 
 pci_add_catch_test_target(pcinspector_platform_tests

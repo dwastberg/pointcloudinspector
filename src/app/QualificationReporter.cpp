@@ -41,6 +41,12 @@ void QualificationReporter::setGdalRuntimeInfo(GdalRuntimeInfo info)
     gdalRuntimeInfo_ = std::move(info);
 }
 
+void QualificationReporter::beginReplay()
+{
+    lastRenderMetrics_.reset();
+    frameMetrics_.clear();
+}
+
 void QualificationReporter::record(const RenderMetrics &metrics)
 {
     lastRenderMetrics_ = metrics;
@@ -172,6 +178,9 @@ QualificationReporter::write(const QString &status,
             {QStringLiteral("submitted_frame"),
              static_cast<qint64>(frame.submittedFrameCount)},
             {QStringLiteral("timing_source"), frame.timingSource},
+            {QStringLiteral("phase"), frame.qualificationPhase},
+            {QStringLiteral("path_frame"),
+             static_cast<qint64>(frame.qualificationFrameIndex)},
             {QStringLiteral("frame_ms"), frameMilliseconds},
             {QStringLiteral("gpu_frame_ms"),
              frame.timingSource == QStringLiteral("GPU")
