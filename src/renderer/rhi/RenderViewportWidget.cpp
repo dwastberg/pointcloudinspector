@@ -1760,7 +1760,10 @@ void RenderViewportWidget::refreshDocumentState(
     pointCount_ = sourcePoints;
     telemetry_.setSourceTotals(sourcePoints, retainedFlatPoints);
     const PointBudgetUpdate budget = pointFrameCoordinator_.pointBudgetUpdate(
-        layers, uploadScheduler_.residencyByteBudget(), pointBudget_.current());
+        layers,
+        sceneSnapshotCache_.document()->decodedByteBudget,
+        uploadScheduler_.residencyByteBudget(),
+        pointBudget_.current());
     if (pointBudget_.total() != budget.total) {
         pointBudget_.setTotal(budget.total);
     }

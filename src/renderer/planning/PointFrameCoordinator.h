@@ -116,6 +116,7 @@ public:
 
     [[nodiscard]] PointBudgetUpdate
     pointBudgetUpdate(const std::vector<PointFrameLayer> &layers,
+                      std::uint64_t decodedByteBudget,
                       std::uint64_t gpuByteBudget,
                       std::uint64_t currentPointBudget);
 

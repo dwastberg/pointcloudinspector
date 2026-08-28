@@ -2,6 +2,7 @@
 
 #include "foundation/Hash.h"
 #include "pointcloud/GpuPoint.h"
+#include "pointcloud/PointAttributes.h"
 #include "renderer/planning/FramePlanner.h"
 
 #include <algorithm>
@@ -14,6 +15,13 @@ namespace pci {
 namespace {
 
 constexpr std::uint64_t hierarchyRequestPointBudget = 2'000'000;
+
+std::uint64_t usableTransitionBudget(const std::uint64_t byteBudget) noexcept
+{
+    const std::uint64_t reserve =
+        byteBudget / 8U + (byteBudget % 8U != 0 ? 1U : 0U);
+    return reserve > byteBudget ? 0 : byteBudget - reserve;
+}
 
 void saturatingAdd(std::uint64_t &value, const std::uint64_t increment) noexcept
 {
@@ -64,6 +72,7 @@ void PointFrameCoordinator::clear()
 
 PointBudgetUpdate PointFrameCoordinator::pointBudgetUpdate(
     const std::vector<PointFrameLayer> &layers,
+    const std::uint64_t decodedByteBudget,
     const std::uint64_t gpuByteBudget,
     const std::uint64_t currentPointBudget)
 {
@@ -83,6 +92,12 @@ PointBudgetUpdate PointFrameCoordinator::pointBudgetUpdate(
         std::ranges::all_of(layers, [](const PointFrameLayer &layer) {
             return layer.snapshot->loadingComplete;
         });
+    const bool allHierarchicalComplete =
+        !layers.empty() &&
+        std::ranges::all_of(layers, [](const PointFrameLayer &layer) {
+            return layer.snapshot->hierarchical &&
+                   layer.snapshot->loadingComplete;
+        });
     if (allFlat) {
         capacity = std::min(capacity, gpuByteBudget / sizeof(GpuPoint));
     }
@@ -90,7 +105,22 @@ PointBudgetUpdate PointFrameCoordinator::pointBudgetUpdate(
         .total = std::max<std::uint64_t>(capacity, 1),
         .current = std::nullopt,
     };
-    if (allFlatComplete) {
+    const std::uint64_t decodedBytesPerPoint =
+        sizeof(GpuPoint) + sizeof(PointAttributes);
+    const std::uint64_t stableDecodedPointCapacity =
+        usableTransitionBudget(decodedByteBudget) / decodedBytesPerPoint;
+    const std::uint64_t stableGpuPointCapacity =
+        usableTransitionBudget(gpuByteBudget) / sizeof(GpuPoint);
+    const bool stableHierarchyFits =
+        allHierarchicalComplete && capacity <= stableDecodedPointCapacity &&
+        capacity <= stableGpuPointCapacity;
+    if (stableHierarchyFits) {
+        // Keep small, completed paged sources visually stable without
+        // resurrecting whole-hierarchy warming: selection remains
+        // screen-space and requests only visible nodes.
+        flatBudgetSettlementKey_.reset();
+        result.current = result.total;
+    } else if (allFlatComplete) {
         FlatBudgetSettlementKey key{
             .gpuByteBudget = gpuByteBudget,
             .retainedLayerPoints = {},

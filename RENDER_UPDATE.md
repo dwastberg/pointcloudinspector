@@ -246,6 +246,8 @@ Removing the pin set does not weaken root retention: `PointCloudScene` pins the 
 
 Do **not** remove the settled-flat override at `RenderViewportWidget.cpp:1836` here. It is a real feature that requirement 3 depends on; Phase 6 replaces it with something bounded.
 
+Compatibility exception: a completed document containing only hierarchical point sources may hold a stable total-point budget when its complete point storage fits both the decoded and GPU cache budgets with 12.5% transition headroom. This preserves the pre-update behavior of small LAS/COPC documents without restoring full-detail warming: ordinary screen-space selection still requests only visible nodes, never pins every leaf, and may retain coarse nodes when they are sufficient on screen.
+
 Fix display readiness in the same change. It blocks until full detail is *active* (`RenderViewportWidget.cpp:1585`), so a layer reports "loading" until every point is decoded **and** GPU-resident. Readiness should mean a stable coarse representation is GPU-resident. An off-screen completed layer is display-ready without GPU residency, because it deliberately has no draw work.
 
 Make `buildPlan` degrade rather than throw. `hierarchyError()` currently propagates a `throw` out of frame planning (`PointFrameCoordinator.cpp:440`), so one bad source takes down the frame. Drop the layer and report it.
@@ -256,7 +258,7 @@ Keep `PointCloudDataSource::fullDetailInfo()`; it costs nothing unused and may s
 
 - No document can automatically request or pin its complete leaf set.
 - Adaptive point-budget updates run during all ordinary rendered frames.
-- `framePointBudget()` cannot return total source points.
+- A total-point budget is used only for completed flat scenes or the bounded small-hierarchy compatibility case above; larger hierarchical documents remain adaptive.
 - Load completion no longer depends on whole-document GPU residency.
 - A hierarchy error disables one layer, not the frame.
 

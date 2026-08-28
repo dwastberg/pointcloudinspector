@@ -1223,13 +1223,25 @@ TEST_CASE("GPU asynchronously published hierarchies recover the bootstrap "
             return !failure.isEmpty() ||
                    (latestMetrics &&
                     latestMetrics->sourcePoints == reportedSourcePoints &&
-                    latestMetrics->requestedPoints == 1'000'000);
+                    latestMetrics->requestedPoints == reportedSourcePoints);
         },
         5000));
     REQUIRE(failure.isEmpty());
     REQUIRE(latestMetrics);
     CHECK(latestMetrics->sourcePoints == reportedSourcePoints);
-    CHECK(latestMetrics->requestedPoints == 1'000'000);
+    CHECK(latestMetrics->requestedPoints == reportedSourcePoints);
+
+    const std::uint64_t settledFrame = latestMetrics->submittedFrameCount;
+    pci::testAccess(viewport).orbitCameraForTesting(8.0, 0.0);
+    REQUIRE(QTest::qWaitFor(
+        [&] {
+            return !failure.isEmpty() ||
+                   (latestMetrics &&
+                    latestMetrics->submittedFrameCount > settledFrame);
+        },
+        2000));
+    REQUIRE(failure.isEmpty());
+    CHECK(latestMetrics->requestedPoints == reportedSourcePoints);
 }
 
 TEST_CASE("GPU hierarchy churn remains bounded and reloads evicted nodes",

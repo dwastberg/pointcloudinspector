@@ -151,16 +151,47 @@ TEST_CASE("point frame coordinator owns flat budget settlement",
 
     pci::PointFrameCoordinator coordinator;
     const pci::PointBudgetUpdate first =
-        coordinator.pointBudgetUpdate(layers, 50 * sizeof(pci::GpuPoint), 10);
+        coordinator.pointBudgetUpdate(
+            layers, 1024, 50 * sizeof(pci::GpuPoint), 10);
     CHECK(first.total == 50);
     CHECK(first.current == 50);
     const pci::PointBudgetUpdate unchanged =
-        coordinator.pointBudgetUpdate(layers, 50 * sizeof(pci::GpuPoint), 20);
+        coordinator.pointBudgetUpdate(
+            layers, 1024, 50 * sizeof(pci::GpuPoint), 20);
     CHECK(unchanged.total == 50);
     CHECK_FALSE(unchanged.current);
 }
 
 TEST_CASE("hierarchical documents recover the interactive bootstrap budget",
+          "[unit][renderer-planning][point-frame][budget][regression]")
+{
+    pci::PointCloudSceneSnapshot snapshot{
+        .hierarchical = true,
+        .loadingComplete = true,
+        .sourcePointCount = 25'000'000,
+    };
+    const std::vector<pci::PointFrameLayer> layers{{
+        .layer = {.id = pci::PointCloudLayerId{1}},
+        .snapshot = &snapshot,
+    }};
+
+    pci::PointFrameCoordinator coordinator;
+    const pci::PointBudgetUpdate published = coordinator.pointBudgetUpdate(
+        layers, 512ULL * 1024 * 1024, 512ULL * 1024 * 1024, 1);
+    CHECK(published.total == 25'000'000);
+    REQUIRE(published.current);
+    CHECK(*published.current == 1'000'000);
+
+    const pci::PointBudgetUpdate adapted = coordinator.pointBudgetUpdate(
+        layers,
+        512ULL * 1024 * 1024,
+        512ULL * 1024 * 1024,
+        1'500'000);
+    REQUIRE(adapted.current);
+    CHECK(*adapted.current == 1'500'000);
+}
+
+TEST_CASE("completed small hierarchies retain a stable total-point budget",
           "[unit][renderer-planning][point-frame][budget][regression]")
 {
     pci::PointCloudSceneSnapshot snapshot{
@@ -174,16 +205,16 @@ TEST_CASE("hierarchical documents recover the interactive bootstrap budget",
     }};
 
     pci::PointFrameCoordinator coordinator;
-    const pci::PointBudgetUpdate published = coordinator.pointBudgetUpdate(
-        layers, 512ULL * 1024 * 1024, 1);
-    CHECK(published.total == 19'000'000);
-    REQUIRE(published.current);
-    CHECK(*published.current == 1'000'000);
+    const pci::PointBudgetUpdate result = coordinator.pointBudgetUpdate(
+        layers, 512ULL * 1024 * 1024, 512ULL * 1024 * 1024, 400'000);
+    CHECK(result.total == 19'000'000);
+    REQUIRE(result.current);
+    CHECK(*result.current == result.total);
 
-    const pci::PointBudgetUpdate adapted = coordinator.pointBudgetUpdate(
-        layers, 512ULL * 1024 * 1024, 1'500'000);
-    REQUIRE(adapted.current);
-    CHECK(*adapted.current == 1'500'000);
+    const pci::PointBudgetUpdate gpuLimited = coordinator.pointBudgetUpdate(
+        layers, 1024ULL * 1024 * 1024, 256ULL * 1024 * 1024, 400'000);
+    REQUIRE(gpuLimited.current);
+    CHECK(*gpuLimited.current == 1'000'000);
 }
 
 TEST_CASE("point frame coordinator isolates a failed hierarchy layer",
