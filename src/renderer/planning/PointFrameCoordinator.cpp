@@ -297,6 +297,8 @@ PointFramePlan PointFrameCoordinator::buildPlan(const PointFrameInput &input)
             if (layer == input.layers.end()) {
                 continue;
             }
+            const PointCloudNode node =
+                layer->layer.scene->node(drawable.id.nodeId);
             result.blocks.push_back({
                 .layerId = drawable.id.layerId,
                 .colorMode = layer->layer.colorMode,
@@ -307,6 +309,8 @@ PointFramePlan PointFrameCoordinator::buildPlan(const PointFrameInput &input)
                         .nodeBlockIndex = drawable.id.nodeBlockIndex},
                 .block = drawable.block,
                 .pointCount = drawable.pointCount,
+                .pointSpacing = node.geometricError,
+                .pointCoverageFactor = node.leaf ? 1.0 : 2.0,
             });
         }
         result.selectedPoints = fullDetail.selectedPoints;
@@ -480,6 +484,8 @@ PointFramePlan PointFrameCoordinator::buildPlan(const PointFrameInput &input)
                 {.eye = frame.eye,
                  .verticalFieldOfViewDegrees = frame.verticalFovDegrees,
                  .viewportHeight = frame.outputHeight,
+                 .orthographicScale = frame.orthographicScale,
+                 .orthographic = frame.orthographic,
                  .pointBudget = layerRemaining,
                  .requestPointBudget = hierarchyRequestPointBudget});
             scene->requestNodes(selection.requestedNodes);
@@ -515,6 +521,7 @@ PointFramePlan PointFrameCoordinator::buildPlan(const PointFrameInput &input)
                 if (!payload) {
                     continue;
                 }
+                const PointCloudNode node = scene->node(nodeId);
                 scheduleNode(nodeId);
                 for (std::size_t index = 0;
                      index < payload->blocks.size() && layerRemaining > 0;
@@ -533,6 +540,8 @@ PointFramePlan PointFrameCoordinator::buildPlan(const PointFrameInput &input)
                         .key = key,
                         .block = block,
                         .pointCount = pointCount,
+                        .pointSpacing = node.geometricError,
+                        .pointCoverageFactor = node.leaf ? 1.0 : 2.0,
                     });
                     saturatingAdd(result.selectedPoints, pointCount);
                     ++result.visibleBlocks;

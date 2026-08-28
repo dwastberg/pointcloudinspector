@@ -1,6 +1,7 @@
 #include "renderer/planning/AdaptivePointBudget.h"
 #include "renderer/planning/FrameCamera.h"
 #include "renderer/planning/Measurement.h"
+#include "renderer/planning/PointSizePolicy.h"
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -139,6 +140,64 @@ TEST_CASE("frame camera converts pixels and projection depth consistently",
     CHECK(orthographic.worldUnitsPerPixelAtDepth(1.0) == Catch::Approx(0.2));
     CHECK(orthographic.worldUnitsPerPixelAtDepth(50.0) == Catch::Approx(0.2));
     CHECK(orthographic.shaderNearPlaneW() == 0.0F);
+}
+
+TEST_CASE("point size follows projected node spacing",
+          "[unit][renderer-planning][point-size]")
+{
+    const pci::Bounds3d bounds{
+        .minimum = {0.0, 0.0, 0.0},
+        .maximum = {0.0, 0.0, 0.0},
+    };
+    pci::FrameCamera camera{
+        .eye = {0.0, 0.0, 10.0},
+        .outputHeight = 1'000,
+        .verticalFovDegrees = 90.0,
+    };
+
+    CHECK(pci::projectedPointSpacingPixels(bounds, 0.02, camera) ==
+          Catch::Approx(1.0));
+    CHECK(pci::adaptivePointSizePixels(
+              bounds, 0.02, 2.0, 1.0, 1.0F, 8.0F, camera) ==
+          Catch::Approx(2.0F));
+    CHECK(pci::adaptivePointSizePixels(
+              bounds, 0.02, 2.0, 2.0, 1.0F, 8.0F, camera) ==
+          Catch::Approx(4.0F));
+
+    camera.orthographic = true;
+    camera.orthographicScale = 10.0;
+    CHECK(pci::projectedPointSpacingPixels(bounds, 0.01, camera) ==
+          Catch::Approx(1.0));
+    camera.eye = {0.0, 0.0, 1'000.0};
+    CHECK(pci::projectedPointSpacingPixels(bounds, 0.01, camera) ==
+          Catch::Approx(1.0));
+}
+
+TEST_CASE("point size policy bounds invalid and extreme inputs",
+          "[unit][renderer-planning][point-size]")
+{
+    const pci::Bounds3d bounds{
+        .minimum = {-1.0, -1.0, -1.0},
+        .maximum = {1.0, 1.0, 1.0},
+    };
+    const pci::FrameCamera camera{
+        .eye = {0.0, 0.0, 10.0},
+        .outputHeight = 1'000,
+        .verticalFovDegrees = 60.0,
+    };
+    const pci::Bounds3d invalidBounds{
+        .minimum = {1.0, 1.0, 1.0},
+        .maximum = {-1.0, -1.0, -1.0},
+    };
+
+    CHECK(pci::adaptivePointSizePixels(
+              bounds, 1e-9, 1.0, 1.0, 1.0F, 8.0F, camera) == 1.0F);
+    CHECK(pci::adaptivePointSizePixels(
+              bounds, 1.0, 100.0, 1.0, 1.0F, 8.0F, camera) == 8.0F);
+    CHECK(pci::adaptivePointSizePixels(
+              invalidBounds, 1.0, 1.0, 1.0, 1.0F, 8.0F, camera) == 1.0F);
+    CHECK(pci::adaptivePointSizePixels(
+              bounds, 1.0, 1.0, 1.0, 8.0F, 1.0F, camera) == 1.0F);
 }
 
 TEST_CASE("measurement distances retain horizontal and vertical components",

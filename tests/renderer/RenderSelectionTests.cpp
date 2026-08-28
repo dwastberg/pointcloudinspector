@@ -85,6 +85,35 @@ TEST_CASE("LOD selection atomically replaces a parent with ready children",
     CHECK(result.selectedPoints == 40);
 }
 
+TEST_CASE("orthographic LOD uses the same projected spacing as point size",
+          "[unit][renderer-planning][lod][point-size]")
+{
+    const std::array roots{pci::rootPointCloudNode};
+    const auto lookup = [](const pci::PointCloudNodeId id) {
+        return pci::RenderSelectionNodeState{
+            .node = descriptor(id),
+            .resident = true,
+            .residentPointCount = id.level == 0 ? 10U : 5U,
+        };
+    };
+    const auto visible = [](const pci::Bounds3d &) {
+        return true;
+    };
+    auto coarse = parameters();
+    coarse.orthographic = true;
+    coarse.orthographicScale = 1'000.0;
+    pci::RenderSelection coarseSelector;
+    CHECK(coarseSelector.select(roots, lookup, visible, coarse).drawNodes ==
+          std::vector{pci::rootPointCloudNode});
+
+    auto detailed = coarse;
+    detailed.orthographicScale = 100.0;
+    pci::RenderSelection detailedSelector;
+    const auto children = pci::childNodeIds(pci::rootPointCloudNode);
+    CHECK(detailedSelector.select(roots, lookup, visible, detailed).drawNodes ==
+          std::vector(children.begin(), children.end()));
+}
+
 TEST_CASE("LOD selection respects the point budget before refining",
           "[unit][renderer-planning][lod]")
 {

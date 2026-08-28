@@ -111,6 +111,17 @@ TEST_CASE("uniform draw capacity grows geometrically without overflow",
     CHECK(pci::grownUniformDrawCapacity(0, 513) == 513);
 }
 
+TEST_CASE("picking accounts for the largest rendered point sprite",
+          "[qt][renderer][point-size][picking]")
+{
+    std::vector<pci::BlockDraw> draws(3);
+    draws[0].uniform.pointSize = 1.0F;
+    draws[1].uniform.pointSize = 8.0F;
+    draws[2].uniform.pointSize = 3.0F;
+    CHECK(pci::largestDrawPointSizePixels(draws) == 8.0F);
+    CHECK(pci::largestDrawPointSizePixels({}) == 1.0F);
+}
+
 TEST_CASE("uniform staging packs draws and zeroes alignment gaps",
           "[qt][renderer][batching]")
 {

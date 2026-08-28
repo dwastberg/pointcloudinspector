@@ -79,6 +79,8 @@ TEST_CASE("point frame coordinator owns flat assembly and cache reuse",
     REQUIRE(first.plan->blocks.size() == 1);
     CHECK(first.plan->blocks.front().layerId == pci::PointCloudLayerId{7});
     CHECK(first.plan->blocks.front().pointCount == 25);
+    CHECK(first.plan->blocks.front().pointSpacing == 0.0);
+    CHECK(first.plan->blocks.front().pointCoverageFactor == 1.0);
     CHECK(first.plan->uploads.size() == 1);
     CHECK(first.plan->protectedGpuBlocks.size() == 1);
     CHECK(first.plan->selectedPoints == 25);

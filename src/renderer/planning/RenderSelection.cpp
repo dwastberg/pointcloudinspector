@@ -1,6 +1,7 @@
 #include "renderer/planning/RenderSelection.h"
 
 #include "foundation/CheckedArithmetic.h"
+#include "renderer/planning/PointSizePolicy.h"
 
 #include <algorithm>
 #include <array>
@@ -17,23 +18,14 @@ namespace {
 double projectedErrorPixels(const PointCloudNode &node,
                             const RenderSelectionParameters &parameters)
 {
-    const auto centerArray = node.bounds.center();
-    const Vec3d center{centerArray[0], centerArray[1], centerArray[2]};
-    const Vec3d diagonal{
-        node.bounds.maximum[0] - node.bounds.minimum[0],
-        node.bounds.maximum[1] - node.bounds.minimum[1],
-        node.bounds.maximum[2] - node.bounds.minimum[2],
-    };
-    const double radius = length(diagonal) * 0.5;
-    const double distance =
-        std::max(length(center - parameters.eye) - radius,
-                 std::max(node.geometricError * 0.25, 1e-9));
-    const double halfFovRadians =
-        parameters.verticalFieldOfViewDegrees * std::numbers::pi / 360.0;
-    const double focalPixels =
-        static_cast<double>(std::max(parameters.viewportHeight, 1)) /
-        (2.0 * std::tan(halfFovRadians));
-    return node.geometricError * focalPixels / distance;
+    FrameCamera camera;
+    camera.eye = parameters.eye;
+    camera.outputHeight = std::max(parameters.viewportHeight, 1);
+    camera.verticalFovDegrees = parameters.verticalFieldOfViewDegrees;
+    camera.orthographicScale = parameters.orthographicScale;
+    camera.orthographic = parameters.orthographic;
+    return projectedPointSpacingPixels(
+        node.bounds, node.geometricError, camera);
 }
 
 void appendUnique(

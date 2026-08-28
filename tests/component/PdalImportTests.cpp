@@ -529,6 +529,11 @@ TEST_CASE(
           pci::PointScalarRange{100.0, 800.0});
     CHECK(rootPublications == 1);
     CHECK(rootPublishedBeforeCommit);
+    const pci::PointCloudNode rootNode = first.source->rootNode();
+    CHECK(rootNode.geometricError ==
+          Catch::Approx(
+              std::max(rootNode.bounds.maximumExtent(), 1e-9) /
+              std::sqrt(static_cast<double>(rootNode.estimatedPointCount))));
 
     std::uint64_t sourcePoints = 0;
     std::uint64_t decodedPoints = 0;

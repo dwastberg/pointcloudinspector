@@ -96,6 +96,9 @@ struct BlockDraw {
 #pragma warning(pop)
 #endif
 
+[[nodiscard]] float
+largestDrawPointSizePixels(std::span<const BlockDraw> draws) noexcept;
+
 [[nodiscard]] std::vector<std::byte>
 stageBlockUniforms(std::span<const BlockDraw> draws, std::size_t uniformStride);
 

@@ -4,6 +4,7 @@
 #include "platform/ProcessMemory.h"
 #include "renderer/PointColorMapAtlas.h"
 #include "renderer/planning/FrustumCuller.h"
+#include "renderer/planning/PointSizePolicy.h"
 #include "renderer/rhi/BackendPolicy.h"
 #include "scene/RasterLayerDisplay.h"
 
@@ -1918,6 +1919,8 @@ RenderViewportWidget::buildDrawList(const PointFramePlan &plan)
     const QMatrix4x4 viewProjection =
         rhi()->clipSpaceCorrMatrix() * projection * view;
     const Vec3d eye = frame.eye;
+    const double pointSizeScale = static_cast<double>(pointSizePixels_) /
+                                  static_cast<double>(defaultPointSizePixels);
 
     std::vector<BlockDraw> draws;
     draws.reserve(plan.blocks.size());
@@ -1946,7 +1949,20 @@ RenderViewportWidget::buildDrawList(const PointFramePlan &plan)
         draw.uniformIndex = static_cast<quint32>(draws.size());
         std::memcpy(
             draw.uniform.mvp, mvp.constData(), sizeof(draw.uniform.mvp));
-        draw.uniform.pointSize = static_cast<float>(pointSizePixels_);
+        const double pointSpacing =
+            selected.pointSpacing > 0.0
+                ? selected.pointSpacing
+                : std::max(block->bounds.maximumExtent(), 1e-9) /
+                      std::sqrt(static_cast<double>(
+                          std::max<std::uint32_t>(selected.pointCount, 1U)));
+        draw.uniform.pointSize =
+            adaptivePointSizePixels(block->bounds,
+                                    pointSpacing,
+                                    selected.pointCoverageFactor,
+                                    pointSizeScale,
+                                    static_cast<float>(minimumPointSizePixels),
+                                    static_cast<float>(maximumPointSizePixels),
+                                    frame);
         draw.uniform.colorSource =
             static_cast<std::int32_t>(selected.colorMode.source);
         draw.uniform.colorMap =
@@ -2124,19 +2140,20 @@ RenderViewportWidget::pickCandidates(const std::vector<BlockDraw> &draws,
                                      const QSize targetSize) const
 {
     const auto clip = camera_.clipPlanes();
-    const ScreenPickVolume volume = makeScreenPickVolume(
-        camera_.position(),
-        camera_.forward(),
-        camera_.right(),
-        camera_.up(),
-        NavigationCamera::verticalFieldOfViewDegrees,
-        targetSize.width(),
-        targetSize.height(),
-        static_cast<double>(position.x),
-        static_cast<double>(position.y),
-        std::max(4.0, static_cast<double>(pointSizePixels_) * 0.5 + 1.0),
-        clip.nearPlane,
-        clip.farPlane);
+    const double largestPointSize = largestDrawPointSizePixels(draws);
+    const ScreenPickVolume volume =
+        makeScreenPickVolume(camera_.position(),
+                             camera_.forward(),
+                             camera_.right(),
+                             camera_.up(),
+                             NavigationCamera::verticalFieldOfViewDegrees,
+                             targetSize.width(),
+                             targetSize.height(),
+                             static_cast<double>(position.x),
+                             static_cast<double>(position.y),
+                             std::max(4.0, largestPointSize * 0.5 + 1.0),
+                             clip.nearPlane,
+                             clip.farPlane);
     if (!volume.valid()) {
         return draws;
     }

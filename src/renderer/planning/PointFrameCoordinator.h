@@ -47,6 +47,10 @@ struct PointFrameSelectedBlock {
     PointFrameBlockKey key;
     PointBlockPtr block;
     std::uint32_t pointCount = 0;
+    // Zero identifies a flat block, whose spacing is derived from its own
+    // bounds and selected point count when the draw list is built.
+    double pointSpacing = 0.0;
+    double pointCoverageFactor = 1.0;
 };
 
 struct PointFrameUpload {

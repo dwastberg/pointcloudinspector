@@ -323,12 +323,16 @@ PointCloudNode LocalPointPageSource::node(const PointCloudNodeId id) const
     }
     const double extent =
         std::max(state_->metadata.sourceBounds.maximumExtent(), 1e-9);
+    const double geometricError =
+        page && page->pointCount > 0
+            ? std::max(page->tightBounds.maximumExtent(), 1e-9) /
+                  std::sqrt(static_cast<double>(page->pointCount))
+            : extent / std::sqrt(static_cast<double>(state_->pointsPerLeaf)) /
+                  static_cast<double>(std::uint64_t{1} << id.level);
     return {
         .id = id,
         .bounds = page ? page->tightBounds : state_->metadata.sourceBounds,
-        .geometricError =
-            extent / std::sqrt(static_cast<double>(state_->pointsPerLeaf)) /
-            static_cast<double>(std::uint64_t{1} << id.level),
+        .geometricError = geometricError,
         .estimatedPointCount =
             page ? page->pointCount
                  : std::min<std::uint64_t>(

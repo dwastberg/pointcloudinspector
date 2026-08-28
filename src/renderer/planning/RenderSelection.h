@@ -23,6 +23,8 @@ struct RenderSelectionParameters {
     Vec3d eye;
     double verticalFieldOfViewDegrees = 60.0;
     int viewportHeight = 1;
+    double orthographicScale = 0.0;
+    bool orthographic = false;
     std::uint64_t pointBudget = 1;
     // Zero uses pointBudget. This independently bounds decode/upload prefetch.
     std::uint64_t requestPointBudget = 0;

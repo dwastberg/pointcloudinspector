@@ -7,6 +7,7 @@
 #include <QColor>
 #include <rhi/qrhi.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <limits>
@@ -85,6 +86,18 @@ grownUniformDrawCapacity(const std::size_t currentCapacity,
         capacity *= 2;
     }
     return capacity;
+}
+
+float largestDrawPointSizePixels(
+    const std::span<const BlockDraw> draws) noexcept
+{
+    float largest = 1.0F;
+    for (const BlockDraw &draw : draws) {
+        if (std::isfinite(draw.uniform.pointSize)) {
+            largest = std::max(largest, draw.uniform.pointSize);
+        }
+    }
+    return largest;
 }
 
 std::vector<std::byte>
