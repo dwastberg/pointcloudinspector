@@ -105,6 +105,7 @@ pci_add_catch_test_target(pcinspector_renderer_planning_tests
         renderer/FrustumCullerTests.cpp
         renderer/MeasurementControllerTests.cpp
         renderer/PointFrameCoordinatorTests.cpp
+        renderer/PortablePointForestQualificationTests.cpp
         renderer/RenderActivityTests.cpp
         renderer/RenderSelectionTests.cpp
         renderer/RendererPlanningTests.cpp
