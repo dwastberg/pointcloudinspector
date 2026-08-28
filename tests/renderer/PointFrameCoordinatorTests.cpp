@@ -160,6 +160,32 @@ TEST_CASE("point frame coordinator owns flat budget settlement",
     CHECK_FALSE(unchanged.current);
 }
 
+TEST_CASE("hierarchical documents recover the interactive bootstrap budget",
+          "[unit][renderer-planning][point-frame][budget][regression]")
+{
+    pci::PointCloudSceneSnapshot snapshot{
+        .hierarchical = true,
+        .loadingComplete = true,
+        .sourcePointCount = 19'000'000,
+    };
+    const std::vector<pci::PointFrameLayer> layers{{
+        .layer = {.id = pci::PointCloudLayerId{1}},
+        .snapshot = &snapshot,
+    }};
+
+    pci::PointFrameCoordinator coordinator;
+    const pci::PointBudgetUpdate published = coordinator.pointBudgetUpdate(
+        layers, 512ULL * 1024 * 1024, 1);
+    CHECK(published.total == 19'000'000);
+    REQUIRE(published.current);
+    CHECK(*published.current == 1'000'000);
+
+    const pci::PointBudgetUpdate adapted = coordinator.pointBudgetUpdate(
+        layers, 512ULL * 1024 * 1024, 1'500'000);
+    REQUIRE(adapted.current);
+    CHECK(*adapted.current == 1'500'000);
+}
+
 TEST_CASE("point frame coordinator isolates a failed hierarchy layer",
           "[unit][renderer-planning][point-frame][failure]")
 {

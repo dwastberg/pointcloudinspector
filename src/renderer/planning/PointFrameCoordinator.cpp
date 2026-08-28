@@ -106,11 +106,14 @@ PointBudgetUpdate PointFrameCoordinator::pointBudgetUpdate(
         }
     } else {
         flatBudgetSettlementKey_.reset();
-        if (allFlat) {
-            result.current =
-                std::max(currentPointBudget,
-                         std::min<std::uint64_t>(1'000'000, result.total));
-        }
+        // A viewport is commonly attached while the document is still empty.
+        // Its one-point controller must recover when an asynchronously loaded
+        // hierarchy later publishes its real source count. Full-detail mode
+        // used to hide this by replacing the budget; the ordinary LOD path
+        // needs the same interactive bootstrap as a streaming flat scene.
+        result.current =
+            std::max(currentPointBudget,
+                     std::min<std::uint64_t>(1'000'000, result.total));
     }
     return result;
 }

@@ -288,12 +288,15 @@ struct GpuStressHierarchy {
     pci::PointCloudScenePtr scene;
 };
 
-GpuStressHierarchy makeGpuStressHierarchy(const std::uint32_t color)
+GpuStressHierarchy makeGpuStressHierarchy(
+    const std::uint32_t color,
+    const std::uint64_t reportedSourcePointCount =
+        GpuStressHierarchySource::leafPointCount)
 {
     auto source = std::make_shared<GpuStressHierarchySource>(color);
     pci::PointCloudNodePayloadPtr root = source->rootPayload();
     pci::PointCloudMetadata metadata;
-    metadata.sourcePointCount = GpuStressHierarchySource::leafPointCount;
+    metadata.sourcePointCount = reportedSourcePointCount;
     metadata.sourceBounds = source->rootNode().bounds;
     auto scene = std::make_shared<pci::PointCloudScene>(
         metadata, source, root, pci::defaultDecodedCacheByteBudget);
@@ -1171,6 +1174,62 @@ TEST_CASE("GPU finite hierarchies settle through screen-space LOD",
     CHECK(latestMetrics->submittedPoints ==
           GpuStressHierarchySource::leafPointCount);
     CHECK(hierarchy.source->metrics().completed == 8);
+}
+
+TEST_CASE("GPU asynchronously published hierarchies recover the bootstrap "
+          "budget",
+          "[gpu][hierarchy][budget][regression]")
+{
+    constexpr std::uint64_t reportedSourcePoints = 19'000'000;
+    GpuStressHierarchy hierarchy =
+        makeGpuStressHierarchy(0xffffffffU, reportedSourcePoints);
+    auto document = std::make_shared<pci::SceneDocument>();
+
+    pci::RenderViewportWidget viewport(
+        false,
+        pci::UploadScheduler::defaultResidencyByteBudget,
+        gpuTestGraphicsApi(),
+        gpuTestValidation);
+    viewport.resize(320, 240);
+    std::optional<pci::RenderMetrics> latestMetrics;
+    QString failure;
+    viewport.setMetricsCallback(
+        [&latestMetrics](const pci::RenderMetrics &metrics) {
+            latestMetrics = metrics;
+        });
+    viewport.setFailureCallback([&failure](const QString &message) {
+        failure = message;
+    });
+
+    // MainWindow attaches the initially empty document, then publishes the
+    // asynchronously loaded scene through updateDocument(). Reproduce that
+    // path instead of installing a populated document in one operation.
+    viewport.setDocument(document->snapshot(), false);
+    viewport.show();
+    REQUIRE(QTest::qWaitForWindowExposed(&viewport, 2000));
+    REQUIRE(QTest::qWaitFor(
+        [&] {
+            return !failure.isEmpty() ||
+                   pci::testAccess(viewport).renderedFrameCountForTesting() >
+                       0;
+        },
+        2000));
+    REQUIRE(failure.isEmpty());
+
+    static_cast<void>(document->addLayer(hierarchy.scene));
+    viewport.updateDocument(document->snapshot());
+    REQUIRE(QTest::qWaitFor(
+        [&] {
+            return !failure.isEmpty() ||
+                   (latestMetrics &&
+                    latestMetrics->sourcePoints == reportedSourcePoints &&
+                    latestMetrics->requestedPoints == 1'000'000);
+        },
+        5000));
+    REQUIRE(failure.isEmpty());
+    REQUIRE(latestMetrics);
+    CHECK(latestMetrics->sourcePoints == reportedSourcePoints);
+    CHECK(latestMetrics->requestedPoints == 1'000'000);
 }
 
 TEST_CASE("GPU hierarchy churn remains bounded and reloads evicted nodes",
