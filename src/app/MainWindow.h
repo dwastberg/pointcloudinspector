@@ -100,6 +100,7 @@ private:
 
     std::unique_ptr<RenderViewport> viewport_;
     std::unique_ptr<SceneSession> session_;
+    QAction *newSceneAction_ = nullptr;
     QAction *openAction_ = nullptr;
     QAction *fitSceneAction_ = nullptr;
     QAction *topDownSceneAction_ = nullptr;

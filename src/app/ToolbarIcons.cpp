@@ -31,6 +31,21 @@ void drawGlyph(QPainter &painter,
     painter.setBrush(Qt::NoBrush);
 
     switch (icon) {
+    case ToolbarIcon::New: {
+        QPainterPath page;
+        page.moveTo(4.0, 2.5);
+        page.lineTo(11.5, 2.5);
+        page.lineTo(16.0, 7.0);
+        page.lineTo(16.0, 17.5);
+        page.lineTo(4.0, 17.5);
+        page.closeSubpath();
+        painter.drawPath(page);
+        painter.drawLine(QPointF(11.5, 2.5), QPointF(11.5, 7.0));
+        painter.drawLine(QPointF(11.5, 7.0), QPointF(16.0, 7.0));
+        painter.drawLine(QPointF(7.0, 12.0), QPointF(13.0, 12.0));
+        painter.drawLine(QPointF(10.0, 9.0), QPointF(10.0, 15.0));
+        break;
+    }
     case ToolbarIcon::Open: {
         QPainterPath folder;
         folder.moveTo(2.5, 6.0);

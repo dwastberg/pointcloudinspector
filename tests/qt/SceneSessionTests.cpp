@@ -449,6 +449,62 @@ TEST_CASE("scene session owns document commands", "[scene-session][commands]")
     CHECK(session.document()->layerCount() == 1);
 }
 
+TEST_CASE("new scene clears layers and cannot restore a cancelled replacement",
+          "[scene-session][commands][loading]")
+{
+    auto loader = std::make_shared<SessionLoader>();
+    pci::SceneSession session(makeServices(loader),
+                              100,
+                              1024 * 1024,
+                              std::nullopt,
+                              {},
+                              pci::test::createTestPointColorMapCatalog());
+    session.loadPointCloud("original.las", pci::PointCloudLoadMode::Replace);
+    finishVisibleLoads(session);
+
+    auto vector = std::make_shared<pci::VectorLayerData>();
+    vector->sublayerName = "survey";
+    vector->bounds = {
+        .minimum = {0.0, 0.0, 0.0},
+        .maximum = {1.0, 1.0, 0.0},
+    };
+    static_cast<void>(session.document()->addVectorLayer(std::move(vector)));
+    SessionRasterLoader rasterLoader;
+    const pci::RasterImportPreflight raster =
+        rasterLoader.inspect({.sourcePath = "ortho.tif"});
+    static_cast<void>(session.document()->addRasterLayer(raster.data));
+    CHECK(session.document()->sceneLayers().size() == 3);
+
+    const auto originalDocument = session.document();
+    const auto colorMaps = originalDocument->colorMaps();
+    QSignalSpy documentChanged(&session, &pci::SceneSession::documentChanged);
+
+    session.loadPointCloud("cancel-after-preview.las",
+                           pci::PointCloudLoadMode::Replace);
+    REQUIRE(waitFor([&loader] {
+        return loader->previewPublished.load();
+    }));
+    REQUIRE(session.document() != originalDocument);
+
+    session.newScene();
+
+    CHECK_FALSE(session.loading());
+    CHECK(session.document() != originalDocument);
+    CHECK_FALSE(session.document()->hasAnyLayer());
+    CHECK(session.document()->colorMaps() == colorMaps);
+    CHECK(session.document()->decodedByteBudget() == 1024 * 1024);
+    REQUIRE_FALSE(documentChanged.empty());
+    CHECK_FALSE(documentChanged.back().at(1).toBool());
+    CHECK(documentChanged.back().at(2).toBool());
+
+    REQUIRE(waitFor([&session] {
+        const auto states = session.pointLoadJobStates();
+        return states.size() == 2 && states.back().phase ==
+                                         pci::PointCloudLoadJobPhase::Cancelled;
+    }));
+    CHECK_FALSE(session.document()->hasAnyLayer());
+}
+
 TEST_CASE("scene session updates future-load and decoded-memory budgets",
           "[scene-session][settings]")
 {

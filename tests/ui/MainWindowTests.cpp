@@ -1000,6 +1000,56 @@ TEST_CASE("main window shares its open action between menu and toolbar",
 #endif
 }
 
+TEST_CASE("new scene action is shared and presents an empty scene",
+          "[ui][mainwindow][toolbar]")
+{
+    auto viewport = std::make_unique<FakeViewport>();
+    FakeViewport *viewportPointer = viewport.get();
+    auto services = makeTestImportServices(std::make_shared<ImmediateLoader>());
+    pci::MainWindow window(std::move(viewport), std::move(services), 100);
+    window.show();
+
+    auto *newScene =
+        window.findChild<QAction *>(QStringLiteral("newSceneAction"));
+    auto *fileMenu = window.findChild<QMenu *>(QStringLiteral("fileMenu"));
+    auto *toolBar =
+        window.findChild<QToolBar *>(QStringLiteral("pointCloudToolBar"));
+    auto *list =
+        window.findChild<QListView *>(QStringLiteral("pointCloudLayerList"));
+    auto *empty = window.findChild<QLabel *>(QStringLiteral("emptySceneLabel"));
+    REQUIRE(newScene != nullptr);
+    REQUIRE(fileMenu != nullptr);
+    REQUIRE(toolBar != nullptr);
+    REQUIRE(list != nullptr);
+    REQUIRE(empty != nullptr);
+    CHECK(fileMenu->actions().contains(newScene));
+    CHECK(toolBar->actions().contains(newScene));
+    CHECK(newScene->shortcut() == QKeySequence::New);
+
+    window.loadPointCloud("clear-me.las");
+    REQUIRE(waitFor([&] {
+        return viewportPointer->document() &&
+               viewportPointer->document()->layerCount() == 1;
+    }));
+    viewportPointer->emitDisplayReady(
+        viewportPointer->document()->pointLayers().front().id);
+    REQUIRE(waitFor([list] {
+        return list->model()->rowCount() == 1;
+    }));
+
+    const int documentSetsBefore = viewportPointer->documentSetCount();
+    newScene->trigger();
+
+    REQUIRE(waitFor([&] {
+        return viewportPointer->document() &&
+               viewportPointer->document()->layerCount() == 0 &&
+               list->model()->rowCount() == 0;
+    }));
+    CHECK(viewportPointer->documentSetCount() == documentSetsBefore + 1);
+    CHECK(empty->isVisible());
+    CHECK(window.statusBar()->currentMessage() == QStringLiteral("New scene"));
+}
+
 TEST_CASE("main toolbar follows data, camera, display, settings order",
           "[ui][mainwindow][toolbar]")
 {
@@ -1010,6 +1060,8 @@ TEST_CASE("main toolbar follows data, camera, display, settings order",
     auto *toolBar =
         window.findChild<QToolBar *>(QStringLiteral("pointCloudToolBar"));
     auto *fileMenu = window.findChild<QMenu *>(QStringLiteral("fileMenu"));
+    auto *newScene =
+        window.findChild<QAction *>(QStringLiteral("newSceneAction"));
     auto *open = window.findChild<QAction *>(QStringLiteral("openFilesAction"));
     auto *add =
         window.findChild<QAction *>(QStringLiteral("addPointCloudAction"));
@@ -1032,6 +1084,7 @@ TEST_CASE("main toolbar follows data, camera, display, settings order",
         window.findChild<QWidget *>(QStringLiteral("commandToolbarSpacer"));
     REQUIRE(toolBar != nullptr);
     REQUIRE(fileMenu != nullptr);
+    REQUIRE(newScene != nullptr);
     REQUIRE(open != nullptr);
     CHECK(add == nullptr);
     CHECK(vector == nullptr);
@@ -1062,6 +1115,7 @@ TEST_CASE("main toolbar follows data, camera, display, settings order",
     REQUIRE(pointSizeAction != nullptr);
     REQUIRE(depthAction != nullptr);
     REQUIRE(spacerAction != nullptr);
+    CHECK(ordered(newScene, open));
     CHECK(ordered(open, fit));
     CHECK(ordered(fit, topDown));
     CHECK(ordered(topDown, orthographic));
@@ -1070,6 +1124,7 @@ TEST_CASE("main toolbar follows data, camera, display, settings order",
     CHECK(ordered(depthAction, spacerAction));
     CHECK(ordered(spacerAction, settings));
     CHECK(spacer->sizePolicy().horizontalPolicy() == QSizePolicy::Expanding);
+    CHECK(newScene->iconText() == QStringLiteral("New"));
     CHECK(open->iconText() == QStringLiteral("Open…"));
     CHECK(fit->iconText() == QStringLiteral("Fit"));
     CHECK(topDown->iconText() == QStringLiteral("Top Down"));

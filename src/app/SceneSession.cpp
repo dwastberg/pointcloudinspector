@@ -261,6 +261,41 @@ bool SceneSession::setDecodedByteBudget(
     return byteBudget == requestedByteBudget;
 }
 
+void SceneSession::newScene()
+{
+    assertOwnerThread(*this);
+
+    // Stop every producer before publishing the empty document. Controller
+    // cancellation is asynchronous, so discard point-load bookkeeping as
+    // well: a late cancellation must not restore a transactional replacement
+    // document that belongs to the old scene.
+    cancelAllLoads();
+    activeLoads_.clear();
+    preselectedVectorSublayers_.clear();
+    progressTimer_.stop();
+    loading_ = false;
+    batchLoading_ = false;
+    batchReplacing_ = false;
+    batchProgressUpdatesEnabled_ = false;
+    batchOrder_.clear();
+    batchTotal_ = 0;
+    batchSafetySamplesAtStart_ = 0;
+    batchTimeToFirstPointsMilliseconds_.reset();
+    batchTimeToAllFirstPointsMilliseconds_.reset();
+    batchTimeToAllDisplayReadyMilliseconds_.reset();
+    timings_ = {};
+
+    document_ = std::make_shared<SceneDocument>(
+        decodedByteBudget_,
+        HierarchyResidencyCoordinator::defaultMaximumConcurrentDecodes,
+        decodeAdmission_,
+        memoryBudget_,
+        document_->colorMaps());
+    emit loadingChanged(false, false, {});
+    publishDocument(false, true);
+    emit statusChanged(QStringLiteral("New scene"));
+}
+
 void SceneSession::connectController()
 {
     connect(loadController_,
@@ -1706,10 +1741,12 @@ void SceneSession::handleLoadCancelled(const LoadJobId jobId)
 {
     assertOwnerThread(*this);
     ActiveLoad *load = activeLoad(jobId);
-    if (load) {
-        rollbackAdmittedLoad(*load);
-        activeLoads_.erase(jobId);
+    if (!load) {
+        publishTaskRows();
+        return;
     }
+    rollbackAdmittedLoad(*load);
+    activeLoads_.erase(jobId);
     if (batchLoading_) {
         admitBatchLayers();
         if (activeLoads_.empty()) {
@@ -1744,11 +1781,13 @@ void SceneSession::showLoadFailure(const LoadJobId jobId,
 {
     assertOwnerThread(*this);
     ActiveLoad *load = activeLoad(jobId);
+    if (!load) {
+        publishTaskRows();
+        return;
+    }
     if (batchLoading_) {
-        if (load) {
-            rollbackAdmittedLoad(*load);
-            activeLoads_.erase(jobId);
-        }
+        rollbackAdmittedLoad(*load);
+        activeLoads_.erase(jobId);
         admitBatchLayers();
         emit statusChanged(
             QStringLiteral("Failed to load a point cloud: %1").arg(message));
@@ -1761,9 +1800,7 @@ void SceneSession::showLoadFailure(const LoadJobId jobId,
         }
         return;
     }
-    if (load) {
-        rollbackAdmittedLoad(*load);
-    }
+    rollbackAdmittedLoad(*load);
     activeLoads_.clear();
     progressTimer_.stop();
     loading_ = false;

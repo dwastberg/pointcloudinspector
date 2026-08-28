@@ -412,6 +412,21 @@ MainWindow::MainWindow(
 
     QMenu *fileMenu = menuBar()->addMenu(QStringLiteral("&File"));
     fileMenu->setObjectName(QStringLiteral("fileMenu"));
+    newSceneAction_ = fileMenu->addAction(QStringLiteral("&New Scene"));
+    newSceneAction_->setObjectName(QStringLiteral("newSceneAction"));
+    newSceneAction_->setIconText(QStringLiteral("New"));
+    newSceneAction_->setIcon(toolbarIcon(ToolbarIcon::New, palette()));
+    newSceneAction_->setShortcut(QKeySequence::New);
+    newSceneAction_->setToolTip(
+        QStringLiteral("Remove all loaded items and start a new empty scene "
+                       "(%1)")
+            .arg(newSceneAction_->shortcut().toString(
+                QKeySequence::NativeText)));
+    connect(newSceneAction_,
+            &QAction::triggered,
+            session_.get(),
+            &SceneSession::newScene);
+
     openAction_ = fileMenu->addAction(QStringLiteral("&Open Files…"));
     openAction_->setObjectName(QStringLiteral("openFilesAction"));
     openAction_->setIconText(QStringLiteral("Open…"));
@@ -667,6 +682,7 @@ MainWindow::MainWindow(
     pointCloudToolBar->setMovable(false);
     pointCloudToolBar->setIconSize(QSize(20, 20));
     pointCloudToolBar->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    pointCloudToolBar->addAction(newSceneAction_);
     pointCloudToolBar->addAction(openAction_);
     pointCloudToolBar->addSeparator();
     pointCloudToolBar->addAction(fitSceneAction_);

@@ -7,6 +7,7 @@ class QPalette;
 namespace pci {
 
 enum class ToolbarIcon {
+    New,
     Open,
     Vector,
     Raster,

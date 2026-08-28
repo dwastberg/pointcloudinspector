@@ -82,6 +82,7 @@ public:
     void openSources(std::vector<SupportedSource> sources);
     void setVectorImportAvailability(VectorImportAvailability availability,
                                      QString reason = {});
+    void newScene();
     void cancelAll();
     void cancelJob(LoadJobId jobId);
     void retryJob(LoadJobId jobId);
