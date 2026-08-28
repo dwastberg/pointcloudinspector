@@ -23,6 +23,7 @@ public:
     [[nodiscard]] PointCloudNodePayloadPtr
     loadNode(PointCloudNodeId id, std::stop_token stopToken) const override;
     [[nodiscard]] PointCloudDataSourceMetrics metrics() const override;
+    [[nodiscard]] bool detailLimited() const noexcept override;
 
     [[nodiscard]] std::uint8_t maximumLevel() const noexcept;
     [[nodiscard]] double resolution(PointCloudNodeId id) const;

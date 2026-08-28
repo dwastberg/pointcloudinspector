@@ -290,7 +290,16 @@ TEST_CASE("COPC hierarchy queries partition and bound decoded nodes",
     const pci::PdalHierarchicalPointSource source(metadata, 8, 2);
 
     CHECK(source.maximumLevel() == 1);
+    CHECK_FALSE(source.detailLimited());
     CHECK_FALSE(source.rootNode().leaf);
+    CHECK(source.node(pci::childNodeIds(pci::rootPointCloudNode).front()).leaf);
+
+    const pci::PdalHierarchicalPointSource capped(metadata, 4, 2);
+    CHECK(capped.detailLimited());
+    const pci::PointCloudNode cappedTerminal =
+        capped.node(pci::childNodeIds(pci::rootPointCloudNode).front());
+    CHECK_FALSE(cappedTerminal.leaf);
+    CHECK(cappedTerminal.detailLimited);
     const pci::PointCloudNodePayloadPtr root =
         source.loadNode(pci::rootPointCloudNode, {});
     CHECK(pci::pointCloudNodePayloadPoints(*root) <= 2);
@@ -525,8 +534,14 @@ TEST_CASE(
     std::uint64_t decodedPoints = 0;
     std::uint64_t decodedBytes = 0;
     std::uint64_t nonEmptyLeaves = 0;
+    std::uint64_t nonexistentLeaves = 0;
     for (const pci::PointCloudNodeId child :
          pci::childNodeIds(pci::rootPointCloudNode)) {
+        const pci::PointCloudNode node = first.source->node(child);
+        if (!node.bounds.valid()) {
+            ++nonexistentLeaves;
+            CHECK(node.estimatedPointCount == 0);
+        }
         const auto payload = first.source->loadNode(child, {});
         CHECK(pci::pointCloudNodePayloadPoints(*payload) <= 2);
         if (payload->sourcePointCount != 0) {
@@ -538,6 +553,7 @@ TEST_CASE(
         decodedBytes += pci::pointCloudNodePayloadBytes(*payload);
     }
     CHECK(nonEmptyLeaves == 4);
+    CHECK(nonexistentLeaves == 4);
     CHECK(sourcePoints == pci::test::fixturePoints.size());
     CHECK(decodedPoints == pci::test::fixturePoints.size());
     const auto detail = first.source->fullDetailInfo();
@@ -580,6 +596,76 @@ TEST_CASE(
           fileBytes(independent.storeDirectory / "manifest.pci"));
     CHECK(fileBytes(first.storeDirectory / "payload.bin") ==
           fileBytes(independent.storeDirectory / "payload.bin"));
+}
+
+TEST_CASE("local page node existence becomes authoritative on completion",
+          "[component][pdal][local-pages][hierarchy-contract]")
+{
+    const FixtureDirectory fixture;
+    const pci::PdalPointCloudLoader loader;
+    const pci::PointCloudLoadOptions request{
+        .sourcePath = fixture.paths().las,
+        .maximumPoints = 8,
+        .localPaging = {.pointThreshold = 1},
+    };
+    const pci::PointCloudImportPreflight preflight = loader.inspect(request);
+
+    const auto building = pci::LocalPointPageSource::createBuilding(
+        preflight.metadata,
+        fixture.directory() / "building-payload.bin",
+        fixture.directory() / "building-store.pcipages",
+        {},
+        1,
+        2,
+        8);
+    const pci::PointCloudNodeId candidate =
+        pci::childNodeIds(pci::rootPointCloudNode).back();
+    const pci::PointCloudNode unknown = building->node(candidate);
+    CHECK(unknown.bounds.valid());
+    CHECK(unknown.estimatedPointCount > 0);
+
+    const auto completed = pci::LocalPointIndexBuilder().openOrBuild(
+        preflight,
+        8,
+        {
+            .cache = testCache(fixture, "existence-cache"),
+            .pointsPerLeaf = 2,
+            .rootPreviewPoints = 2,
+            .sortMemoryBytes = 4096,
+        });
+    const pci::PointCloudNode nonexistent = completed.source->node(candidate);
+    CHECK_FALSE(nonexistent.bounds.valid());
+    CHECK(nonexistent.estimatedPointCount == 0);
+}
+
+TEST_CASE("local page detail caps do not masquerade as source leaves",
+          "[component][pdal][local-pages][hierarchy-contract]")
+{
+    const FixtureDirectory fixture;
+    const pci::PdalPointCloudLoader loader;
+    const pci::PointCloudLoadOptions request{
+        .sourcePath = fixture.paths().las,
+        .maximumPoints = 8,
+        .localPaging = {.pointThreshold = 1},
+    };
+    const pci::PointCloudImportPreflight preflight = loader.inspect(request);
+    const auto capped = pci::LocalPointIndexBuilder().openOrBuild(
+        preflight,
+        2,
+        {
+            .cache = testCache(fixture, "detail-cap-cache"),
+            .pointsPerLeaf = 2,
+            .rootPreviewPoints = 2,
+            .sortMemoryBytes = 4096,
+        });
+
+    REQUIRE(capped.source);
+    CHECK(capped.source->maximumLevel() == 0);
+    CHECK(capped.source->detailLimited());
+    const pci::PointCloudNode terminal = capped.source->rootNode();
+    CHECK_FALSE(terminal.leaf);
+    CHECK(terminal.detailLimited);
+    CHECK_FALSE(capped.source->fullDetailInfo());
 }
 
 TEST_CASE("concurrent local page builds publish one reusable store",

@@ -103,6 +103,7 @@ public:
     subscribeInvalidation(std::function<void()> callback);
 
     [[nodiscard]] bool hierarchical() const noexcept;
+    [[nodiscard]] bool detailLimited() const noexcept;
     [[nodiscard]] PointCloudNode rootNode() const;
     [[nodiscard]] PointCloudNode node(PointCloudNodeId id) const;
     [[nodiscard]] PointCloudNodePayloadPtr nodePayload(PointCloudNodeId id);

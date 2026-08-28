@@ -33,7 +33,12 @@ struct PointCloudNode {
     Bounds3d bounds;
     double geometricError = 0.0;
     std::uint64_t estimatedPointCount = 0;
+    // True only when the backing hierarchy has no finer source node.
     bool leaf = true;
+    // The backing hierarchy has finer detail, but this source instance does
+    // not currently expose it. Render traversal must stop without treating
+    // the node as an exact leaf.
+    bool detailLimited = false;
 };
 
 struct PointCloudNodePayload {

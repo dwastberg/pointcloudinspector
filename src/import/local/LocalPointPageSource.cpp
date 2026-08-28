@@ -151,6 +151,11 @@ bool probeResidencyEnabled() noexcept
     return enabled;
 }
 
+constexpr Bounds3d nonexistentNodeBounds{
+    .minimum = {1.0, 1.0, 1.0},
+    .maximum = {0.0, 0.0, 0.0},
+};
+
 std::uint64_t estimatedDecodedBytes(const std::uint64_t points) noexcept
 {
     constexpr std::uint64_t bytesPerPoint =
@@ -294,12 +299,23 @@ PointCloudNode LocalPointPageSource::node(const PointCloudNodeId id) const
     }
 
     std::optional<LocalPointPageRecord> page;
+    bool complete = false;
     {
         const std::scoped_lock lock(state_->mutex);
         if (const auto found = state_->pages.find(id);
             found != state_->pages.end()) {
             page = found->second;
         }
+        complete = state_->complete;
+    }
+    if (!page && complete) {
+        return {
+            .id = id,
+            .bounds = nonexistentNodeBounds,
+            .geometricError = 0.0,
+            .estimatedPointCount = 0,
+            .leaf = true,
+        };
     }
     std::uint64_t spatialCells = 1;
     for (std::uint8_t level = 0; level < id.level; ++level) {
@@ -319,7 +335,9 @@ PointCloudNode LocalPointPageSource::node(const PointCloudNodeId id) const
                        state_->pointsPerLeaf,
                        (state_->metadata.sourcePointCount + spatialCells - 1U) /
                            spatialCells),
-        .leaf = id.level == maximumLevel_,
+        .leaf = id.level == state_->maximumLevel,
+        .detailLimited =
+            id.level == maximumLevel_ && maximumLevel_ < state_->maximumLevel,
     };
 }
 
@@ -473,6 +491,11 @@ PointCloudStorageMetrics LocalPointPageSource::storageMetrics() const
     };
 }
 
+bool LocalPointPageSource::detailLimited() const noexcept
+{
+    return maximumLevel_ < state_->maximumLevel;
+}
+
 PointCloudScalarRanges LocalPointPageSource::scalarRanges() const
 {
     const std::scoped_lock lock(state_->mutex);
@@ -486,7 +509,7 @@ LocalPointPageSource::fullDetailInfo() const
     {
         const std::scoped_lock lock(state_->mutex);
         if (!state_->complete || !state_->committed ||
-            !state_->failure.empty()) {
+            !state_->failure.empty() || maximumLevel_ < state_->maximumLevel) {
             return std::nullopt;
         }
         result.leafNodes.reserve(state_->pages.size());

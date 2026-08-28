@@ -19,6 +19,7 @@ public:
     loadNode(PointCloudNodeId id, std::stop_token stopToken) const override;
     [[nodiscard]] PointCloudDataSourceMetrics metrics() const override;
     [[nodiscard]] PointCloudStorageMetrics storageMetrics() const override;
+    [[nodiscard]] bool detailLimited() const noexcept override;
     [[nodiscard]] PointCloudScalarRanges scalarRanges() const override;
     [[nodiscard]] std::optional<PointCloudFullDetailInfo>
     fullDetailInfo() const override;

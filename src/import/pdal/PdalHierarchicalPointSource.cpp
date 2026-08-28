@@ -128,6 +128,11 @@ PdalHierarchicalPointSource::node(const PointCloudNodeId id) const
         }
         spatialCells = *next;
     }
+    // COPC/EPT expose spatial query domains rather than a finite local page
+    // table. Every in-range node remains a valid query; an empty region is
+    // discovered by loadNode() and is not a local-page-style phantom node.
+    const bool terminalLevel = id.level == maximumLevel_;
+    const bool capped = selectedPointCount_ < metadata_.sourcePointCount;
     return {
         .id = id,
         .bounds = pointCloudNodeBounds(metadata_.sourceBounds, id),
@@ -135,7 +140,8 @@ PdalHierarchicalPointSource::node(const PointCloudNodeId id) const
         .estimatedPointCount = std::min<std::uint64_t>(
             pointsPerNode_,
             (selectedPointCount_ + spatialCells - 1U) / spatialCells),
-        .leaf = id.level == maximumLevel_,
+        .leaf = terminalLevel && !capped,
+        .detailLimited = terminalLevel && capped,
     };
 }
 
@@ -275,6 +281,11 @@ PointCloudDataSourceMetrics PdalHierarchicalPointSource::metrics() const
         .fetchedBytes = 0,
         .fetchedBytesKnown = false,
     };
+}
+
+bool PdalHierarchicalPointSource::detailLimited() const noexcept
+{
+    return selectedPointCount_ < metadata_.sourcePointCount;
 }
 
 std::uint8_t PdalHierarchicalPointSource::maximumLevel() const noexcept

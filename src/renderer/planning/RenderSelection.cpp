@@ -432,7 +432,7 @@ RenderSelection::select(const std::span<const PointCloudNodeId> roots,
             return false;
         }
         const RenderSelectionNodeState state = lookup(id);
-        if (!visible(state.node.bounds)) {
+        if (!state.node.bounds.valid() || !visible(state.node.bounds)) {
             return true;
         }
         if (!state.resident) {
@@ -443,7 +443,7 @@ RenderSelection::select(const std::span<const PointCloudNodeId> roots,
         const double errorPixels = projectedErrorPixels(state.node, parameters);
         const bool wasRefined = refinedLastFrame_.contains(id);
         const bool wantsRefinement =
-            !state.node.leaf &&
+            !state.node.leaf && !state.node.detailLimited &&
             errorPixels > (wasRefined ? parameters.coarsenPixelError
                                       : parameters.refinePixelError);
 
@@ -452,7 +452,8 @@ RenderSelection::select(const std::span<const PointCloudNodeId> roots,
             std::vector<RenderSelectionNodeState> visibleChildren;
             for (const PointCloudNodeId child : childNodeIds(id)) {
                 RenderSelectionNodeState childState = lookup(child);
-                if (!visible(childState.node.bounds)) {
+                if (!childState.node.bounds.valid() ||
+                    !visible(childState.node.bounds)) {
                     continue;
                 }
                 visibleChildren.push_back(childState);

@@ -60,6 +60,9 @@ public:
     virtual ~PointCloudDataSource() = default;
 
     [[nodiscard]] virtual PointCloudNode rootNode() const = 0;
+    // A node known not to exist reports invalid bounds and zero estimated
+    // points. A source that is still discovering its hierarchy may return a
+    // conservative valid descriptor until existence becomes authoritative.
     [[nodiscard]] virtual PointCloudNode node(PointCloudNodeId id) const = 0;
     [[nodiscard]] virtual PointCloudNodePayloadPtr
     loadNode(PointCloudNodeId id, std::stop_token stopToken) const = 0;
@@ -70,6 +73,13 @@ public:
     [[nodiscard]] virtual PointCloudStorageMetrics storageMetrics() const
     {
         return {};
+    }
+    // True when this source exposes a deliberately capped hierarchy rather
+    // than all available detail. Individual terminal nodes also report this
+    // through PointCloudNode::detailLimited.
+    [[nodiscard]] virtual bool detailLimited() const noexcept
+    {
+        return false;
     }
     // Complete source-domain statistics, when known independently of decoded
     // cache residency. Render normalization must not infer these from the

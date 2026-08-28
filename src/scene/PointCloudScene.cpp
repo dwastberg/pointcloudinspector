@@ -656,6 +656,13 @@ bool PointCloudScene::hierarchical() const noexcept
         storage_->value);
 }
 
+bool PointCloudScene::detailLimited() const noexcept
+{
+    const auto *hierarchical =
+        std::get_if<Storage::HierarchicalSceneStorage>(&storage_->value);
+    return hierarchical && hierarchical->dataSource->detailLimited();
+}
+
 PointCloudNode PointCloudScene::rootNode() const
 {
     const auto *hierarchical =

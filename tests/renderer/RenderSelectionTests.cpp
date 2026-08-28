@@ -136,6 +136,76 @@ TEST_CASE("LOD selection requests only visible child regions",
                               }));
 }
 
+TEST_CASE("LOD selection ignores children known not to exist",
+          "[unit][renderer-planning][lod][hierarchy-contract]")
+{
+    pci::RenderSelection selector;
+    const std::array roots{pci::rootPointCloudNode};
+    const auto children = pci::childNodeIds(pci::rootPointCloudNode);
+    std::size_t visibilityTests = 0;
+    const auto result = selector.select(
+        roots,
+        [&children](const pci::PointCloudNodeId id) {
+            pci::PointCloudNode node = descriptor(id);
+            const bool exists =
+                id.level == 0 || id == children[0] || id == children[1];
+            if (!exists) {
+                node.bounds = {
+                    .minimum = {1.0, 1.0, 1.0},
+                    .maximum = {0.0, 0.0, 0.0},
+                };
+                node.estimatedPointCount = 0;
+            }
+            return pci::RenderSelectionNodeState{
+                .node = node,
+                .resident = exists,
+                .residentPointCount = id.level == 0 ? 10U : 5U,
+            };
+        },
+        [&visibilityTests](const pci::Bounds3d &) {
+            ++visibilityTests;
+            return true;
+        },
+        parameters());
+
+    const std::vector<pci::PointCloudNodeId> existing(children.begin(),
+                                                      children.begin() + 2);
+    CHECK(result.drawNodes == existing);
+    CHECK(result.requestedNodes == existing);
+    CHECK(result.selectedPoints == 10);
+    // Root once, then each existing child during filtering and traversal.
+    // Known-nonexistent children never reach the visibility query.
+    CHECK(visibilityTests == 5);
+}
+
+TEST_CASE("LOD selection stops at a served detail limit without claiming a "
+          "leaf",
+          "[unit][renderer-planning][lod][hierarchy-contract]")
+{
+    pci::RenderSelection selector;
+    const std::array roots{pci::rootPointCloudNode};
+    const auto result = selector.select(
+        roots,
+        [](const pci::PointCloudNodeId id) {
+            pci::PointCloudNode node = descriptor(id);
+            node.leaf = false;
+            node.detailLimited = true;
+            return pci::RenderSelectionNodeState{
+                .node = node,
+                .resident = true,
+                .residentPointCount = 10,
+            };
+        },
+        [](const pci::Bounds3d &) {
+            return true;
+        },
+        parameters());
+
+    CHECK(result.drawNodes == std::vector{pci::rootPointCloudNode});
+    CHECK(result.requestedNodes.empty());
+    CHECK(result.selectedPoints == 10);
+}
+
 TEST_CASE("LOD refinement hysteresis prevents threshold thrashing",
           "[unit][renderer-planning][lod]")
 {
