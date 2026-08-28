@@ -1,7 +1,6 @@
 #pragma once
 
 #include "renderer/planning/FrameCamera.h"
-#include "renderer/planning/FullDetailController.h"
 #include "renderer/planning/RenderSelection.h"
 #include "renderer/planning/SceneVisibilityIndex.h"
 #include "scene/PointCloudSceneSnapshot.h"
@@ -12,6 +11,7 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <string>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -63,6 +63,11 @@ struct PointFrameNodeRequest {
     std::vector<PointCloudNodeId> nodes;
 };
 
+struct PointFrameLayerError {
+    PointCloudLayerId layerId;
+    std::string message;
+};
+
 struct PointFramePlan {
     std::vector<PointFrameSelectedBlock> blocks;
     std::vector<PointFrameUpload> uploads;
@@ -70,6 +75,7 @@ struct PointFramePlan {
     std::vector<PointCloudNodePayloadPtr> decodedLeases;
     std::unordered_set<PointCloudLayerId> outOfFrustumLayerIds;
     std::vector<PointFrameNodeRequest> nodeRequests;
+    std::vector<PointFrameLayerError> layerErrors;
     std::uint64_t selectedPoints = 0;
     std::uint64_t visibleBlocks = 0;
     std::uint64_t culledBlocks = 0;
@@ -105,11 +111,7 @@ public:
                        std::uint64_t gpuByteBudget,
                        std::uint64_t pointBudget);
 
-    [[nodiscard]] FullDetailConfigurationChange
-    configureFullDetail(const SceneDocumentSnapshotPtr &document,
-                        const std::vector<PointFrameLayer> &layers,
-                        std::uint64_t gpuByteBudget);
-    [[nodiscard]] FullDetailConfigurationChange clear();
+    void clear();
 
     [[nodiscard]] PointBudgetUpdate
     pointBudgetUpdate(const std::vector<PointFrameLayer> &layers,
@@ -117,15 +119,6 @@ public:
                       std::uint64_t currentPointBudget);
 
     [[nodiscard]] PointFrameResult plan(PointFrameInput input);
-    [[nodiscard]] std::vector<FullDetailProgressUpdate> fullDetailProgress(
-        const std::function<bool(const PointFrameBlockKey &)> &resident);
-    [[nodiscard]] bool fullDetailPlanned() const noexcept;
-    [[nodiscard]] bool fullDetailActive() const noexcept;
-    [[nodiscard]] bool fullDetailDecisionPending() const noexcept;
-    [[nodiscard]] FullDetailStatus fullDetailStatus() const;
-    [[nodiscard]] std::optional<FullDetailLayerStatus>
-    fullDetailLayerStatus(PointCloudLayerId layerId) const;
-
 private:
     struct FlatFramePlanKey {
         std::uint64_t cameraRevision = 0;
@@ -150,7 +143,6 @@ private:
     [[nodiscard]] static FlatFramePlanKey
     flatPlanKey(const PointFrameInput &input);
 
-    FullDetailController fullDetailController_;
     SceneVisibilityIndex visibilityIndex_;
     std::unordered_map<PointCloudLayerId, RenderSelection> hierarchySelections_;
     std::optional<FlatFramePlanKey> cachedFlatPlanKey_;

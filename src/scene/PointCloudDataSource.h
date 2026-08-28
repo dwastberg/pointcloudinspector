@@ -89,8 +89,9 @@ public:
         return {};
     }
     // Sources that can enumerate a finite, exact leaf working set expose it
-    // here. Native query hierarchies may remain unbounded or remote and return
-    // no value; the renderer then keeps normal screen-space LOD behavior.
+    // here for explicit exact-data operations such as export. Interactive
+    // rendering always uses bounded screen-space LOD and does not consume this
+    // whole-source description.
     [[nodiscard]] virtual std::optional<PointCloudFullDetailInfo>
     fullDetailInfo() const
     {

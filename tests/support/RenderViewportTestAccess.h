@@ -38,17 +38,6 @@ public:
         return viewport_.telemetry_.frameCount();
     }
 
-    [[nodiscard]] bool fullDetailWarmingForTesting() const noexcept
-    {
-        return viewport_.pointFrameCoordinator_.fullDetailPlanned() &&
-               !viewport_.pointFrameCoordinator_.fullDetailActive();
-    }
-
-    [[nodiscard]] bool fullDetailActiveForTesting() const noexcept
-    {
-        return viewport_.pointFrameCoordinator_.fullDetailActive();
-    }
-
     [[nodiscard]] bool eyeDomeLightingActiveForTesting() const noexcept
     {
         return viewport_.eyeDomeLightingActive_;

@@ -132,8 +132,8 @@ QString RenderDiagnosticsFormatter::statusText(
                "UBO %16/%17G/%18U | Up %19/%20 MiB %21O/%22B | Plan "
                "%23/%24/%25/%26 ms %27 | First %28 ms | Mem %29/%30 "
                "CPU %31 GPU %32/%33 RSS | Cache %34H/%35M | Decode "
-               "%36A/%37Q/%38C | Pick %39/%40B %41/%42P | Full %43 | "
-               "Raster %44D/%45S %46/%47 MiB %48Q")
+               "%36A/%37Q/%38C | Pick %39/%40B %41/%42P | "
+               "Raster %43D/%44S %45/%46 MiB %47Q")
         .arg(rendererLabel)
         .arg(metrics.timingSource)
         .arg(metrics.frameMilliseconds, 0, 'f', 2)
@@ -202,9 +202,6 @@ QString RenderDiagnosticsFormatter::statusText(
         .arg(metrics.pickInputBlocks)
         .arg(metrics.pickCandidatePoints)
         .arg(metrics.pickInputPoints)
-        .arg(metrics.fullDetailActive    ? QStringLiteral("resident")
-             : metrics.fullDetailWarming ? QStringLiteral("warming")
-                                         : QStringLiteral("LOD"))
         .arg(metrics.rasterDrawnTiles)
         .arg(metrics.rasterSelectedTiles)
         .arg(static_cast<double>(metrics.rasterCpuBytes) / bytesPerMiB,

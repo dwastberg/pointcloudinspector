@@ -106,6 +106,38 @@ pci::PointCloudScenePtr completedSceneAtCenter(const pci::Vec3d center)
     return scene;
 }
 
+pci::PointCloudScenePtr coincidentPointSizeScene()
+{
+    // Enough coincident samples to keep the minimum bias at the 1 px clamp
+    // while the maximum bias remains large enough to exercise largePoints.
+    constexpr std::size_t pointCount = 262'144;
+    pci::PointCloudMetadata metadata;
+    metadata.sourcePointCount = pointCount;
+    metadata.sourceBounds = {
+        .minimum = {-1.0, -1.0, -1.0},
+        .maximum = {1.0, 1.0, 1.0},
+    };
+    metadata.hasColor = true;
+    auto scene = std::make_shared<pci::PointCloudScene>(metadata);
+    auto block = std::make_shared<pci::PointBlock>();
+    block->origin = {-1.0, -1.0, -1.0};
+    block->scale = 2.0 / 65535.0;
+    block->bounds = metadata.sourceBounds;
+    const auto q =
+        pci::quantizeToBlock({0.0, 0.0, 0.0}, block->origin, block->scale);
+    block->points.resize(pointCount,
+                         {.x = q[0],
+                          .y = q[1],
+                          .z = q[2],
+                          .attributes = 0,
+                          .rgba = 0xffffffffU,
+                          .packedProperties = 0});
+    block->attributes.resize(pointCount);
+    scene->addBlock(std::move(block));
+    scene->markLoadingComplete();
+    return scene;
+}
+
 pci::SceneDocumentSnapshotPtr documentWithScene(pci::PointCloudScenePtr scene)
 {
     auto document = std::make_shared<pci::SceneDocument>();
@@ -470,8 +502,7 @@ TEST_CASE("GPU point size changes rasterized point coverage",
     viewport.resize(320, 240);
     viewport.setEyeDomeLightingEnabled(false);
     viewport.setPointSizePixels(pci::minimumPointSizePixels);
-    viewport.setDocument(
-        documentWithScene(sceneWithBlocksAt({{0.0, 0.0, 0.0}}, true)), true);
+    viewport.setDocument(documentWithScene(coincidentPointSizeScene()), true);
     viewport.show();
 
     REQUIRE(QTest::qWaitForWindowExposed(&viewport, 2000));
@@ -500,8 +531,8 @@ TEST_CASE("GPU point size changes rasterized point coverage",
     REQUIRE(largeImage.size() == smallImage.size());
     const std::uint64_t largeCoverage = brightPixelCount(largeImage);
 
-    INFO("1 px coverage: " << smallCoverage);
-    INFO("8 px coverage: " << largeCoverage);
+    INFO("minimum point-size bias coverage: " << smallCoverage);
+    INFO("maximum point-size bias coverage: " << largeCoverage);
     CHECK(smallCoverage > 0);
     CHECK(largeCoverage >= 32);
     CHECK(largeCoverage > smallCoverage * 8);
@@ -955,8 +986,8 @@ TEST_CASE("GPU replaces root buffers after document root resampling",
     CHECK(waitForStableFrameCount(viewport));
 }
 
-TEST_CASE("GPU finite hierarchies atomically settle at full detail",
-          "[gpu][hierarchy][full-detail]")
+TEST_CASE("GPU finite hierarchies settle through screen-space LOD",
+          "[gpu][hierarchy][lod]")
 {
     GpuStressHierarchy hierarchy = makeGpuStressHierarchy(0xffffffffU);
     const std::uint64_t payloadBytes =
@@ -990,23 +1021,20 @@ TEST_CASE("GPU finite hierarchies atomically settle at full detail",
     REQUIRE(QTest::qWaitFor(
         [&] {
             return !failure.isEmpty() ||
-                   (pci::testAccess(viewport).fullDetailActiveForTesting() &&
-                    latestMetrics && latestMetrics->fullDetailActive &&
+                   (latestMetrics &&
                     latestMetrics->submittedPoints ==
                         GpuStressHierarchySource::leafPointCount &&
+                    hierarchy.source->metrics().completed == 8 &&
                     std::ranges::any_of(
                         loadProgress,
                         [](const pci::RenderLoadProgress &progress) {
                             return progress.stage ==
-                                       pci::RenderLoadStage::DisplayReady &&
-                                   progress.completed ==
-                                       GpuStressHierarchySource::leafPointCount;
+                                   pci::RenderLoadStage::DisplayReady;
                         }));
         },
         5000));
     REQUIRE(failure.isEmpty());
     REQUIRE(latestMetrics);
-    CHECK_FALSE(latestMetrics->fullDetailWarming);
     CHECK(latestMetrics->requestedPoints ==
           GpuStressHierarchySource::leafPointCount);
     CHECK(latestMetrics->selectedPoints ==
@@ -1015,14 +1043,13 @@ TEST_CASE("GPU finite hierarchies atomically settle at full detail",
     CHECK(hierarchy.source->metrics().completed == 8);
     CHECK(document->decodedResidentBytes() <= decodedByteBudget);
     CHECK(latestMetrics->gpuPointBytes <= gpuByteBudget);
-    const auto warming = std::ranges::find_if(
+    const auto displayReady = std::ranges::find_if(
         loadProgress, [](const pci::RenderLoadProgress &progress) {
-            return progress.stage == pci::RenderLoadStage::FullDetailWarming;
+            return progress.stage == pci::RenderLoadStage::DisplayReady;
         });
-    REQUIRE(warming != loadProgress.end());
-    CHECK(warming->total == GpuStressHierarchySource::leafPointCount);
-    CHECK(warming->decoded <= warming->total);
-    CHECK(warming->uploaded <= warming->total);
+    REQUIRE(displayReady != loadProgress.end());
+    CHECK(displayReady->completed == GpuStressHierarchySource::pointsPerNode);
+    CHECK(displayReady->total == GpuStressHierarchySource::leafPointCount);
     REQUIRE(waitForStableFrameCount(viewport));
 
     const QPoint center(viewport.width() / 2, viewport.height() / 2);
@@ -1032,13 +1059,12 @@ TEST_CASE("GPU finite hierarchies atomically settle at full detail",
         &viewport, Qt::LeftButton, Qt::NoModifier, center + QPoint(12, 0));
     REQUIRE(QTest::qWaitFor(
         [&] {
-            return latestMetrics && latestMetrics->fullDetailActive &&
+            return latestMetrics &&
                    latestMetrics->submittedPoints ==
                        GpuStressHierarchySource::leafPointCount;
         },
         2000));
     REQUIRE(waitForStableFrameCount(viewport));
-    CHECK(pci::testAccess(viewport).fullDetailActiveForTesting());
     CHECK(latestMetrics->requestedPoints ==
           GpuStressHierarchySource::leafPointCount);
     CHECK(latestMetrics->selectedPoints ==
@@ -1057,13 +1083,12 @@ TEST_CASE("GPU finite hierarchies atomically settle at full detail",
         QApplication::sendEvent(&viewport, &wheel);
         REQUIRE(QTest::qWaitFor(
             [&] {
-                return latestMetrics && latestMetrics->fullDetailActive &&
+                return latestMetrics &&
                        latestMetrics->selectedPoints ==
                            GpuStressHierarchySource::leafPointCount;
             },
             2000));
         REQUIRE(waitForStableFrameCount(viewport));
-        CHECK(pci::testAccess(viewport).fullDetailActiveForTesting());
         CHECK(latestMetrics->requestedPoints ==
               GpuStressHierarchySource::leafPointCount);
         CHECK(latestMetrics->submittedPoints ==
@@ -1084,7 +1109,6 @@ TEST_CASE("GPU finite hierarchies atomically settle at full detail",
         2000));
     REQUIRE(waitForStableFrameCount(viewport));
     REQUIRE(latestMetrics);
-    CHECK(latestMetrics->fullDetailActive);
     CHECK(latestMetrics->submittedPoints ==
           GpuStressHierarchySource::leafPointCount);
     CHECK(hierarchy.source->metrics().completed == 8);

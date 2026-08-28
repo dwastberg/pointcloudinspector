@@ -10,7 +10,6 @@ enum class RenderLoadStage {
     Preparing,
     Uploading,
     FirstFrameReady,
-    FullDetailWarming,
     DisplayReady,
 };
 
@@ -19,8 +18,6 @@ struct RenderLoadProgress {
     RenderLoadStage stage = RenderLoadStage::Preparing;
     std::uint64_t completed = 0;
     std::uint64_t total = 0;
-    std::uint64_t decoded = 0;
-    std::uint64_t uploaded = 0;
 };
 
 } // namespace pci

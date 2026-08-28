@@ -102,7 +102,6 @@ pci_add_catch_test_target(pcinspector_tasking_tests
 pci_add_catch_test_target(pcinspector_renderer_planning_tests
         WITH_MAIN
         SOURCES
-        renderer/FullDetailControllerTests.cpp
         renderer/FrustumCullerTests.cpp
         renderer/MeasurementControllerTests.cpp
         renderer/PointFrameCoordinatorTests.cpp

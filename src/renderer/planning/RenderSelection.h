@@ -55,23 +55,6 @@ struct StableFlatBlockAllocation {
     std::uint64_t pointCount = 0;
 };
 
-struct FullDetailResidencyCandidate {
-    std::uint64_t sourcePointCount = 0;
-    std::uint64_t detailPointCount = 0;
-    std::uint64_t decodedBytes = 0;
-    std::uint64_t decodedByteBudget = 0;
-    std::uint64_t gpuBytes = 0;
-};
-
-// Full-detail residency reserves one eighth of both budgets for root/parent
-// transition payloads, container overhead, and unrelated renderer resources.
-// Every visible source must expose its exact finite leaf set and the combined
-// working set must fit the document-owned decoded and GPU caches.
-[[nodiscard]] bool fullDetailResidencyFits(
-    std::span<const FullDetailResidencyCandidate> candidates,
-    std::uint64_t documentDecodedByteBudget,
-    std::uint64_t gpuByteBudget) noexcept;
-
 // A narrow camera-space cone through a screen-space pick footprint. Block
 // bounds are tested conservatively against this volume before any pick draw
 // calls are recorded.

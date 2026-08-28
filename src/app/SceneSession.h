@@ -159,10 +159,6 @@ private:
         bool importCompleted = false;
         bool firstFrameCompleted = false;
         bool displayCompleted = false;
-        bool fullDetailWarming = false;
-        std::uint64_t fullDetailDecoded = 0;
-        std::uint64_t fullDetailUploaded = 0;
-        std::uint64_t fullDetailTotal = 0;
         std::uint64_t renderUploaded = 0;
         std::uint64_t renderUploadTotal = 0;
         PointCloudImportStage importStage = PointCloudImportStage::Reading;

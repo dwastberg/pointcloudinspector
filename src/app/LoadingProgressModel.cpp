@@ -8,8 +8,8 @@ namespace {
 // Import and renderer run concurrently, but display readiness may require
 // several seconds of page decode and GPU upload after a fast persistent-index
 // reopen. Keep a meaningful portion of the bar for that measured work so a
-// load cannot appear to begin at 90+ percent or move backwards when warming
-// starts.
+// load cannot appear to begin at 90+ percent or move backwards when renderer
+// work starts.
 constexpr int readingEndPercent = 70;
 constexpr int optimizingStartPercent = 70;
 constexpr int optimizingEndPercent = 75;
@@ -41,25 +41,6 @@ int scaledPercent(const std::uint64_t processed,
     const auto span = static_cast<std::uint64_t>(endPercent - startPercent);
     const auto clamped = std::min(processed, total);
     return startPercent + static_cast<int>((clamped * span) / total);
-}
-
-int twoPassPercent(const std::uint64_t firstCompleted,
-                   const std::uint64_t secondCompleted,
-                   const std::uint64_t total,
-                   const int startPercent,
-                   const int endPercent) noexcept
-{
-    if (total == 0) {
-        return startPercent;
-    }
-    const long double completed =
-        static_cast<long double>(std::min(firstCompleted, total)) +
-        static_cast<long double>(std::min(secondCompleted, total));
-    const long double fraction =
-        completed / (2.0L * static_cast<long double>(total));
-    return startPercent +
-           static_cast<int>(
-               fraction * static_cast<long double>(endPercent - startPercent));
 }
 
 } // namespace
@@ -208,54 +189,28 @@ LoadingProgressModel::updateRender(const RenderLoadProgress progress) noexcept
         state_.completed = progress.completed;
         state_.total = progress.total;
         state_.estimated = false;
-        setPercentage(pagedSource_ ? twoPassPercent(0,
-                                                    progress.completed,
-                                                    progress.total,
-                                                    pagedStartPercent,
-                                                    rendererUploadEndPercent)
-                                   : scaledPercent(progress.completed,
-                                                   progress.total,
-                                                   rendererStartPercent,
-                                                   rendererUploadEndPercent));
-        return state_;
-    }
-
-    if (progress.stage == RenderLoadStage::FullDetailWarming) {
-        state_.phase = LoadingProgressPhase::FullDetailWarming;
-        state_.completed = progress.completed;
-        state_.total = progress.total;
-        state_.decoded = progress.decoded;
-        state_.uploaded = progress.uploaded;
-        state_.estimated = false;
-        setPercentage(pagedSource_ ? twoPassPercent(progress.decoded,
-                                                    progress.uploaded,
-                                                    progress.total,
-                                                    pagedStartPercent,
-                                                    rendererUploadEndPercent)
-                                   : scaledPercent(progress.completed,
-                                                   progress.total,
-                                                   rendererStartPercent,
-                                                   rendererUploadEndPercent));
+        setPercentage(scaledPercent(progress.completed,
+                                    progress.total,
+                                    pagedSource_ ? pagedStartPercent
+                                                 : rendererStartPercent,
+                                    rendererUploadEndPercent));
         return state_;
     }
 
     if (progress.stage == RenderLoadStage::FirstFrameReady) {
-        if (state_.phase != LoadingProgressPhase::FullDetailWarming) {
-            state_.phase = LoadingProgressPhase::FirstFrameReady;
-            state_.completed = progress.completed;
-            state_.total = progress.total;
-            state_.estimated = false;
-            setPercentage(pagedSource_ ? pagedStartPercent
-                                       : firstFrameReadyPercent);
-        }
+        state_.phase = LoadingProgressPhase::FirstFrameReady;
+        state_.completed = progress.completed;
+        state_.total = progress.total;
+        state_.estimated = false;
+        setPercentage(std::max(state_.percentage,
+                               pagedSource_ ? pagedStartPercent
+                                            : firstFrameReadyPercent));
         return state_;
     }
 
     state_.phase = LoadingProgressPhase::DisplayReady;
     state_.completed = progress.completed;
     state_.total = progress.total;
-    state_.decoded = progress.decoded;
-    state_.uploaded = progress.uploaded;
     state_.estimated = false;
     setPercentage(displayReadyPercent);
     return state_;

@@ -88,11 +88,6 @@ struct RenderResidencyTelemetry {
     std::uint64_t gpuCacheEvictions = 0;
     std::uint64_t processResidentBytes = 0;
     std::uint64_t peakProcessResidentBytes = 0;
-    bool fullDetailWarming = false;
-    bool fullDetailActive = false;
-    std::uint64_t fullDetailDecodedNodes = 0;
-    std::uint64_t fullDetailTotalNodes = 0;
-    std::uint64_t fullDetailDecodesInFlight = 0;
 };
 
 struct RenderDecodeTelemetry {

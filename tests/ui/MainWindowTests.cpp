@@ -2766,11 +2766,9 @@ TEST_CASE("batch loading progress runs monotonically from zero to one hundred",
     for (const auto &layer : layers) {
         viewportPointer->emitLoadProgress({
             .layerId = layer.id,
-            .stage = pci::RenderLoadStage::FullDetailWarming,
+            .stage = pci::RenderLoadStage::Uploading,
             .completed = 5,
             .total = 10,
-            .decoded = 8,
-            .uploaded = 5,
         });
         percentages.push_back(bar->value());
     }
@@ -2837,11 +2835,9 @@ TEST_CASE("cached paged batch progress starts with measured residency work",
     for (const auto &layer : layers) {
         viewportPointer->emitLoadProgress({
             .layerId = layer.id,
-            .stage = pci::RenderLoadStage::FullDetailWarming,
+            .stage = pci::RenderLoadStage::Uploading,
             .completed = 5,
             .total = 10,
-            .decoded = 5,
-            .uploaded = 5,
         });
     }
     CHECK(bar->value() >= 52);
@@ -3058,16 +3054,13 @@ TEST_CASE("main window keeps loading visible until final display readiness",
 
     viewportPointer->emitLoadProgress({
         .layerId = layer.id,
-        .stage = pci::RenderLoadStage::FullDetailWarming,
+        .stage = pci::RenderLoadStage::Uploading,
         .completed = 4,
         .total = 10,
-        .decoded = 7,
-        .uploaded = 4,
     });
     CHECK(bar->value() == 84);
 #ifdef PCINSPECTOR_ENABLE_DIAGNOSTIC_UI
-    CHECK(details->text().contains(QStringLiteral("7 / 10 decoded")));
-    CHECK(details->text().contains(QStringLiteral("4 / 10 uploaded")));
+    CHECK(details->text().contains(QStringLiteral("4 / 10")));
 #else
     CHECK(details->text() == QStringLiteral("Preparing point cloud…"));
 #endif
@@ -3078,8 +3071,6 @@ TEST_CASE("main window keeps loading visible until final display readiness",
         .stage = pci::RenderLoadStage::DisplayReady,
         .completed = 10,
         .total = 10,
-        .decoded = 10,
-        .uploaded = 10,
     });
 
     REQUIRE(waitFor([&] {
@@ -3233,9 +3224,6 @@ TEST_CASE("main window archives native Release H metrics",
         .drawCalls = 4,
         .sourcePoints = 100,
         .submittedPoints = 100,
-        .fullDetailActive = true,
-        .fullDetailDecodedNodes = 3,
-        .fullDetailTotalNodes = 3,
         .decodedPointBytes = 1024,
         .decodedPointBudgetBytes = 4096,
         .peakDecodedPointBytes = 2048,
@@ -3275,7 +3263,7 @@ TEST_CASE("main window archives native Release H metrics",
     CHECK(json.value(QStringLiteral("covered_sources")).toInteger() == 1);
     CHECK(json.value(QStringLiteral("draw_calls")).toInteger() == 4);
     CHECK(json.value(QStringLiteral("submitted_points")).toInteger() == 100);
-    CHECK(json.value(QStringLiteral("full_detail_active")).toBool());
+    CHECK_FALSE(json.contains(QStringLiteral("full_detail_active")));
     const QJsonObject source =
         json.value(QStringLiteral("sources")).toArray().first().toObject();
     CHECK(source.value(QStringLiteral("job_id")).isDouble());

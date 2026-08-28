@@ -219,8 +219,6 @@ SchemaDefinition definitionFor(const QString &schema)
                      QStringLiteral("gpu_peak_bytes")},
                     {"settled_visible_draw_calls",
                      QStringLiteral("draw_calls")},
-                    {"full_detail_hierarchy_pages",
-                     QStringLiteral("full_detail_decoded_nodes")},
                     {"gpu_evictions", QStringLiteral("cache_evictions")},
                 },
             .numberComparabilityFields =
@@ -230,7 +228,6 @@ SchemaDefinition definitionFor(const QString &schema)
                     QStringLiteral("source_count"),
                     QStringLiteral("source_file_bytes"),
                     QStringLiteral("source_points"),
-                    QStringLiteral("full_detail_total_nodes"),
                 },
             .stringComparabilityFields =
                 {
@@ -240,7 +237,6 @@ SchemaDefinition definitionFor(const QString &schema)
             .boolComparabilityFields =
                 {
                     QStringLiteral("gpu_validation"),
-                    QStringLiteral("full_detail_active"),
                 },
             .hasNativeLayerIdentity = true,
         };

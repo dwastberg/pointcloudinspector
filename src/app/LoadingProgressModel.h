@@ -15,7 +15,6 @@ enum class LoadingProgressPhase {
     PreparingRenderer,
     Uploading,
     FirstFrameReady,
-    FullDetailWarming,
     DisplayReady,
 };
 
@@ -24,8 +23,6 @@ struct LoadingProgressState {
     LoadingProgressPhase phase = LoadingProgressPhase::Reading;
     std::uint64_t completed = 0;
     std::uint64_t total = 0;
-    std::uint64_t decoded = 0;
-    std::uint64_t uploaded = 0;
     bool estimated = false;
 };
 

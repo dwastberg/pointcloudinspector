@@ -208,12 +208,6 @@ RenderMetrics projectRenderMetrics(const RenderTelemetrySnapshot &telemetry)
         .visibleBlocks = telemetry.selection.visibleBlocks,
         .culledBlocks = telemetry.selection.culledBlocks,
         .framePlanReused = telemetry.selection.framePlanReused,
-        .fullDetailWarming = telemetry.residency.fullDetailWarming,
-        .fullDetailActive = telemetry.residency.fullDetailActive,
-        .fullDetailDecodedNodes = telemetry.residency.fullDetailDecodedNodes,
-        .fullDetailTotalNodes = telemetry.residency.fullDetailTotalNodes,
-        .fullDetailDecodesInFlight =
-            telemetry.residency.fullDetailDecodesInFlight,
         .uniformDrawCapacity = telemetry.upload.uniformDrawCapacity,
         .uniformCapacityGrowthCount =
             telemetry.upload.uniformCapacityGrowthCount,

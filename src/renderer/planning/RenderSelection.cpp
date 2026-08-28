@@ -51,40 +51,7 @@ std::uint64_t stablePriority(const StableFlatBlockCandidate &candidate) noexcept
     return splitMix64(candidate.blockId ^ splitMix64(candidate.groupId));
 }
 
-std::uint64_t fullDetailUsableBudget(const std::uint64_t byteBudget) noexcept
-{
-    const std::uint64_t reserve =
-        byteBudget / 8U + (byteBudget % 8U != 0 ? 1U : 0U);
-    return reserve > byteBudget ? 0 : byteBudget - reserve;
-}
-
 } // namespace
-
-bool fullDetailResidencyFits(
-    const std::span<const FullDetailResidencyCandidate> candidates,
-    const std::uint64_t documentDecodedByteBudget,
-    const std::uint64_t gpuByteBudget) noexcept
-{
-    if (candidates.empty() || documentDecodedByteBudget == 0 ||
-        gpuByteBudget == 0) {
-        return false;
-    }
-    std::uint64_t decodedBytes = 0;
-    std::uint64_t gpuBytes = 0;
-    for (const FullDetailResidencyCandidate &candidate : candidates) {
-        if (candidate.sourcePointCount == 0 ||
-            candidate.detailPointCount != candidate.sourcePointCount ||
-            candidate.decodedBytes == 0 || candidate.gpuBytes == 0 ||
-            candidate.decodedBytes >
-                fullDetailUsableBudget(candidate.decodedByteBudget)) {
-            return false;
-        }
-        decodedBytes = saturatingAdd(decodedBytes, candidate.decodedBytes);
-        gpuBytes = saturatingAdd(gpuBytes, candidate.gpuBytes);
-    }
-    return decodedBytes <= fullDetailUsableBudget(documentDecodedByteBudget) &&
-           gpuBytes <= fullDetailUsableBudget(gpuByteBudget);
-}
 
 bool ScreenPickVolume::valid() const noexcept
 {

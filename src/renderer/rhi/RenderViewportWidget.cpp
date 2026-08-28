@@ -345,7 +345,6 @@ RenderViewportWidget::~RenderViewportWidget()
     // scene sources are being dismantled. shutdown() is idempotent and the
     // streamer's member destructor repeats it defensively.
     rasterTileStreamer_.shutdown();
-    clearFullDetailPlan();
     sceneSnapshotCache_.clear();
 }
 
@@ -372,12 +371,12 @@ void RenderViewportWidget::setDocument(SceneDocumentSnapshotPtr document,
     }
     const bool replacingDocument =
         static_cast<bool>(sceneSnapshotCache_.document());
-    clearFullDetailPlan();
     sceneSnapshotCache_.setDocument(std::move(document), true);
     pendingFirstFrameLayerIds_.clear();
     pendingDisplayReadyLayerIds_.clear();
     publishedResidentPointCounts_.clear();
-    static_cast<void>(pointFrameCoordinator_.clear());
+    hierarchyLayerErrors_.clear();
+    pointFrameCoordinator_.clear();
     drawSignature_.clear();
     ++selectionGeneration_;
     telemetry_.setPicking({});
@@ -1274,8 +1273,7 @@ void RenderViewportWidget::render(QRhiCommandBuffer *commandBuffer)
     sceneInvalidationPending_ = false;
     updateKeyboardNavigation();
     const auto duration = frameDuration(commandBuffer);
-    if (!pointFrameCoordinator_.fullDetailPlanned() &&
-        telemetry_.frameCount() > 0 && duration.count() > 0.0) {
+    if (telemetry_.frameCount() > 0 && duration.count() > 0.0) {
         const bool delayedGpuWork = timingSource_ == QStringLiteral("GPU") &&
                                     telemetry_.specialFrameCooldownActive();
         pointBudget_.update({
@@ -1405,6 +1403,22 @@ void RenderViewportWidget::render(QRhiCommandBuffer *commandBuffer)
             visibleLayerCount = plan->visibleLayerCount;
             coveredLayerCount = plan->coveredLayerCount;
             planNeedsAnotherFrame = plan->requiresContinuation;
+            std::unordered_map<PointCloudLayerId, std::string> currentErrors;
+            currentErrors.reserve(plan->layerErrors.size());
+            for (const PointFrameLayerError &error : plan->layerErrors) {
+                currentErrors.emplace(error.layerId, error.message);
+                const auto previous = hierarchyLayerErrors_.find(error.layerId);
+                if (previous == hierarchyLayerErrors_.end() ||
+                    previous->second != error.message) {
+                    qWarning().noquote()
+                        << QStringLiteral(
+                               "Point-cloud layer %1 was dropped from the "
+                               "frame: %2")
+                               .arg(error.layerId.value())
+                               .arg(QString::fromStdString(error.message));
+                }
+            }
+            hierarchyLayerErrors_ = std::move(currentErrors);
 
             const auto uploadStart = std::chrono::steady_clock::now();
             {
@@ -1449,8 +1463,6 @@ void RenderViewportWidget::render(QRhiCommandBuffer *commandBuffer)
                     });
                 }
             }
-            publishFullDetailProgress();
-
             const auto commandStart = std::chrono::steady_clock::now();
             draws = buildDrawList(*plan);
             vectorDraws = buildVectorDrawList();
@@ -1531,7 +1543,7 @@ void RenderViewportWidget::render(QRhiCommandBuffer *commandBuffer)
                        "[probe] residency frame=%1 budget_current=%2 "
                        "budget_total=%3 protected_mib=%4 resident_mib=%5/%6 "
                        "evictions=%7 dropped_uploads=%8 dropped_mib=%9 "
-                       "pending_display=%10 full_detail=%11")
+                       "pending_display=%10")
                        .arg(telemetry_.frameCount())
                        .arg(pointBudget_.current())
                        .arg(pointBudget_.total())
@@ -1544,12 +1556,7 @@ void RenderViewportWidget::render(QRhiCommandBuffer *commandBuffer)
                        .arg(uploadScheduler_.evictionCount())
                        .arg(probeDroppedUploads_)
                        .arg(probeDroppedBytes_ / (std::uint64_t{1024} * 1024))
-                       .arg(pendingDisplayReadyLayerIds_.size())
-                       .arg(!pointFrameCoordinator_.fullDetailPlanned()
-                                ? QStringLiteral("none")
-                            : pointFrameCoordinator_.fullDetailActive()
-                                ? QStringLiteral("active")
-                                : QStringLiteral("warming"));
+                       .arg(pendingDisplayReadyLayerIds_.size());
         }
     }
 #endif
@@ -1582,8 +1589,8 @@ void RenderViewportWidget::render(QRhiCommandBuffer *commandBuffer)
         // will do for it while it is off screen, so it is as ready as it gets.
         const bool offScreen = outOfFrustumLayerIds_.contains(layerId);
         if (!snapshot || !snapshot->loadingComplete ||
-            (uploadScheduler_.residentPointCount(layerId) == 0 && !offScreen) ||
-            pointFrameCoordinator_.fullDetailDecisionPending()) {
+            (uploadScheduler_.residentPointCount(layerId) == 0 &&
+             !offScreen)) {
 #ifdef PCINSPECTOR_ENABLE_DIAGNOSTIC_UI
             if (probeResidency_ && probeDue) {
                 qInfo().noquote()
@@ -1598,8 +1605,7 @@ void RenderViewportWidget::render(QRhiCommandBuffer *commandBuffer)
                                       layerId) == 0 &&
                                         !offScreen
                                     ? QStringLiteral("no-resident-block")
-                                    : QStringLiteral(
-                                          "full-detail-decision-pending"))
+                                    : QStringLiteral("ready"))
                            .arg(uploadScheduler_.residentPointCount(layerId));
             }
 #endif
@@ -1607,41 +1613,16 @@ void RenderViewportWidget::render(QRhiCommandBuffer *commandBuffer)
             continue;
         }
 
-        std::uint64_t completed = uploadScheduler_.residentPointCount(layerId);
-        std::uint64_t total = snapshot->hierarchical
-                                  ? snapshot->sourcePointCount
-                                  : snapshot->retainedFlatPointCount;
-        std::uint64_t decoded = 0;
-        std::uint64_t uploadedPoints = 0;
-        if (const std::optional<FullDetailLayerStatus> planned =
-                pointFrameCoordinator_.fullDetailLayerStatus(layerId)) {
-            if (!pointFrameCoordinator_.fullDetailActive()) {
-#ifdef PCINSPECTOR_ENABLE_DIAGNOSTIC_UI
-                if (probeResidency_ && probeDue) {
-                    qInfo().noquote()
-                        << QStringLiteral(
-                               "[probe] display-blocked layer=%1 "
-                               "reason=full-detail-warming decoded=%2/%3")
-                               .arg(layerId.value())
-                               .arg(planned->decodedNodes)
-                               .arg(planned->totalNodes);
-                }
-#endif
-                ++pending;
-                continue;
-            }
-            completed = planned->pointCount;
-            total = planned->pointCount;
-            decoded = total;
-            uploadedPoints = total;
-        }
+        const std::uint64_t completed =
+            uploadScheduler_.residentPointCount(layerId);
+        const std::uint64_t total = snapshot->hierarchical
+                                        ? snapshot->sourcePointCount
+                                        : snapshot->retainedFlatPointCount;
         publishLoadProgress({
             .layerId = layerId,
             .stage = RenderLoadStage::DisplayReady,
             .completed = completed,
             .total = total,
-            .decoded = decoded,
-            .uploaded = uploadedPoints,
         });
         pending = pendingDisplayReadyLayerIds_.erase(pending);
     }
@@ -1732,8 +1713,6 @@ void RenderViewportWidget::refreshDocumentState(
     if (budget.current) {
         pointBudget_.setCurrent(*budget.current);
     }
-    refreshFullDetailPlan(layers);
-
     std::vector<PointCloudLayerId> currentLayerIds;
     currentLayerIds.reserve(layers.size());
     for (const LayerFrameState &layer : layers) {
@@ -1774,52 +1753,6 @@ void RenderViewportWidget::refreshDocumentState(
     }
 }
 
-void RenderViewportWidget::refreshFullDetailPlan(
-    const std::vector<LayerFrameState> &layers)
-{
-    const FullDetailConfigurationChange change =
-        pointFrameCoordinator_.configureFullDetail(
-            sceneSnapshotCache_.document(),
-            layers,
-            uploadScheduler_.residencyByteBudget());
-    if (change.planStarted) {
-        pointBudget_.setCurrent(pointBudget_.total());
-    } else if (change.planStopped) {
-        pointBudget_.setCurrent(
-            std::min<std::uint64_t>(1'000'000, pointBudget_.total()));
-    }
-}
-
-void RenderViewportWidget::publishFullDetailProgress()
-{
-    const auto resident = [this](const PointFrameBlockKey &id) {
-        return uploadScheduler_.bufferFor({
-                   .layerId = id.layerId,
-                   .nodeId = id.nodeId,
-                   .nodeBlockIndex = id.nodeBlockIndex,
-               }) != nullptr;
-    };
-    for (const FullDetailProgressUpdate &progress :
-         pointFrameCoordinator_.fullDetailProgress(resident)) {
-        publishLoadProgress({
-            .layerId = progress.layerId,
-            .stage = RenderLoadStage::FullDetailWarming,
-            .completed = std::min(progress.decoded, progress.uploaded),
-            .total = progress.total,
-            .decoded = progress.decoded,
-            .uploaded = progress.uploaded,
-        });
-    }
-}
-
-void RenderViewportWidget::clearFullDetailPlan()
-{
-    if (pointFrameCoordinator_.clear().planStopped) {
-        pointBudget_.setCurrent(
-            std::min<std::uint64_t>(1'000'000, pointBudget_.total()));
-    }
-}
-
 std::uint64_t RenderViewportWidget::framePointBudget(
     const std::vector<LayerFrameState> &layers) const noexcept
 {
@@ -1831,9 +1764,6 @@ std::uint64_t RenderViewportWidget::framePointBudget(
         });
     const bool interacting =
         input_.hasMovement() || dragMode_ != DragMode::None;
-    if (pointFrameCoordinator_.fullDetailPlanned()) {
-        return pointBudget_.total();
-    }
     return settledFlat && !interacting ? pointBudget_.total()
                                        : pointBudget_.current();
 }
@@ -2422,8 +2352,6 @@ void RenderViewportWidget::publishMetrics(const bool force)
             }
         }
         const ProcessMemoryMetrics memory = processMemoryMetrics();
-        const FullDetailStatus fullDetail =
-            pointFrameCoordinator_.fullDetailStatus();
         const RasterStreamerMetrics rasterStreamerMetrics =
             rasterTileStreamer_.metrics();
         telemetry->backend = {
@@ -2474,11 +2402,6 @@ void RenderViewportWidget::publishMetrics(const bool force)
             .gpuCacheEvictions = uploadScheduler_.evictionCount(),
             .processResidentBytes = memory.residentBytes,
             .peakProcessResidentBytes = memory.peakResidentBytes,
-            .fullDetailWarming = fullDetail.warming,
-            .fullDetailActive = fullDetail.active,
-            .fullDetailDecodedNodes = fullDetail.decodedNodes,
-            .fullDetailTotalNodes = fullDetail.totalNodes,
-            .fullDetailDecodesInFlight = fullDetail.decodesInFlight,
         };
         telemetry->decode = {
             .decodedResidentPoints = decodedResidentPoints,
@@ -2494,8 +2417,7 @@ void RenderViewportWidget::publishMetrics(const bool force)
                        "command_ms=%7 requested=%8 selected=%9 submitted=%10 "
                        "draws=%11 pick_blocks=%12/%13 pick_points=%14/%15 "
                        "gpu_bytes=%16/%17 gpu_budget=%18 gpu_evictions=%19 "
-                       "full_detail=%20 nodes=%21/%22 inflight_sources=%23 "
-                       "cpu_bytes=%24/%25")
+                       "cpu_bytes=%20/%21")
                        .arg(metrics.selectedBackend)
                        .arg(metrics.submittedFrameCount)
                        .arg(metrics.frameMilliseconds, 0, 'f', 3)
@@ -2515,14 +2437,6 @@ void RenderViewportWidget::publishMetrics(const bool force)
                        .arg(metrics.peakGpuPointBytes)
                        .arg(metrics.gpuPointBudgetBytes)
                        .arg(metrics.gpuCacheEvictions)
-                       .arg(metrics.fullDetailActive
-                                ? QStringLiteral("resident")
-                            : metrics.fullDetailWarming
-                                ? QStringLiteral("warming")
-                                : QStringLiteral("lod"))
-                       .arg(metrics.fullDetailDecodedNodes)
-                       .arg(metrics.fullDetailTotalNodes)
-                       .arg(metrics.fullDetailDecodesInFlight)
                        .arg(metrics.decodedPointBytes)
                        .arg(metrics.decodedPointBudgetBytes);
         }

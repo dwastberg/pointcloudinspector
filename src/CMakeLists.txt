@@ -57,8 +57,6 @@ add_library(pcinspector_renderer_planning STATIC
         renderer/planning/AdaptivePointBudget.h
         renderer/planning/FrameCamera.cpp
         renderer/planning/FrameCamera.h
-        renderer/planning/FullDetailController.cpp
-        renderer/planning/FullDetailController.h
         renderer/planning/FramePlanner.cpp
         renderer/planning/FramePlanner.h
         renderer/planning/FrustumCuller.cpp

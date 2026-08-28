@@ -115,6 +115,8 @@ public:
     [[nodiscard]] std::uint64_t
     limitRootPayloadBytes(std::uint64_t maximumBytes);
     void requestNodes(std::span<const PointCloudNodeId> nodes);
+    // Reserved for explicit exact-data operations such as raster recoloring
+    // and export. Interactive rendering must not pin a whole hierarchy.
     void setPinnedNodes(std::span<const PointCloudNodeId> nodes);
     // Hierarchical scenes start with standalone residency. SceneDocument
     // installs document-owned resources while attached, then restores

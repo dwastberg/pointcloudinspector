@@ -932,10 +932,6 @@ void SceneSession::trackLoadJob(
                              .importCompleted = false,
                              .firstFrameCompleted = false,
                              .displayCompleted = false,
-                             .fullDetailWarming = false,
-                             .fullDetailDecoded = 0,
-                             .fullDetailUploaded = 0,
-                             .fullDetailTotal = 0,
                              .renderUploaded = 0,
                              .renderUploadTotal = 0,
                              .importStage = PointCloudImportStage::Reading,
@@ -1471,12 +1467,7 @@ void SceneSession::onRenderLoadProgress(const RenderLoadProgress &progress)
             progressTimer_.stop();
         }
     }
-    if (progress.stage == RenderLoadStage::FullDetailWarming) {
-        load->fullDetailWarming = true;
-        load->fullDetailDecoded = progress.decoded;
-        load->fullDetailUploaded = progress.uploaded;
-        load->fullDetailTotal = progress.total;
-    } else if (progress.stage == RenderLoadStage::Uploading) {
+    if (progress.stage == RenderLoadStage::Uploading) {
         load->renderUploaded = progress.completed;
         load->renderUploadTotal = progress.total;
     } else if (progress.stage == RenderLoadStage::FirstFrameReady) {
@@ -1844,36 +1835,12 @@ void SceneSession::updateBatchProgress()
                 1.0L);
             completion =
                 std::max(completion,
-                         paged ? pagedPreparation + (0.99L - pagedPreparation) *
-                                                        0.5L * fraction
+                         paged ? pagedPreparation +
+                                     (0.99L - pagedPreparation) * fraction
                                : 0.75L + 0.24L * fraction);
         }
         if (!paged && load->importCompleted && load->firstFrameCompleted) {
             completion = std::max(completion, 0.80L);
-        }
-        if (load->fullDetailWarming && load->fullDetailTotal > 0) {
-            const long double fraction =
-                paged ? std::clamp((static_cast<long double>(
-                                        std::min(load->fullDetailDecoded,
-                                                 load->fullDetailTotal)) +
-                                    static_cast<long double>(
-                                        std::min(load->fullDetailUploaded,
-                                                 load->fullDetailTotal))) /
-                                       (2.0L * static_cast<long double>(
-                                                   load->fullDetailTotal)),
-                                   0.0L,
-                                   1.0L)
-                      : std::clamp(
-                            static_cast<long double>(
-                                std::min(load->fullDetailDecoded,
-                                         load->fullDetailUploaded)) /
-                                static_cast<long double>(load->fullDetailTotal),
-                            0.0L,
-                            1.0L);
-            completion = std::max(
-                completion,
-                paged ? pagedPreparation + (0.99L - pagedPreparation) * fraction
-                      : 0.75L + 0.24L * fraction);
         }
         aggregate += std::min(completion, 0.99L);
     }
@@ -1889,30 +1856,6 @@ void SceneSession::updateBatchProgress()
     const PointCloudLoadControllerMetrics metrics = loadController_->metrics();
     const std::uint64_t sampled =
         metrics.safetySampledSources - batchSafetySamplesAtStart_;
-    std::uint64_t fullDetailDecoded = 0;
-    std::uint64_t fullDetailUploaded = 0;
-    std::uint64_t fullDetailTotal = 0;
-    for (const auto &[jobId, load] : activeLoads_) {
-        static_cast<void>(jobId);
-        if (!load.fullDetailWarming) {
-            continue;
-        }
-        fullDetailDecoded =
-            saturatingAdd(fullDetailDecoded, load.fullDetailDecoded);
-        fullDetailUploaded =
-            saturatingAdd(fullDetailUploaded, load.fullDetailUploaded);
-        fullDetailTotal = saturatingAdd(fullDetailTotal, load.fullDetailTotal);
-    }
-    if (fullDetailTotal > 0) {
-        emit batchProgressChanged(
-            batchProgressPercentage_,
-            QStringLiteral(
-                "Preparing full detail: %1 / %2 decoded, %3 / %2 uploaded")
-                .arg(fullDetailDecoded)
-                .arg(fullDetailTotal)
-                .arg(fullDetailUploaded));
-        return;
-    }
     QString details =
         QStringLiteral("Loaded %1 of %2 point clouds; %3 active, %4 queued; "
                        "%5 MiB active estimate")

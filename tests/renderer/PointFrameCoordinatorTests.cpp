@@ -3,7 +3,12 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
+#include <array>
+#include <chrono>
 #include <memory>
+#include <stdexcept>
+#include <thread>
 
 namespace {
 
@@ -48,6 +53,44 @@ pci::FrameCamera visibleCamera()
         .orthographicScale = 20.0,
         .orthographic = true,
     };
+}
+
+class FailingHierarchySource final : public pci::PointCloudDataSource {
+public:
+    [[nodiscard]] pci::PointCloudNode rootNode() const override
+    {
+        return node(pci::rootPointCloudNode);
+    }
+
+    [[nodiscard]] pci::PointCloudNode
+    node(const pci::PointCloudNodeId id) const override
+    {
+        return {
+            .id = id,
+            .bounds = pci::pointCloudNodeBounds(
+                {.minimum = {-1.0, -1.0, -1.0},
+                 .maximum = {1.0, 1.0, 1.0}},
+                id),
+            .geometricError = id.level == 0 ? 1.0 : 0.0,
+            .estimatedPointCount = 10,
+            .leaf = id.level > 0,
+        };
+    }
+
+    [[nodiscard]] pci::PointCloudNodePayloadPtr
+    loadNode(pci::PointCloudNodeId, std::stop_token) const override
+    {
+        throw std::runtime_error("fixture hierarchy failed");
+    }
+};
+
+pci::PointCloudNodePayloadPtr hierarchyRootPayload()
+{
+    auto payload = std::make_shared<pci::PointCloudNodePayload>();
+    payload->nodeId = pci::rootPointCloudNode;
+    payload->blocks.push_back(flatBlock(10));
+    payload->sourcePointCount = 10;
+    return payload;
 }
 
 TEST_CASE("point frame coordinator owns flat assembly and cache reuse",
@@ -115,6 +158,66 @@ TEST_CASE("point frame coordinator owns flat budget settlement",
         coordinator.pointBudgetUpdate(layers, 50 * sizeof(pci::GpuPoint), 20);
     CHECK(unchanged.total == 50);
     CHECK_FALSE(unchanged.current);
+}
+
+TEST_CASE("point frame coordinator isolates a failed hierarchy layer",
+          "[unit][renderer-planning][point-frame][failure]")
+{
+    pci::PointCloudMetadata metadata;
+    metadata.sourcePointCount = 80;
+    metadata.sourceBounds = {
+        .minimum = {-1.0, -1.0, -1.0},
+        .maximum = {1.0, 1.0, 1.0},
+    };
+    auto failedScene = std::make_shared<pci::PointCloudScene>(
+        metadata,
+        std::make_shared<FailingHierarchySource>(),
+        hierarchyRootPayload(),
+        1024 * 1024);
+    failedScene->markLoadingComplete();
+    failedScene->requestNodes(
+        std::array{pci::childNodeId(pci::rootPointCloudNode, 0)});
+    const auto deadline =
+        std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    while (failedScene->hierarchyError().empty() &&
+           std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::yield();
+    }
+    REQUIRE(failedScene->hierarchyError() == "fixture hierarchy failed");
+
+    auto healthyScene =
+        std::make_shared<pci::PointCloudScene>(pci::PointCloudMetadata{});
+    healthyScene->addBlock(flatBlock(10));
+    healthyScene->markLoadingComplete();
+    const pci::PointCloudSceneSnapshot failedSnapshot = failedScene->snapshot();
+    const pci::PointCloudSceneSnapshot healthySnapshot =
+        healthyScene->snapshot();
+    const std::vector<pci::PointFrameLayer> layers{
+        {.layer = {.id = pci::PointCloudLayerId{1}, .scene = failedScene},
+         .snapshot = &failedSnapshot},
+        flatLayer(2, healthyScene, healthySnapshot),
+    };
+
+    pci::PointFrameCoordinator coordinator;
+    const pci::PointFrameResult frame = coordinator.plan({
+        .layers = layers,
+        .camera = visibleCamera(),
+        .framePointBudget = 100,
+        .gpuByteBudget = 100 * sizeof(pci::GpuPoint),
+        .resident =
+            [](const pci::PointFrameBlockKey &) {
+                return true;
+            },
+    });
+    REQUIRE(frame.plan);
+    REQUIRE(frame.plan->layerErrors.size() == 1);
+    CHECK(frame.plan->layerErrors.front().layerId ==
+          pci::PointCloudLayerId{1});
+    CHECK(frame.plan->layerErrors.front().message ==
+          "fixture hierarchy failed");
+    CHECK(std::ranges::any_of(frame.plan->blocks, [](const auto &block) {
+        return block.layerId == pci::PointCloudLayerId{2};
+    }));
 }
 
 } // namespace

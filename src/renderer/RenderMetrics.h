@@ -59,11 +59,6 @@ struct RenderMetrics {
     std::uint64_t visibleBlocks = 0;
     std::uint64_t culledBlocks = 0;
     bool framePlanReused = false;
-    bool fullDetailWarming = false;
-    bool fullDetailActive = false;
-    std::uint64_t fullDetailDecodedNodes = 0;
-    std::uint64_t fullDetailTotalNodes = 0;
-    std::uint64_t fullDetailDecodesInFlight = 0;
     std::uint64_t uniformDrawCapacity = 0;
     std::uint64_t uniformCapacityGrowthCount = 0;
     std::uint64_t uniformUpdateOperations = 0;

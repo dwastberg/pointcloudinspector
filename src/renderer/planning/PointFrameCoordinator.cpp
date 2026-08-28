@@ -8,7 +8,6 @@
 #include <array>
 #include <limits>
 #include <ranges>
-#include <stdexcept>
 #include <unordered_set>
 
 namespace pci {
@@ -55,66 +54,12 @@ FlatFramePlan PointFrameCoordinator::planFlatCandidates(
     return planFlatFrame(candidates, gpuByteBudget, pointBudget);
 }
 
-FullDetailConfigurationChange PointFrameCoordinator::configureFullDetail(
-    const SceneDocumentSnapshotPtr &document,
-    const std::vector<PointFrameLayer> &layers,
-    const std::uint64_t gpuByteBudget)
-{
-    if (!document) {
-        return fullDetailController_.clear();
-    }
-    std::vector<FullDetailLayerDescriptor> descriptors;
-    descriptors.reserve(layers.size());
-    for (const PointFrameLayer &layer : layers) {
-        const PointCloudScenePtr scene = layer.layer.scene;
-        descriptors.push_back({
-            .layerId = layer.layer.id,
-            .hierarchical = layer.snapshot->hierarchical,
-            .loadingComplete = layer.snapshot->loadingComplete,
-            .sourcePointCount = layer.snapshot->sourcePointCount,
-            .decodedByteBudget = scene->decodedByteBudget(),
-            .detail = scene->fullDetailInfo(),
-            .setPinnedNodes =
-                [scene](const std::span<const PointCloudNodeId> nodes) {
-                    scene->setPinnedNodes(nodes);
-                },
-            .peekPayload =
-                [scene](const PointCloudNodeId nodeId) {
-                    return scene->peekNodePayload(nodeId);
-                },
-            .rootPayload =
-                [scene] {
-                    return scene->nodePayload(rootPointCloudNode);
-                },
-            .nodeBounds =
-                [scene](const PointCloudNodeId nodeId) {
-                    return scene->node(nodeId).bounds;
-                },
-            .decodeInFlight =
-                [scene] {
-                    return scene->decodeInFlight();
-                },
-            .hierarchyError =
-                [scene] {
-                    return scene->hierarchyError();
-                },
-        });
-    }
-    return fullDetailController_.configure({
-        .documentRevision = document->revision,
-        .decodedByteBudget = document->decodedByteBudget,
-        .gpuByteBudget = gpuByteBudget,
-        .visibleLayers = std::move(descriptors),
-    });
-}
-
-FullDetailConfigurationChange PointFrameCoordinator::clear()
+void PointFrameCoordinator::clear()
 {
     hierarchySelections_.clear();
     cachedFlatPlanKey_.reset();
     cachedFlatPlan_.reset();
     flatBudgetSettlementKey_.reset();
-    return fullDetailController_.clear();
 }
 
 PointBudgetUpdate PointFrameCoordinator::pointBudgetUpdate(
@@ -193,44 +138,6 @@ PointFrameResult PointFrameCoordinator::plan(PointFrameInput input)
     return {.plan = cachedFlatPlan_};
 }
 
-std::vector<FullDetailProgressUpdate> PointFrameCoordinator::fullDetailProgress(
-    const std::function<bool(const PointFrameBlockKey &)> &resident)
-{
-    return fullDetailController_.progressUpdates(
-        [&resident](const FullDetailBlockId &id) {
-            return resident({.layerId = id.layerId,
-                             .nodeId = id.nodeId,
-                             .nodeBlockIndex = id.nodeBlockIndex});
-        });
-}
-
-bool PointFrameCoordinator::fullDetailPlanned() const noexcept
-{
-    return fullDetailController_.hasPlan();
-}
-
-bool PointFrameCoordinator::fullDetailActive() const noexcept
-{
-    return fullDetailController_.active();
-}
-
-bool PointFrameCoordinator::fullDetailDecisionPending() const noexcept
-{
-    return fullDetailController_.decisionPending();
-}
-
-FullDetailStatus PointFrameCoordinator::fullDetailStatus() const
-{
-    return fullDetailController_.status();
-}
-
-std::optional<FullDetailLayerStatus>
-PointFrameCoordinator::fullDetailLayerStatus(
-    const PointCloudLayerId layerId) const
-{
-    return fullDetailController_.layerStatus(layerId);
-}
-
 PointFramePlan PointFrameCoordinator::buildPlan(const PointFrameInput &input)
 {
     const FrameCamera &frame = input.camera;
@@ -248,79 +155,6 @@ PointFramePlan PointFrameCoordinator::buildPlan(const PointFrameInput &input)
                 result.uploads.push_back({.key = key, .block = block});
             }
         };
-
-    if (fullDetailController_.hasPlan()) {
-        FullDetailFrameResult fullDetail = fullDetailController_.advance(
-            [&culler](const Bounds3d &bounds) {
-                return culler.intersects(bounds);
-            },
-            [&resident](const FullDetailBlockId &id) {
-                return resident({.layerId = id.layerId,
-                                 .nodeId = id.nodeId,
-                                 .nodeBlockIndex = id.nodeBlockIndex});
-            });
-        for (const FullDetailNodeRequest &request : fullDetail.nodeRequests) {
-            result.nodeRequests.push_back({
-                .layerId = request.layerId,
-                .nodes = request.nodes,
-            });
-            const auto layer = std::ranges::find_if(
-                input.layers, [&request](const PointFrameLayer &candidate) {
-                    return candidate.layer.id == request.layerId;
-                });
-            if (layer != input.layers.end()) {
-                layer->layer.scene->requestNodes(request.nodes);
-                result.requiresContinuation =
-                    result.requiresContinuation ||
-                    !layer->layer.scene->decodeInFlight();
-            }
-        }
-        result.decodedLeases = std::move(fullDetail.payloadLeases);
-        for (const FullDetailBlock &upload : fullDetail.uploadRequests) {
-            scheduleUpload({.layerId = upload.id.layerId,
-                            .nodeId = upload.id.nodeId,
-                            .nodeBlockIndex = upload.id.nodeBlockIndex},
-                           upload.block);
-        }
-        for (const FullDetailBlockId &block : fullDetail.protectedBlocks) {
-            result.protectedGpuBlocks.push_back({
-                .layerId = block.layerId,
-                .nodeId = block.nodeId,
-                .nodeBlockIndex = block.nodeBlockIndex,
-            });
-        }
-        for (const FullDetailBlock &drawable : fullDetail.drawableBlocks) {
-            const auto layer = std::ranges::find_if(
-                input.layers, [&drawable](const PointFrameLayer &candidate) {
-                    return candidate.layer.id == drawable.id.layerId;
-                });
-            if (layer == input.layers.end()) {
-                continue;
-            }
-            const PointCloudNode node =
-                layer->layer.scene->node(drawable.id.nodeId);
-            result.blocks.push_back({
-                .layerId = drawable.id.layerId,
-                .colorMode = layer->layer.colorMode,
-                .classificationFilter = layer->layer.classificationFilter,
-                .colorRange = layer->colorRange,
-                .key = {.layerId = drawable.id.layerId,
-                        .nodeId = drawable.id.nodeId,
-                        .nodeBlockIndex = drawable.id.nodeBlockIndex},
-                .block = drawable.block,
-                .pointCount = drawable.pointCount,
-                .pointSpacing = node.geometricError,
-                .pointCoverageFactor = node.leaf ? 1.0 : 2.0,
-            });
-        }
-        result.selectedPoints = fullDetail.selectedPoints;
-        result.visibleBlocks = fullDetail.visibleBlocks;
-        result.culledBlocks = fullDetail.culledBlocks;
-        result.requiresContinuation =
-            result.requiresContinuation || fullDetail.requiresContinuation;
-        finalizeCoverage(result, input.layers.size());
-        return result;
-    }
 
     const bool allFlat =
         std::ranges::all_of(input.layers, [](const PointFrameLayer &layer) {
@@ -443,7 +277,17 @@ PointFramePlan PointFrameCoordinator::buildPlan(const PointFrameInput &input)
             scene->trimDecodedCache();
             const std::string error = scene->hierarchyError();
             if (!error.empty()) {
-                throw std::runtime_error(error);
+                result.layerErrors.push_back({
+                    .layerId = layer.layer.id,
+                    .message = error,
+                });
+                result.nodeRequests.push_back({
+                    .layerId = layer.layer.id,
+                    .nodes = {},
+                });
+                scene->requestNodes({});
+                hierarchySelections_.erase(layer.layer.id);
+                continue;
             }
             RenderSelection &selector = hierarchySelections_[layer.layer.id];
             const std::array roots{rootPointCloudNode};

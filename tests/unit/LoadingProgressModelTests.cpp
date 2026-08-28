@@ -110,43 +110,6 @@ TEST_CASE("renderer progress cannot overtake active source reading",
     CHECK(stale.percentage == 100);
 }
 
-TEST_CASE("full-detail warming exposes measured decode and upload work",
-          "[unit][app][loading]")
-{
-    pci::LoadingProgressModel model;
-    static_cast<void>(
-        model.updateImport(pci::PointCloudImportStage::Reading, 10, 10));
-    const auto warming = model.updateRender({
-        .stage = pci::RenderLoadStage::FullDetailWarming,
-        .completed = 4,
-        .total = 10,
-        .decoded = 7,
-        .uploaded = 4,
-    });
-    CHECK(warming.phase == pci::LoadingProgressPhase::FullDetailWarming);
-    CHECK(warming.percentage == 84);
-    CHECK(warming.decoded == 7);
-    CHECK(warming.uploaded == 4);
-
-    const auto preview = model.updateRender({
-        .stage = pci::RenderLoadStage::FirstFrameReady,
-        .completed = 1,
-        .total = 1,
-    });
-    CHECK(preview.phase == pci::LoadingProgressPhase::FullDetailWarming);
-    CHECK(preview.percentage == 84);
-
-    const auto ready = model.updateRender({
-        .stage = pci::RenderLoadStage::DisplayReady,
-        .completed = 10,
-        .total = 10,
-        .decoded = 10,
-        .uploaded = 10,
-    });
-    CHECK(ready.phase == pci::LoadingProgressPhase::DisplayReady);
-    CHECK(ready.percentage == 100);
-}
-
 TEST_CASE("loading progress is monotonic from zero through display readiness",
           "[unit][app][loading][progress]")
 {
@@ -169,33 +132,18 @@ TEST_CASE("loading progress is monotonic from zero through display readiness",
                                   .total = 10,
                               })
                               .percentage);
-    percentages.push_back(
-        model
-            .updateRender({
-                .stage = pci::RenderLoadStage::FullDetailWarming,
-                .completed = 1,
-                .total = 10,
-                .decoded = 2,
-                .uploaded = 1,
-            })
-            .percentage);
-    percentages.push_back(
-        model
-            .updateRender({
-                .stage = pci::RenderLoadStage::FullDetailWarming,
-                .completed = 8,
-                .total = 10,
-                .decoded = 10,
-                .uploaded = 8,
-            })
-            .percentage);
+    percentages.push_back(model
+                              .updateRender({
+                                  .stage = pci::RenderLoadStage::Uploading,
+                                  .completed = 8,
+                                  .total = 10,
+                              })
+                              .percentage);
     percentages.push_back(model
                               .updateRender({
                                   .stage = pci::RenderLoadStage::DisplayReady,
                                   .completed = 10,
                                   .total = 10,
-                                  .decoded = 10,
-                                  .uploaded = 10,
                               })
                               .percentage);
 
@@ -222,37 +170,18 @@ TEST_CASE("cached paged loading is driven by decode and upload work",
         .completed = 1,
         .total = 10,
     });
-    CHECK(coarseUpload.percentage == 9);
+    CHECK(coarseUpload.percentage == 14);
     const auto firstFrame = model.updateRender({
         .stage = pci::RenderLoadStage::FirstFrameReady,
         .completed = 1,
         .total = 10,
     });
-    CHECK(firstFrame.percentage == 9);
-
-    const auto warming = model.updateRender({
-        .stage = pci::RenderLoadStage::FullDetailWarming,
-        .completed = 2,
-        .total = 10,
-        .decoded = 3,
-        .uploaded = 2,
-    });
-    CHECK(warming.percentage == 28);
-    const auto resident = model.updateRender({
-        .stage = pci::RenderLoadStage::FullDetailWarming,
-        .completed = 10,
-        .total = 10,
-        .decoded = 10,
-        .uploaded = 10,
-    });
-    CHECK(resident.percentage == 99);
+    CHECK(firstFrame.percentage == 14);
     CHECK(model
               .updateRender({
                   .stage = pci::RenderLoadStage::DisplayReady,
                   .completed = 10,
                   .total = 10,
-                  .decoded = 10,
-                  .uploaded = 10,
               })
               .percentage == 100);
 }

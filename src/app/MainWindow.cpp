@@ -104,12 +104,6 @@ QString loadingProgressDetails(const LoadingProgressState &state)
             .arg(state.total);
     case LoadingProgressPhase::FirstFrameReady:
         return QStringLiteral("Displaying preview…");
-    case LoadingProgressPhase::FullDetailWarming:
-        return QStringLiteral(
-                   "Preparing full detail… %1 / %2 decoded, %3 / %2 uploaded")
-            .arg(state.decoded)
-            .arg(state.total)
-            .arg(state.uploaded);
     case LoadingProgressPhase::DisplayReady:
         return QStringLiteral("Displaying point cloud…");
     }
@@ -121,7 +115,6 @@ QString loadingProgressDetails(const LoadingProgressState &state)
     case LoadingProgressPhase::Optimizing:
     case LoadingProgressPhase::PreparingRenderer:
     case LoadingProgressPhase::Uploading:
-    case LoadingProgressPhase::FullDetailWarming:
         return QStringLiteral("Preparing point cloud…");
     case LoadingProgressPhase::FirstFrameReady:
     case LoadingProgressPhase::DisplayReady:

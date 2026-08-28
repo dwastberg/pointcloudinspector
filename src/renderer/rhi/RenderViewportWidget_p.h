@@ -26,6 +26,7 @@
 #include <chrono>
 #include <cstdint>
 #include <optional>
+#include <string>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -120,9 +121,6 @@ private:
     using LayerFrameState = PointFrameLayer;
 
     void refreshDocumentState(const std::vector<LayerFrameState> &layers);
-    void refreshFullDetailPlan(const std::vector<LayerFrameState> &layers);
-    void publishFullDetailProgress();
-    void clearFullDetailPlan();
     void queueSceneInvalidation();
     void frameBounds(const std::optional<Bounds3d> &bounds,
                      double distanceMultiplier = 2.0);
@@ -194,6 +192,7 @@ private:
     std::unordered_set<PointCloudLayerId> outOfFrustumLayerIds_;
     std::unordered_map<PointCloudLayerId, std::uint64_t>
         publishedResidentPointCounts_;
+    std::unordered_map<PointCloudLayerId, std::string> hierarchyLayerErrors_;
     PointFrameCoordinator pointFrameCoordinator_;
     MetricsCallback metricsCallback_;
     FailureCallback failureCallback_;
