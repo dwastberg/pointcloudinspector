@@ -1141,6 +1141,7 @@ void MainWindow::configureQualificationReport(std::filesystem::path outputPath,
                                               const bool exitAfterWrite)
 {
     qualificationReporter_.configure(std::move(outputPath), exitAfterWrite);
+    viewport_->setContinuousMetricsEnabled(true);
 }
 #endif
 

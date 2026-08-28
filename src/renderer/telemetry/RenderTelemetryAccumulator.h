@@ -21,6 +21,9 @@ struct RenderBackendTelemetry {
 struct RenderFrameTelemetry {
     double framesPerSecond = 0.0;
     double frameMilliseconds = 0.0;
+    double sampledFrameMilliseconds = 0.0;
+    int outputWidth = 0;
+    int outputHeight = 0;
     std::uint64_t submittedFrameCount = 0;
     double sceneSnapshotMilliseconds = 0.0;
     double selectionMilliseconds = 0.0;
@@ -52,6 +55,7 @@ struct RenderUploadTelemetry {
     std::uint64_t uniformCapacityGrowthCount = 0;
     std::uint64_t uniformUpdateOperations = 0;
     std::uint64_t uploadedPointBytes = 0;
+    std::uint64_t protectedGpuPointBytes = 0;
     std::uint64_t pendingUploadBytes = 0;
     std::uint64_t uploadOperations = 0;
     std::uint64_t resourceUpdateBatches = 0;
@@ -138,6 +142,8 @@ struct RenderTelemetrySnapshot {
 
 struct RenderTelemetryFrameSample {
     std::chrono::duration<double, std::milli> frameTime{};
+    int outputWidth = 0;
+    int outputHeight = 0;
     std::chrono::nanoseconds snapshotTime{};
     std::chrono::nanoseconds selectionTime{};
     std::chrono::nanoseconds uploadTime{};
@@ -156,6 +162,7 @@ struct RenderTelemetryFrameSample {
     bool includedUploads = false;
     bool includedPick = false;
     std::uint64_t uploadedPointBytes = 0;
+    std::uint64_t protectedGpuPointBytes = 0;
     std::uint64_t pendingUploadBytes = 0;
     std::uint64_t uploadOperations = 0;
     std::uint64_t resourceUpdateBatches = 0;
@@ -191,6 +198,7 @@ private:
     std::uint64_t uploadNanoseconds_ = 0;
     std::uint64_t commandNanoseconds_ = 0;
     std::uint64_t uploadedPointBytes_ = 0;
+    std::uint64_t protectedGpuPointBytes_ = 0;
     std::uint64_t uploadOperations_ = 0;
     std::uint64_t resourceUpdateBatches_ = 0;
     std::uint64_t uniformUpdateOperations_ = 0;

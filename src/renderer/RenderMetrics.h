@@ -14,6 +14,12 @@ struct RenderMetrics {
     bool gpuValidationEnabled = false;
     double framesPerSecond = 0.0;
     double frameMilliseconds = 0.0;
+    // Exact duration of the latest submitted frame. frameMilliseconds remains
+    // the smoothed diagnostics value; qualification percentiles use this
+    // unsmoothed sample.
+    double sampledFrameMilliseconds = 0.0;
+    int outputWidth = 0;
+    int outputHeight = 0;
     // Geometry budget requested by the adaptive controller for the latest
     // frame, before visibility, residency, and upload readiness are applied.
     std::uint64_t requestedPoints = 0;
@@ -63,6 +69,7 @@ struct RenderMetrics {
     std::uint64_t uniformCapacityGrowthCount = 0;
     std::uint64_t uniformUpdateOperations = 0;
     std::uint64_t uploadedPointBytes = 0;
+    std::uint64_t protectedGpuPointBytes = 0;
     std::uint64_t pendingUploadBytes = 0;
     std::uint64_t uploadOperations = 0;
     std::uint64_t uploadResourceUpdateBatches = 0;

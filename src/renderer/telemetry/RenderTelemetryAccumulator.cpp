@@ -34,12 +34,15 @@ void RenderTelemetryAccumulator::recordFrame(
 {
     constexpr double smoothing = 0.1;
     if (sample.frameTime.count() > 0.0) {
+        latest_.frame.sampledFrameMilliseconds = sample.frameTime.count();
         double &smoothed = latest_.frame.frameMilliseconds;
         smoothed = smoothed == 0.0 ? sample.frameTime.count()
                                    : (1.0 - smoothing) * smoothed +
                                          smoothing * sample.frameTime.count();
         latest_.frame.framesPerSecond = 1000.0 / smoothed;
     }
+    latest_.frame.outputWidth = sample.outputWidth;
+    latest_.frame.outputHeight = sample.outputHeight;
     latest_.frame.submittedFrameCount =
         saturatingAdd(latest_.frame.submittedFrameCount, std::uint64_t{1});
     latest_.frame.includedUploads = sample.includedUploads;
@@ -68,6 +71,7 @@ void RenderTelemetryAccumulator::recordFrame(
                                         nanosecondsCount(sample.commandTime));
     uploadedPointBytes_ =
         saturatingAdd(uploadedPointBytes_, sample.uploadedPointBytes);
+    protectedGpuPointBytes_ = sample.protectedGpuPointBytes;
     uploadOperations_ =
         saturatingAdd(uploadOperations_, sample.uploadOperations);
     resourceUpdateBatches_ =
@@ -112,6 +116,7 @@ RenderTelemetryAccumulator::takeSnapshot(const TimePoint now,
     snapshot.frame.commandRecordingMilliseconds =
         static_cast<double>(commandNanoseconds_) / divisor;
     snapshot.upload.uploadedPointBytes = uploadedPointBytes_;
+    snapshot.upload.protectedGpuPointBytes = protectedGpuPointBytes_;
     snapshot.upload.uploadOperations = uploadOperations_;
     snapshot.upload.resourceUpdateBatches = resourceUpdateBatches_;
     snapshot.upload.uniformUpdateOperations = uniformUpdateOperations_;
@@ -122,6 +127,7 @@ RenderTelemetryAccumulator::takeSnapshot(const TimePoint now,
     uploadNanoseconds_ = 0;
     commandNanoseconds_ = 0;
     uploadedPointBytes_ = 0;
+    protectedGpuPointBytes_ = 0;
     uploadOperations_ = 0;
     resourceUpdateBatches_ = 0;
     uniformUpdateOperations_ = 0;
@@ -168,6 +174,9 @@ RenderMetrics projectRenderMetrics(const RenderTelemetrySnapshot &telemetry)
         .gpuValidationEnabled = telemetry.backend.gpuValidationEnabled,
         .framesPerSecond = telemetry.frame.framesPerSecond,
         .frameMilliseconds = telemetry.frame.frameMilliseconds,
+        .sampledFrameMilliseconds = telemetry.frame.sampledFrameMilliseconds,
+        .outputWidth = telemetry.frame.outputWidth,
+        .outputHeight = telemetry.frame.outputHeight,
         .requestedPoints = telemetry.selection.requestedPoints,
         .selectedPoints = telemetry.selection.selectedPoints,
         .submittedPoints = telemetry.selection.submittedPoints,
@@ -213,6 +222,7 @@ RenderMetrics projectRenderMetrics(const RenderTelemetrySnapshot &telemetry)
             telemetry.upload.uniformCapacityGrowthCount,
         .uniformUpdateOperations = telemetry.upload.uniformUpdateOperations,
         .uploadedPointBytes = telemetry.upload.uploadedPointBytes,
+        .protectedGpuPointBytes = telemetry.upload.protectedGpuPointBytes,
         .pendingUploadBytes = telemetry.upload.pendingUploadBytes,
         .uploadOperations = telemetry.upload.uploadOperations,
         .uploadResourceUpdateBatches = telemetry.upload.resourceUpdateBatches,

@@ -601,6 +601,16 @@ void RenderViewportWidget::setMetricsCallback(MetricsCallback callback)
     metricsCallback_ = std::move(callback);
 }
 
+void RenderViewportWidget::setContinuousMetricsEnabled(const bool enabled)
+{
+    if (continuousMetricsEnabled_ == enabled) {
+        return;
+    }
+    continuousMetricsEnabled_ = enabled;
+    telemetry_.makeNextSnapshotDue(RenderTelemetryAccumulator::Clock::now());
+    requestRender();
+}
+
 void RenderViewportWidget::setFailureCallback(FailureCallback callback)
 {
     failureCallback_ = std::move(callback);
@@ -1634,6 +1644,8 @@ void RenderViewportWidget::render(QRhiCommandBuffer *commandBuffer)
     }
     telemetry_.recordFrame({
         .frameTime = duration,
+        .outputWidth = renderTarget()->pixelSize().width(),
+        .outputHeight = renderTarget()->pixelSize().height(),
         .snapshotTime = snapshotTime,
         .selectionTime = selectionTime,
         .uploadTime = uploadTime,
@@ -1652,6 +1664,8 @@ void RenderViewportWidget::render(QRhiCommandBuffer *commandBuffer)
         .includedUploads = uploaded > 0,
         .includedPick = frameStartedWithPick || pointPicker_.inFlight(),
         .uploadedPointBytes = uploadScheduler_.frameMetrics().uploadedBytes,
+        .protectedGpuPointBytes =
+            uploadScheduler_.frameMetrics().protectedBytes,
         .pendingUploadBytes = uploadScheduler_.frameMetrics().pendingBytes,
         .uploadOperations = uploadScheduler_.frameMetrics().uploadOperations,
         .resourceUpdateBatches =
@@ -1672,7 +1686,8 @@ void RenderViewportWidget::render(QRhiCommandBuffer *commandBuffer)
     // Event-driven rendering may not submit another frame for a long time.
     // Publish the settling frame even inside the normal sampling interval so
     // diagnostics capture the final selected/submitted counts and frame total.
-    publishMetrics(!continueRendering || telemetry_.frameCount() == 1);
+    publishMetrics(continuousMetricsEnabled_ || !continueRendering ||
+                   telemetry_.frameCount() == 1);
 
     if (smokeTest_ && telemetry_.frameCount() >= 3) {
         QTimer::singleShot(0, QCoreApplication::instance(), [] {

@@ -3279,6 +3279,13 @@ TEST_CASE("main window archives native Release H metrics",
     CHECK(json.value(QStringLiteral("display_ready_ms")).toDouble() >= 0.0);
     CHECK(json.value(QStringLiteral("frame_ms_p95")).toDouble() ==
           Catch::Approx(7.5));
+    const QJsonArray frames = json.value(QStringLiteral("frames")).toArray();
+    REQUIRE(frames.size() == 1);
+    const QJsonObject frame = frames.first().toObject();
+    CHECK(frame.value(QStringLiteral("frame_ms")).toDouble() ==
+          Catch::Approx(7.5));
+    CHECK(frame.value(QStringLiteral("submitted_points")).toInteger() == 100);
+    CHECK(frame.value(QStringLiteral("gpu_frame_ms")).isNull());
 
     // A bug report has to distinguish "this build has no GTI" from "GTI is
     // present and the catalog is broken", so drivers are reported one by one

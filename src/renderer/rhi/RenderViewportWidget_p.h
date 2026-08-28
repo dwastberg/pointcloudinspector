@@ -83,6 +83,7 @@ public:
     [[nodiscard]] ViewportTool activeTool() const noexcept override;
     void setActiveTool(ViewportTool tool) override;
     void setMetricsCallback(MetricsCallback callback) override;
+    void setContinuousMetricsEnabled(bool enabled) override;
     void setFailureCallback(FailureCallback callback) override;
     void setLoadProgressCallback(LoadProgressCallback callback) override;
     [[nodiscard]] VectorOverlayCapability
@@ -264,6 +265,7 @@ private:
     std::uint64_t selectionGeneration_ = 0;
     bool sceneInvalidationPending_ = false;
     bool frameTimingContinuous_ = false;
+    bool continuousMetricsEnabled_ = false;
     std::chrono::steady_clock::time_point previousCpuFrame_;
     QElapsedTimer navigationTimer_;
 };

@@ -117,6 +117,14 @@ public:
     [[nodiscard]] virtual ViewportTool activeTool() const noexcept = 0;
     virtual void setActiveTool(ViewportTool tool) = 0;
     virtual void setMetricsCallback(MetricsCallback callback) = 0;
+    // Qualification runs need one metrics sample for every submitted frame.
+    // Normal diagnostics remain throttled to avoid flooding the UI event
+    // queue. Implementations that do not provide renderer telemetry may ignore
+    // this request.
+    virtual void setContinuousMetricsEnabled(bool enabled)
+    {
+        static_cast<void>(enabled);
+    }
     virtual void setFailureCallback(FailureCallback callback) = 0;
     virtual void setLoadProgressCallback(LoadProgressCallback callback) = 0;
     [[nodiscard]] virtual VectorOverlayCapability

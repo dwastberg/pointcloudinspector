@@ -17,6 +17,8 @@ TEST_CASE("render telemetry accumulates and publishes deterministic windows",
     telemetry.setPicking({4, 2, 400, 50});
     telemetry.recordFrame({
         .frameTime = 10ms,
+        .outputWidth = 1280,
+        .outputHeight = 800,
         .snapshotTime = 1ms,
         .selectionTime = 2ms,
         .uploadTime = 3ms,
@@ -26,12 +28,15 @@ TEST_CASE("render telemetry accumulates and publishes deterministic windows",
         .submittedPoints = 600,
         .drawCalls = 6,
         .uploadedPointBytes = 100,
+        .protectedGpuPointBytes = 1'600,
         .uploadOperations = 2,
         .resourceUpdateBatches = 1,
         .uniformUpdateOperations = 6,
     });
     telemetry.recordFrame({
         .frameTime = 20ms,
+        .outputWidth = 1280,
+        .outputHeight = 800,
         .snapshotTime = 3ms,
         .selectionTime = 4ms,
         .uploadTime = 5ms,
@@ -41,6 +46,7 @@ TEST_CASE("render telemetry accumulates and publishes deterministic windows",
         .submittedPoints = 650,
         .drawCalls = 7,
         .uploadedPointBytes = 200,
+        .protectedGpuPointBytes = 3'200,
         .uploadOperations = 3,
         .resourceUpdateBatches = 1,
         .uniformUpdateOperations = 7,
@@ -50,11 +56,15 @@ TEST_CASE("render telemetry accumulates and publishes deterministic windows",
     REQUIRE(snapshot);
     CHECK(snapshot->frame.submittedFrameCount == 2);
     CHECK(snapshot->frame.frameMilliseconds == 11.0);
+    CHECK(snapshot->frame.sampledFrameMilliseconds == 20.0);
+    CHECK(snapshot->frame.outputWidth == 1280);
+    CHECK(snapshot->frame.outputHeight == 800);
     CHECK(snapshot->frame.sceneSnapshotMilliseconds == 2.0);
     CHECK(snapshot->frame.commandRecordingMilliseconds == 5.0);
     CHECK(snapshot->selection.submittedPoints == 650);
     CHECK(snapshot->selection.sourcePoints == 1000);
     CHECK(snapshot->upload.uploadedPointBytes == 300);
+    CHECK(snapshot->upload.protectedGpuPointBytes == 3'200);
     CHECK(snapshot->upload.uniformUpdateOperations == 13);
     CHECK(snapshot->picking.candidatePoints == 50);
     CHECK_FALSE(telemetry.takeSnapshot(start + 100ms, false));
@@ -94,8 +104,12 @@ TEST_CASE("render telemetry projects grouped state to the stable API",
     pci::RenderTelemetrySnapshot grouped;
     grouped.backend.selectedBackend = QStringLiteral("Metal");
     grouped.frame.submittedFrameCount = 12;
+    grouped.frame.sampledFrameMilliseconds = 8.0;
+    grouped.frame.outputWidth = 1920;
+    grouped.frame.outputHeight = 1080;
     grouped.selection.requestedPoints = 100;
     grouped.upload.uploadedPointBytes = 200;
+    grouped.upload.protectedGpuPointBytes = 250;
     grouped.residency.gpuPointBytes = 300;
     grouped.decode.decodedPointBytes = 400;
     grouped.decode.decodeRequestsCompleted = 9;
@@ -104,8 +118,12 @@ TEST_CASE("render telemetry projects grouped state to the stable API",
     const pci::RenderMetrics projected = pci::projectRenderMetrics(grouped);
     CHECK(projected.selectedBackend == QStringLiteral("Metal"));
     CHECK(projected.submittedFrameCount == 12);
+    CHECK(projected.sampledFrameMilliseconds == 8.0);
+    CHECK(projected.outputWidth == 1920);
+    CHECK(projected.outputHeight == 1080);
     CHECK(projected.requestedPoints == 100);
     CHECK(projected.uploadedPointBytes == 200);
+    CHECK(projected.protectedGpuPointBytes == 250);
     CHECK(projected.gpuPointBytes == 300);
     CHECK(projected.decodedPointBytes == 400);
     CHECK(projected.decodeRequestsCompleted == 9);

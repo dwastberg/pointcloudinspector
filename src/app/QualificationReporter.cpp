@@ -28,7 +28,7 @@ void QualificationReporter::configure(std::filesystem::path outputPath,
     exitAfterWrite_ = exitAfterWrite;
     reportWritten_ = false;
     lastRenderMetrics_.reset();
-    frameMilliseconds_.clear();
+    frameMetrics_.clear();
 }
 
 bool QualificationReporter::configured() const noexcept
@@ -44,9 +44,12 @@ void QualificationReporter::setGdalRuntimeInfo(GdalRuntimeInfo info)
 void QualificationReporter::record(const RenderMetrics &metrics)
 {
     lastRenderMetrics_ = metrics;
-    if (configured() && metrics.frameMilliseconds > 0.0 &&
-        frameMilliseconds_.size() < 16'384) {
-        frameMilliseconds_.push_back(metrics.frameMilliseconds);
+    const double frameMilliseconds = metrics.sampledFrameMilliseconds > 0.0
+                                         ? metrics.sampledFrameMilliseconds
+                                         : metrics.frameMilliseconds;
+    if (configured() && frameMilliseconds > 0.0 &&
+        frameMetrics_.size() < 16'384) {
+        frameMetrics_.push_back(metrics);
     }
 }
 
@@ -60,7 +63,13 @@ QualificationReporter::write(const QString &status,
     }
     reportWritten_ = true;
 
-    std::vector<double> frameTimes = frameMilliseconds_;
+    std::vector<double> frameTimes;
+    frameTimes.reserve(frameMetrics_.size());
+    for (const RenderMetrics &metrics : frameMetrics_) {
+        frameTimes.push_back(metrics.sampledFrameMilliseconds > 0.0
+                                 ? metrics.sampledFrameMilliseconds
+                                 : metrics.frameMilliseconds);
+    }
     std::ranges::sort(frameTimes);
     const auto percentile = [&frameTimes](const double fraction) {
         if (frameTimes.empty()) {
@@ -149,6 +158,72 @@ QualificationReporter::write(const QString &status,
             {QStringLiteral("crs_mismatch"), raster.crsMismatch},
             {QStringLiteral("extent_disjoint"), raster.extentDisjointXY},
             {QStringLiteral("visible"), layer.visible},
+        });
+    }
+
+    QJsonArray frames;
+    for (std::size_t index = 0; index < frameMetrics_.size(); ++index) {
+        const RenderMetrics &frame = frameMetrics_[index];
+        const double frameMilliseconds = frame.sampledFrameMilliseconds > 0.0
+                                             ? frame.sampledFrameMilliseconds
+                                             : frame.frameMilliseconds;
+        frames.append(QJsonObject{
+            {QStringLiteral("sample_index"), static_cast<qint64>(index)},
+            {QStringLiteral("submitted_frame"),
+             static_cast<qint64>(frame.submittedFrameCount)},
+            {QStringLiteral("timing_source"), frame.timingSource},
+            {QStringLiteral("frame_ms"), frameMilliseconds},
+            {QStringLiteral("gpu_frame_ms"),
+             frame.timingSource == QStringLiteral("GPU")
+                 ? QJsonValue(frameMilliseconds)
+                 : QJsonValue(QJsonValue::Null)},
+            {QStringLiteral("output_width"), frame.outputWidth},
+            {QStringLiteral("output_height"), frame.outputHeight},
+            {QStringLiteral("source_points"),
+             static_cast<qint64>(frame.sourcePoints)},
+            {QStringLiteral("requested_points"),
+             static_cast<qint64>(frame.requestedPoints)},
+            {QStringLiteral("selected_points"),
+             static_cast<qint64>(frame.selectedPoints)},
+            {QStringLiteral("submitted_points"),
+             static_cast<qint64>(frame.submittedPoints)},
+            {QStringLiteral("draw_calls"),
+             static_cast<qint64>(frame.drawCalls)},
+            {QStringLiteral("visible_sources"),
+             static_cast<qint64>(frame.visibleLayerCount)},
+            {QStringLiteral("covered_sources"),
+             static_cast<qint64>(frame.coveredLayerCount)},
+            {QStringLiteral("visible_blocks"),
+             static_cast<qint64>(frame.visibleBlocks)},
+            {QStringLiteral("culled_blocks"),
+             static_cast<qint64>(frame.culledBlocks)},
+            {QStringLiteral("decode_requests_queued"),
+             static_cast<qint64>(frame.decodeRequestsQueued)},
+            {QStringLiteral("decode_requests_started"),
+             static_cast<qint64>(frame.decodeRequestsStarted)},
+            {QStringLiteral("decode_requests_completed"),
+             static_cast<qint64>(frame.decodeRequestsCompleted)},
+            {QStringLiteral("uploaded_point_bytes"),
+             static_cast<qint64>(frame.uploadedPointBytes)},
+            {QStringLiteral("protected_gpu_point_bytes"),
+             static_cast<qint64>(frame.protectedGpuPointBytes)},
+            {QStringLiteral("gpu_resident_bytes"),
+             static_cast<qint64>(frame.gpuPointBytes)},
+            {QStringLiteral("gpu_budget_bytes"),
+             static_cast<qint64>(frame.gpuPointBudgetBytes)},
+            {QStringLiteral("gpu_evictions"),
+             static_cast<qint64>(frame.gpuCacheEvictions)},
+            {QStringLiteral("cpu_resident_bytes"),
+             static_cast<qint64>(frame.decodedPointBytes)},
+            {QStringLiteral("cpu_budget_bytes"),
+             static_cast<qint64>(frame.decodedPointBudgetBytes)},
+            {QStringLiteral("cpu_evictions"),
+             static_cast<qint64>(frame.cacheEvictions)},
+            {QStringLiteral("selection_ms"), frame.selectionMilliseconds},
+            {QStringLiteral("command_recording_ms"),
+             frame.commandRecordingMilliseconds},
+            {QStringLiteral("included_uploads"), frame.frameIncludedUploads},
+            {QStringLiteral("included_pick"), frame.frameIncludedPick},
         });
     }
 
@@ -277,6 +352,7 @@ QualificationReporter::write(const QString &status,
          static_cast<qint64>(metrics.rasterCoarsestLevel)},
         {QStringLiteral("raster_coverage_incomplete"),
          metrics.rasterCoverageIncomplete},
+        {QStringLiteral("frames"), frames},
         {QStringLiteral("sources"), sources},
         {QStringLiteral("layers"), layers},
         {QStringLiteral("raster_layers"), rasterLayers},

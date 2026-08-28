@@ -44,7 +44,7 @@ private:
     bool reportWritten_ = false;
     GdalRuntimeInfo gdalRuntimeInfo_;
     std::optional<RenderMetrics> lastRenderMetrics_;
-    std::vector<double> frameMilliseconds_;
+    std::vector<RenderMetrics> frameMetrics_;
 };
 
 } // namespace pci
