@@ -246,7 +246,6 @@ target_include_directories(pcinspector_renderer_api INTERFACE
         "${pcinspector_source_include_dir}")
 target_link_libraries(pcinspector_renderer_api INTERFACE
         pcinspector::project_options
-        pcinspector::navigation
         pcinspector::scene
         Qt6::Core)
 
