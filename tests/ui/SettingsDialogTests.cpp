@@ -74,6 +74,8 @@ TEST_CASE("settings dialog exposes appearance and depth controls",
     CHECK(cpuCache->value() == 768);
     CHECK(gpuCache->value() == 384);
     CHECK(maximumPoints->value() == Catch::Approx(25'000'000.0));
+    CHECK(maximumPoints->toolTip().contains(QStringLiteral("non-paged"),
+                                            Qt::CaseInsensitive));
 
     strength->setValue(45.0);
     CHECK(liveChangeCount == 1);

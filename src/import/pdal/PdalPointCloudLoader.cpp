@@ -160,11 +160,15 @@ PdalPointCloudLoader::inspect(const PointCloudLoadOptions &options,
     }
 
     const bool nativeHierarchy = hierarchicalDriver(metadata.sourceDriver);
-    const std::uint64_t desired =
-        std::min(metadata.sourcePointCount, options.maximumPoints);
     const bool localPaging =
         !nativeHierarchy && metadata.sourceDriver == "readers.las" &&
         metadata.sourcePointCount > options.localPaging.pointThreshold;
+    const bool paged = nativeHierarchy || localPaging;
+    // Paged sources keep the complete source and bound only their resident
+    // working set. The user point limit remains a safety cap for flat imports.
+    const std::uint64_t desired =
+        paged ? metadata.sourcePointCount
+              : std::min(metadata.sourcePointCount, options.maximumPoints);
     std::error_code error;
     const std::uintmax_t fileBytes =
         std::filesystem::file_size(options.sourcePath, error);
@@ -186,15 +190,13 @@ PdalPointCloudLoader::inspect(const PointCloudLoadOptions &options,
         .sourceFileBytes = safeFileBytes,
         .sourceModificationTime = modificationTicks,
         .desiredRetainedPoints = desired,
-        .estimatedResidentBytes = nativeHierarchy || localPaging
-                                      ? estimatedFlatResidentBytes(rootPoints)
-                                      : estimatedFlatResidentBytes(desired),
+        .estimatedResidentBytes = paged ? estimatedFlatResidentBytes(rootPoints)
+                                        : estimatedFlatResidentBytes(desired),
         .estimatedActiveBytes =
-            nativeHierarchy || localPaging
-                ? std::min(estimatedDecodeAllowance(rootPoints),
-                           flatImportWorkingBytes)
-                : flatImportWorkingBytes,
-        .hierarchical = nativeHierarchy || localPaging,
+            paged ? std::min(estimatedDecodeAllowance(rootPoints),
+                             flatImportWorkingBytes)
+                  : flatImportWorkingBytes,
+        .hierarchical = paged,
         .localPaging = localPaging,
     };
 }
@@ -218,10 +220,15 @@ PdalPointCloudLoader::load(const PointCloudLoadOptions &options,
     }
 
     const PointCloudMetadata metadata = preflight.metadata;
-    const std::uint64_t retainedPointLimit =
-        preflight.retainedPointLimit == 0
-            ? options.maximumPoints
-            : std::min(options.maximumPoints, preflight.retainedPointLimit);
+    const bool nativeHierarchy = hierarchicalDriver(metadata.sourceDriver);
+    const bool paged = nativeHierarchy || preflight.localPaging;
+    std::uint64_t retainedPointLimit = metadata.sourcePointCount;
+    if (!paged) {
+        retainedPointLimit =
+            preflight.retainedPointLimit == 0
+                ? options.maximumPoints
+                : std::min(options.maximumPoints, preflight.retainedPointLimit);
+    }
     if (retainedPointLimit == 0) {
         throw PointCloudImportError(
             "retainedPointLimit must be greater than zero");
@@ -238,7 +245,7 @@ PdalPointCloudLoader::load(const PointCloudLoadOptions &options,
                   retainedPointLimit / 8, 1, streamingPublicationInterval)
             : streamingPublicationInterval;
 
-    if (hierarchicalDriver(metadata.sourceDriver)) {
+    if (nativeHierarchy) {
         if (context.progress) {
             context.progress({
                 .stage = PointCloudImportStage::Reading,
@@ -249,7 +256,7 @@ PdalPointCloudLoader::load(const PointCloudLoadOptions &options,
         try {
             auto source = std::make_shared<PdalHierarchicalPointSource>(
                 metadata,
-                options.maximumPoints,
+                metadata.sourcePointCount,
                 pointsPerNodeForBudget(resources.decodedByteBudget));
             HierarchyResidencyCoordinator::ParticipantPtr rootParticipant;
             std::optional<HierarchyResidencyCoordinator::DecodeLease>
@@ -308,7 +315,7 @@ PdalPointCloudLoader::load(const PointCloudLoadOptions &options,
             PointCloudScenePtr scene;
             const LocalPointPageBuildResult result = builder.openOrBuild(
                 preflight,
-                options.maximumPoints,
+                metadata.sourcePointCount,
                 {
                     .cache = options.localPaging.cache,
                     .pointsPerLeaf = options.localPaging.pagePoints,

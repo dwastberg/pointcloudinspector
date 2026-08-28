@@ -51,7 +51,9 @@ ApplicationInvocation parseApplicationInvocation(const QStringList &arguments)
         QStringLiteral("Exit after three rendered frames."));
     const QCommandLineOption maximumPointsOption(
         QStringLiteral("max-points"),
-        QStringLiteral("Maximum number of source points to load."),
+        QStringLiteral(
+            "Maximum points retained for a non-paged point-cloud source. "
+            "Paged and hierarchical sources retain all points."),
         QStringLiteral("count"),
         QStringLiteral("10000000"));
     const QCommandLineOption cpuCacheOption(

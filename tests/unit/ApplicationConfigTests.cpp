@@ -163,6 +163,7 @@ TEST_CASE("application invocation parser returns help and version text",
     CHECK_FALSE(help.writeToStandardError);
     CHECK(help.message.contains(QStringLiteral("Usage:")));
     CHECK(help.message.contains(QStringLiteral("--max-points")));
+    CHECK(help.message.contains(QStringLiteral("non-paged")));
     CHECK(help.message.contains(QStringLiteral("vector")));
     CHECK(help.message.contains(QStringLiteral("raster")));
 

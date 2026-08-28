@@ -239,10 +239,18 @@ TEST_CASE("PDAL loads equivalent block scenes from supported formats",
 
     const auto las = loader.load({.sourcePath = fixture.paths().las});
     const auto laz = loader.load({.sourcePath = fixture.paths().laz});
-    const auto copc = loader.load({.sourcePath = fixture.paths().copc});
+    const pci::PointCloudLoadOptions copcOptions{
+        .sourcePath = fixture.paths().copc,
+        .maximumPoints = 4,
+    };
+    const pci::PointCloudImportPreflight copcPreflight =
+        loader.inspect(copcOptions);
+    const auto copc = loader.load(copcOptions);
 
     CHECK(las->totalPointCount() == pci::test::fixturePoints.size());
     CHECK_FALSE(las->hierarchical());
+    CHECK(copcPreflight.desiredRetainedPoints ==
+          pci::test::fixturePoints.size());
     CHECK(copc->hierarchical());
     CHECK(sortedPoints(las) == sortedPoints(laz));
     CHECK(sortedPoints(las) == sortedPoints(copc));
@@ -356,7 +364,7 @@ TEST_CASE(
         .options =
             {
                 .sourcePath = fixture.paths().las,
-                .maximumPoints = 8,
+                .maximumPoints = 4,
                 .localPaging =
                     {
                         .pointThreshold = 1,
@@ -381,6 +389,7 @@ TEST_CASE(
     const pci::PointCloudImportPreflight preflight = loader.inspect(request);
     CHECK(preflight.hierarchical);
     CHECK(preflight.localPaging);
+    CHECK(preflight.desiredRetainedPoints == pci::test::fixturePoints.size());
     const auto scene =
         loader.load(request.options, request.resources, preflight, context);
     REQUIRE(scene);

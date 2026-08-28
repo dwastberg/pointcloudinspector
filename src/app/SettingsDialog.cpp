@@ -147,8 +147,10 @@ SettingsDialog::SettingsDialog(const ViewportSettings &settings,
     maximumLoadPoints_->setSingleStep(1'000'000.0);
     maximumLoadPoints_->setGroupSeparatorShown(true);
     maximumLoadPoints_->setToolTip(
-        tr("Maximum source points retained when opening a point cloud"));
-    performanceLayout->addRow(tr("Maximum loaded points"), maximumLoadPoints_);
+        tr("Maximum points retained for non-paged sources; paged and "
+           "hierarchical sources retain all points"));
+    performanceLayout->addRow(tr("Maximum non-paged points"),
+                              maximumLoadPoints_);
     layout->addWidget(performance);
 
     // Separate from the point caches on purpose: three different allocators

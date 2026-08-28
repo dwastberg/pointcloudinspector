@@ -92,7 +92,7 @@ sources are opened as vector data in the initial unified workflow.
 | `--help-all` | Show application and Qt command-line options. | |
 | `-v`, `--version` | Show the application version. | |
 | `-p`, `--points <count>` | Create a synthetic point cube with the requested number of points. | off |
-| `--max-points <count>` | Maximum number of source points exposed by a loaded point cloud. | `10000000` |
+| `--max-points <count>` | Maximum points retained for a non-paged point-cloud source. Paged and hierarchical sources retain all points. | `10000000` |
 | `--cpu-cache-mb <MiB\|auto>` | CPU budget shared by retained previews and decoded hierarchy pages. | `auto` |
 | `--gpu-cache-mb <MiB>` | GPU point-buffer residency budget. | `512` |
 | `--raster-cpu-cache-mb <MiB>` | Decoded raster tile budget, separate from the point caches. | `256` |
@@ -107,8 +107,12 @@ Example:
 
 ```sh
 pcinspector --cpu-cache-mb auto --gpu-cache-mb 1024 \
-  --max-points 50000000 survey.copc.laz
+  survey.copc.laz
 ```
+
+LAS/LAZ files routed through the persistent page cache, and native COPC/EPT
+hierarchies, preserve their complete source regardless of `--max-points`.
+Their decoded CPU and GPU working sets remain bounded by the cache options.
 
 Builds configured with `PCINSPECTOR_ENABLE_DIAGNOSTIC_UI=ON` also provide:
 

@@ -53,6 +53,8 @@ struct PointCloudImportPreflight {
     PointCloudMetadata metadata;
     std::uint64_t sourceFileBytes = 0;
     std::uint64_t sourceModificationTime = 0;
+    // Complete source count for paged/hierarchical sources; bounded by the
+    // requested maximum only for sources retained as flat point blocks.
     std::uint64_t desiredRetainedPoints = 0;
     std::uint64_t estimatedResidentBytes = 0;
     std::uint64_t estimatedActiveBytes = 0;
@@ -82,6 +84,8 @@ struct LocalPagingOptions {
 
 struct PointCloudLoadOptions {
     std::filesystem::path sourcePath;
+    // Safety cap for non-paged sources. Paged and native-hierarchical sources
+    // preserve the complete source and use their cache budgets for residency.
     std::uint64_t maximumPoints = 10'000'000;
 
     LocalPagingOptions localPaging;
