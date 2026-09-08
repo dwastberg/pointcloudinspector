@@ -2414,6 +2414,12 @@ void RenderViewportWidget::applyKeyboardNavigation(const double deltaSeconds)
         return;
     }
 
+    if (mapView_ && inputDirection.y != 0.0) {
+        constexpr double zoomWheelUnitsPerSecond = 4.0;
+        camera_.dollyForward(-inputDirection.y * zoomWheelUnitsPerSecond *
+                             input_.speedMultiplier() * deltaSeconds);
+    }
+
     const Vec3d worldDirection =
         mapView_ ? normalized(camera_.right() * inputDirection.x +
                               camera_.up() * inputDirection.z)
@@ -2738,7 +2744,7 @@ void RenderViewportWidget::wheelEvent(QWheelEvent *event)
 
 namespace {
 
-std::optional<MovementKey> movementKey(const int key)
+std::optional<MovementKey> movementKey(const int key, const bool mapView)
 {
     switch (key) {
     case Qt::Key_W:
@@ -2752,7 +2758,15 @@ std::optional<MovementKey> movementKey(const int key)
     case Qt::Key_Q:
         return MovementKey::Down;
     case Qt::Key_E:
-        return MovementKey::Up;
+        if (!mapView) {
+            return MovementKey::Up;
+        }
+        return std::nullopt;
+    case Qt::Key_Z:
+        if (mapView) {
+            return MovementKey::Up;
+        }
+        return std::nullopt;
     default:
         return std::nullopt;
     }
@@ -2766,12 +2780,7 @@ void RenderViewportWidget::keyPressEvent(QKeyEvent *event)
         event->accept();
         return;
     }
-    if (const auto key = movementKey(event->key())) {
-        if (mapView_ &&
-            (*key == MovementKey::Down || *key == MovementKey::Up)) {
-            event->accept();
-            return;
-        }
+    if (const auto key = movementKey(event->key(), mapView_)) {
         input_.press(*key);
         navigationTimer_.restart();
         requestRender();
@@ -2820,7 +2829,7 @@ void RenderViewportWidget::keyReleaseEvent(QKeyEvent *event)
         event->accept();
         return;
     }
-    if (const auto key = movementKey(event->key())) {
+    if (const auto key = movementKey(event->key(), mapView_)) {
         input_.release(*key);
         requestRender();
         event->accept();

@@ -120,6 +120,79 @@ TEST_CASE("map view locks top-down orthographic GIS navigation",
     CHECK_FALSE(viewport.isOrthographic());
 }
 
+TEST_CASE("map view zooms with held Q and Z keys",
+          "[ui][renderer-internal][input][map]")
+{
+    pci::RenderViewportWidget viewport(true);
+    viewport.setMapView(true);
+    const auto access = pci::testAccess(viewport);
+    const pci::NavigationCamera &camera = access.cameraForTesting();
+    const pci::Vec3d initialPosition = camera.position();
+    const pci::Vec3d initialPivot = camera.pivot();
+    const double initialScale = camera.orthographicScale();
+
+    QKeyEvent zoomIn(QEvent::KeyPress, Qt::Key_Q, Qt::NoModifier);
+    QApplication::sendEvent(&viewport, &zoomIn);
+    pci::testAccess(viewport).advanceKeyboardNavigationForTesting(0.1);
+    const double zoomedScale = camera.orthographicScale();
+    CHECK(zoomedScale < initialScale);
+
+    QKeyEvent releaseZoomIn(QEvent::KeyRelease, Qt::Key_Q, Qt::NoModifier);
+    QApplication::sendEvent(&viewport, &releaseZoomIn);
+    pci::testAccess(viewport).advanceKeyboardNavigationForTesting(0.1);
+    CHECK(camera.orthographicScale() == zoomedScale);
+
+    QKeyEvent zoomOut(QEvent::KeyPress, Qt::Key_Z, Qt::NoModifier);
+    QApplication::sendEvent(&viewport, &zoomOut);
+    pci::testAccess(viewport).advanceKeyboardNavigationForTesting(0.1);
+    CHECK(camera.orthographicScale() == Catch::Approx(initialScale));
+    pci::testAccess(viewport).advanceKeyboardNavigationForTesting(0.1);
+    CHECK(camera.orthographicScale() > initialScale);
+
+    SECTION("releasing Z stops zooming")
+    {
+        QKeyEvent releaseZoomOut(QEvent::KeyRelease, Qt::Key_Z, Qt::NoModifier);
+        QApplication::sendEvent(&viewport, &releaseZoomOut);
+    }
+    SECTION("losing focus stops zooming")
+    {
+        QFocusEvent focusOut(QEvent::FocusOut);
+        QApplication::sendEvent(&viewport, &focusOut);
+    }
+    const double stoppedScale = camera.orthographicScale();
+    pci::testAccess(viewport).advanceKeyboardNavigationForTesting(0.1);
+    CHECK(camera.orthographicScale() == stoppedScale);
+    CHECK_FALSE(access.inputForTesting().hasMovement());
+    CHECK(camera.position() == initialPosition);
+    CHECK(camera.pivot() == initialPivot);
+    CHECK(camera.forward() == pci::Vec3d{0.0, 0.0, -1.0});
+}
+
+TEST_CASE("map zoom keys preserve 3D navigation after switching modes",
+          "[ui][renderer-internal][input][map]")
+{
+    pci::RenderViewportWidget viewport(true);
+    viewport.setMapView(true);
+    QKeyEvent zoomIn(QEvent::KeyPress, Qt::Key_Q, Qt::NoModifier);
+    QApplication::sendEvent(&viewport, &zoomIn);
+    viewport.setMapView(false);
+    CHECK_FALSE(pci::testAccess(viewport).inputForTesting().hasMovement());
+
+    const pci::NavigationCamera &camera =
+        pci::testAccess(viewport).cameraForTesting();
+    const pci::Vec3d initialPosition = camera.position();
+    const double initialScale = camera.orthographicScale();
+    QKeyEvent unbound(QEvent::KeyPress, Qt::Key_Z, Qt::NoModifier);
+    QApplication::sendEvent(&viewport, &unbound);
+    pci::testAccess(viewport).advanceKeyboardNavigationForTesting(0.1);
+    CHECK(camera.position() == initialPosition);
+
+    QApplication::sendEvent(&viewport, &zoomIn);
+    pci::testAccess(viewport).advanceKeyboardNavigationForTesting(0.1);
+    CHECK(camera.position().z < initialPosition.z);
+    CHECK(camera.orthographicScale() == initialScale);
+}
+
 TEST_CASE("render viewport reports internal QRhi failures",
           "[ui][renderer-internal][failure]")
 {

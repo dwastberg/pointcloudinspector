@@ -558,14 +558,14 @@ MainWindow::MainWindow(
             navigationHintLabel_->setText(
                 enabled
                     ? QStringLiteral("Pan  Left-drag    Move  W / A / S / D    "
-                                     "Zoom  Wheel    Fit  F")
+                                     "Zoom  Wheel / Q / Z    Fit  F")
                     : QStringLiteral("Orbit  Left-drag    Pan  Right-drag    "
                                      "Zoom  Wheel    Pivot  Double-click    "
                                      "Measure  M    Fit  F"));
             statusBar()->showMessage(
                 enabled ? QStringLiteral(
                               "2D Map View: left-drag or WASD to move; wheel "
-                              "to zoom.")
+                              "or Q (in) / Z (out) to zoom.")
                         : QStringLiteral("3D navigation enabled"),
                 3000);
         });
@@ -1110,6 +1110,7 @@ void MainWindow::showControlsReference()
                        "<b>2D Map View</b><br>"
                        "Pan — left-drag or W / A / S / D<br>"
                        "Zoom — wheel or trackpad scroll<br>"
+                       "Zoom in / out — hold Q / Z<br>"
                        "The camera stays top-down and cannot rotate"),
         QMessageBox::Ok,
         this);
