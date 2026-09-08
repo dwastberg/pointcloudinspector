@@ -86,43 +86,37 @@ std::vector<SyntheticSource> qualificationSources()
 {
     return {
         {101,
-         {.minimum = {-54.0, -45.0, -3.0},
-          .maximum = {46.0, 55.0, 17.0}},
+         {.minimum = {-54.0, -45.0, -3.0}, .maximum = {46.0, 55.0, 17.0}},
          4,
          17,
          13,
          19},
         {202,
-         {.minimum = {-42.0, -52.0, -6.0},
-          .maximum = {58.0, 48.0, 14.0}},
+         {.minimum = {-42.0, -52.0, -6.0}, .maximum = {58.0, 48.0, 14.0}},
          5,
          19,
          17,
          23},
         {303,
-         {.minimum = {-61.0, -36.0, -2.0},
-          .maximum = {39.0, 64.0, 18.0}},
+         {.minimum = {-61.0, -36.0, -2.0}, .maximum = {39.0, 64.0, 18.0}},
          4,
          23,
          11,
          29},
         {404,
-         {.minimum = {-35.0, -60.0, -8.0},
-          .maximum = {65.0, 40.0, 12.0}},
+         {.minimum = {-35.0, -60.0, -8.0}, .maximum = {65.0, 40.0, 12.0}},
          5,
          29,
          19,
          13},
         {505,
-         {.minimum = {-48.0, -40.0, -4.0},
-          .maximum = {52.0, 60.0, 16.0}},
+         {.minimum = {-48.0, -40.0, -4.0}, .maximum = {52.0, 60.0, 16.0}},
          3,
          13,
          23,
          17},
         {606,
-         {.minimum = {-57.0, -57.0, -5.0},
-          .maximum = {43.0, 43.0, 15.0}},
+         {.minimum = {-57.0, -57.0, -5.0}, .maximum = {43.0, 43.0, 15.0}},
          5,
          31,
          29,
@@ -134,15 +128,14 @@ pci::FrustumCuller topDownCamera(const double centerX,
                                  const double scale = 72.0)
 {
     const pci::Vec3d eye{centerX, 0.0, 120.0};
-    return pci::FrustumCuller::fromOrthographic(
-        eye,
-        {0.0, 0.0, -1.0},
-        {0.0, 1.0, 0.0},
-        {1.0, 0.0, 0.0},
-        scale,
-        16.0 / 10.0,
-        0.1,
-        300.0);
+    return pci::FrustumCuller::fromOrthographic(eye,
+                                                {0.0, 0.0, -1.0},
+                                                {0.0, 1.0, 0.0},
+                                                {1.0, 0.0, 0.0},
+                                                scale,
+                                                16.0 / 10.0,
+                                                0.1,
+                                                300.0);
 }
 
 SourceFrameResult selectSource(pci::RenderSelection &selection,
@@ -176,14 +169,13 @@ SourceFrameResult selectSource(pci::RenderSelection &selection,
             const pci::Bounds3d bounds =
                 pci::pointCloudNodeBounds(source.bounds, id);
             return pci::RenderSelectionNodeState{
-                .node =
-                    {.id = id,
-                     .bounds = bounds,
-                     .geometricError =
-                         bounds.maximumExtent() /
-                         (leaf ? 181.0 : 128.0),
-                     .estimatedPointCount = leaf ? leafPoints : interiorPoints,
-                     .leaf = leaf},
+                .node = {.id = id,
+                         .bounds = bounds,
+                         .geometricError =
+                             bounds.maximumExtent() / (leaf ? 181.0 : 128.0),
+                         .estimatedPointCount =
+                             leaf ? leafPoints : interiorPoints,
+                         .leaf = leaf},
                 .resident = cpuResident && gpuResident,
                 .residentPointCount = leaf ? leafPoints : interiorPoints,
             };
@@ -225,9 +217,8 @@ allocateLayerBudgets(const std::vector<SyntheticSource> &sources,
             .layerId = source.layerId,
             .coveragePoints = interiorPoints,
             .desiredPoints = leafPoints * 64U,
-            .projectedContribution =
-                pci::projectedBoundsContribution(source.bounds,
-                                                 {eyeX, 0.0, 120.0}),
+            .projectedContribution = pci::projectedBoundsContribution(
+                source.bounds, {eyeX, 0.0, 120.0}),
         });
     }
     std::unordered_map<std::uint64_t, std::uint64_t> result;
@@ -268,9 +259,8 @@ TEST_CASE("portable six-source forest qualification stays bounded and covered",
           "[qualification][renderer-planning][hierarchy][stress]")
 {
     const std::vector<SyntheticSource> sources = qualificationSources();
-    const std::uint64_t representedNodes =
-        std::ranges::fold_left(sources, std::uint64_t{0}, [](const auto total,
-                                                             const auto &source) {
+    const std::uint64_t representedNodes = std::ranges::fold_left(
+        sources, std::uint64_t{0}, [](const auto total, const auto &source) {
             return total + representedNodeCount(source);
         });
     INFO("metadata-only nodes: " << representedNodes);
@@ -317,10 +307,8 @@ TEST_CASE("portable forest qualification is independent of document order",
     std::unordered_map<std::uint64_t, pci::RenderSelection> forwardSelectors;
     std::unordered_map<std::uint64_t, pci::RenderSelection> reverseSelectors;
 
-    const auto first =
-        selectFrame(forward, forwardSelectors, 0.0, 393'216);
-    const auto second =
-        selectFrame(reversed, reverseSelectors, 0.0, 393'216);
+    const auto first = selectFrame(forward, forwardSelectors, 0.0, 393'216);
+    const auto second = selectFrame(reversed, reverseSelectors, 0.0, 393'216);
     REQUIRE(first.size() == second.size());
     for (const auto &[layerId, source] : first) {
         const auto reordered = second.find(layerId);

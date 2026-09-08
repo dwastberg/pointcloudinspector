@@ -3550,18 +3550,13 @@ TEST_CASE("main window records the deterministic qualification replay",
     const QJsonObject json = QJsonDocument::fromJson(input.readAll()).object();
     const QJsonArray frames = json.value(QStringLiteral("frames")).toArray();
     REQUIRE(frames.size() == 3);
-    CHECK(frames[0]
-              .toObject()
-              .value(QStringLiteral("phase"))
-              .toString() == QStringLiteral("warmup"));
-    CHECK(frames[1]
-              .toObject()
-              .value(QStringLiteral("path_frame"))
-              .toInteger() == 1);
-    CHECK(frames[2]
-              .toObject()
-              .value(QStringLiteral("phase"))
-              .toString() == QStringLiteral("dwell"));
+    CHECK(frames[0].toObject().value(QStringLiteral("phase")).toString() ==
+          QStringLiteral("warmup"));
+    CHECK(
+        frames[1].toObject().value(QStringLiteral("path_frame")).toInteger() ==
+        1);
+    CHECK(frames[2].toObject().value(QStringLiteral("phase")).toString() ==
+          QStringLiteral("dwell"));
     CHECK(json.value(QStringLiteral("frame_ms_p95")).toDouble() ==
           Catch::Approx(8.0));
     CHECK(json.value(QStringLiteral("qualification_passed")).toBool());

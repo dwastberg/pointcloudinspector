@@ -70,7 +70,8 @@ struct RasterLayer {
     RasterLayerDataPtr data;
     bool visible = true;
     RasterLayerStyle style;
-    RasterElevationStatus elevationStatus = RasterElevationStatus::NotApplicable;
+    RasterElevationStatus elevationStatus =
+        RasterElevationStatus::NotApplicable;
     std::optional<RasterElevationRange> exactElevationRange;
     std::string elevationFailure;
     std::uint64_t elevationGeneration = 1;
@@ -95,7 +96,8 @@ struct VectorLayerState {
 struct RasterLayerState {
     RasterLayerDataPtr data;
     RasterLayerStyle style;
-    RasterElevationStatus elevationStatus = RasterElevationStatus::NotApplicable;
+    RasterElevationStatus elevationStatus =
+        RasterElevationStatus::NotApplicable;
     std::optional<RasterElevationRange> exactElevationRange;
     std::string elevationFailure;
     std::uint64_t elevationGeneration = 1;

@@ -828,8 +828,8 @@ bool RenderViewportWidget::ensureRenderResources()
         rasterLayerRenderer_.surfaceSupported()
             ? RasterSurfaceCapability::Supported
             : RasterSurfaceCapability::Unsupported;
-    const QString rasterReason = QString::fromStdString(
-        rasterLayerRenderer_.surfaceCapabilityReason());
+    const QString rasterReason =
+        QString::fromStdString(rasterLayerRenderer_.surfaceCapabilityReason());
     if (rasterCapability != rasterSurfaceCapability_ ||
         rasterReason != rasterSurfaceCapabilityReason_) {
         rasterSurfaceCapability_ = rasterCapability;
@@ -924,11 +924,10 @@ RenderViewportWidget::streamRasterTiles(QRhiCommandBuffer *commandBuffer)
             ? 1
             : std::max<std::size_t>(
                   1,
-                  rasterLayerRenderer_
-                          .tileCapacity(
-                              surfacePayloads
-                                  ? RasterTilePayloadProfile::RenderElevation
-                                  : RasterTilePayloadProfile::ColorOnly) /
+                  rasterLayerRenderer_.tileCapacity(
+                      surfacePayloads
+                          ? RasterTilePayloadProfile::RenderElevation
+                          : RasterTilePayloadProfile::ColorOnly) /
                       visibleRasterLayers);
 
     for (std::size_t index = 0; index < layers.size(); ++index) {
@@ -1027,10 +1026,7 @@ RenderViewportWidget::streamRasterTiles(QRhiCommandBuffer *commandBuffer)
         for (auto drawKey = plan.draw.rbegin(); drawKey != plan.draw.rend();
              ++drawKey) {
             const RasterTileKey key = *drawKey;
-            const RasterCacheKey cacheKey{sourceId,
-                                          generation,
-                                          key,
-                                          profile};
+            const RasterCacheKey cacheKey{sourceId, generation, key, profile};
             if (surface) {
                 const auto residualRange =
                     rasterLayerRenderer_.tileElevationResidualRange(cacheKey);
@@ -1040,11 +1036,11 @@ RenderViewportWidget::streamRasterTiles(QRhiCommandBuffer *commandBuffer)
                     // of triangles only to discard every fragment.
                     continue;
                 }
-                const RasterBasePixelRect rect = rasterTileBasePixelRect(
-                    metadata.levels[key.levelIndex],
-                    key,
-                    metadata.width,
-                    metadata.height);
+                const RasterBasePixelRect rect =
+                    rasterTileBasePixelRect(metadata.levels[key.levelIndex],
+                                            key,
+                                            metadata.width,
+                                            metadata.height);
                 const std::array<Vec3d, 4> footprint{
                     rasterPixelToWorld(metadata.geoTransform,
                                        rect.minimumPixel,
@@ -1096,8 +1092,8 @@ RenderViewportWidget::streamRasterTiles(QRhiCommandBuffer *commandBuffer)
             RasterLayerDraw draw;
             draw.layerId = layer.id;
             draw.tileKey = cacheKey;
-            draw.mode = surface ? RasterDrawMode::Surface
-                                : RasterDrawMode::Flat;
+            draw.mode =
+                surface ? RasterDrawMode::Surface : RasterDrawMode::Flat;
             draw.surfaceRole =
                 std::ranges::find(plan.selected, key) == plan.selected.end()
                     ? RasterSurfaceDrawRole::Fallback
@@ -1143,8 +1139,8 @@ RenderViewportWidget::streamRasterTiles(QRhiCommandBuffer *commandBuffer)
             draw.uniform.opacity = layer.style.opacity;
             if (surface) {
                 quad.origin.z = metadata.elevation.anchor *
-                                        layer.style.verticalExaggeration +
-                                    layer.style.zOffset - frame.eye.z;
+                                    layer.style.verticalExaggeration +
+                                layer.style.zOffset - frame.eye.z;
                 std::copy_n(viewProjection.constData(),
                             draw.surfaceUniform.viewProjection.size(),
                             draw.surfaceUniform.viewProjection.begin());
@@ -1210,11 +1206,11 @@ RenderViewportWidget::streamRasterTiles(QRhiCommandBuffer *commandBuffer)
             .decode = decode == rasterDecodeStates_.end()
                           ? nullptr
                           : decode->second.parameters,
-            .profile = layers[index].data &&
-                               rasterLayerRenderer_.surfaceSupported() &&
-                               layers[index].data->metadata().elevation.available
-                           ? RasterTilePayloadProfile::RenderElevation
-                           : RasterTilePayloadProfile::ColorOnly,
+            .profile =
+                layers[index].data && rasterLayerRenderer_.surfaceSupported() &&
+                        layers[index].data->metadata().elevation.available
+                    ? RasterTilePayloadProfile::RenderElevation
+                    : RasterTilePayloadProfile::ColorOnly,
         });
     }
     rasterTileStreamer_.reconcile(frameLayers);
@@ -1268,8 +1264,8 @@ RenderViewportWidget::streamRasterTiles(QRhiCommandBuffer *commandBuffer)
     }
     rasterTileStreamer_.requeueReadyUploads(retryUploads);
     rasterDrawnTiles_ = draws.size();
-    rasterSurfaceDrawnTiles_ = static_cast<std::size_t>(std::ranges::count_if(
-        draws, [](const RasterLayerDraw &draw) {
+    rasterSurfaceDrawnTiles_ = static_cast<std::size_t>(
+        std::ranges::count_if(draws, [](const RasterLayerDraw &draw) {
             return draw.mode == RasterDrawMode::Surface;
         }));
     std::erase_if(previousRasterSelection_, [&retained](const auto &entry) {
@@ -1667,8 +1663,7 @@ void RenderViewportWidget::render(QRhiCommandBuffer *commandBuffer)
         // will do for it while it is off screen, so it is as ready as it gets.
         const bool offScreen = outOfFrustumLayerIds_.contains(layerId);
         if (!snapshot || !snapshot->loadingComplete ||
-            (uploadScheduler_.residentPointCount(layerId) == 0 &&
-             !offScreen)) {
+            (uploadScheduler_.residentPointCount(layerId) == 0 && !offScreen)) {
 #ifdef PCINSPECTOR_ENABLE_DIAGNOSTIC_UI
             if (probeResidency_ && probeDue) {
                 qInfo().noquote()
@@ -2500,8 +2495,8 @@ void RenderViewportWidget::publishMetrics(const bool force)
             .rasterSurfaceDrawnTiles = rasterSurfaceDrawnTiles_,
             .rasterSurfaceTriangles =
                 static_cast<std::uint64_t>(rasterSurfaceDrawnTiles_) *
-                rasterSurfaceGridCellsPerSide *
-                rasterSurfaceGridCellsPerSide * 2ULL,
+                rasterSurfaceGridCellsPerSide * rasterSurfaceGridCellsPerSide *
+                2ULL,
             .rasterPendingReads = rasterStreamerMetrics.pending,
             .rasterFinestLevel = rasterFinestLevel_,
             .rasterCoarsestLevel = rasterCoarsestLevel_,
@@ -2522,8 +2517,8 @@ void RenderViewportWidget::publishMetrics(const bool force)
         if (qualificationCameraPath_) {
             const QualificationCameraFrame frame =
                 qualificationCameraPath_->current();
-            metrics.qualificationPhase = QString::fromLatin1(
-                qualificationFramePhaseName(frame.phase));
+            metrics.qualificationPhase =
+                QString::fromLatin1(qualificationFramePhaseName(frame.phase));
             metrics.qualificationFrameIndex = frame.frameIndex;
             metrics.qualificationFrameCount = frame.totalFrames;
             metrics.qualificationFrame = true;

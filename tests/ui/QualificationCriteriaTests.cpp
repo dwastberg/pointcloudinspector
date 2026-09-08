@@ -58,8 +58,9 @@ const pci::QualificationAssertion &
 assertion(const pci::QualificationEvaluation &evaluation,
           const std::string_view id)
 {
-    const auto found = std::ranges::find(
-        evaluation.assertions, QString::fromUtf8(id), &pci::QualificationAssertion::id);
+    const auto found = std::ranges::find(evaluation.assertions,
+                                         QString::fromUtf8(id),
+                                         &pci::QualificationAssertion::id);
     REQUIRE(found != evaluation.assertions.end());
     return *found;
 }

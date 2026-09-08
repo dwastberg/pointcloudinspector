@@ -585,7 +585,8 @@ TEST_CASE("surface planning includes frustum corners contained by the prism",
     }
     CHECK(minimumX > 1000.0);
     CHECK(maximumX < 1200.0);
-    CHECK_FALSE(pci::planRasterTiles(planInput(layer, camera)).selected.empty());
+    CHECK_FALSE(
+        pci::planRasterTiles(planInput(layer, camera)).selected.empty());
 }
 
 TEST_CASE("raster projected texel size scales with distance",

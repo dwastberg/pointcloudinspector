@@ -244,15 +244,13 @@ QualificationReporter::write(const QString &status,
     const QualificationEvaluation qualification =
         evaluateQualification(frameMetrics_);
     QJsonArray assertions;
-    for (const QualificationAssertion &assertion :
-         qualification.assertions) {
+    for (const QualificationAssertion &assertion : qualification.assertions) {
         assertions.append(QJsonObject{
             {QStringLiteral("id"), assertion.id},
             {QStringLiteral("status"),
-             !assertion.evaluated
-                 ? QStringLiteral("not_evaluated")
-                 : assertion.passed ? QStringLiteral("passed")
-                                    : QStringLiteral("failed")},
+             !assertion.evaluated ? QStringLiteral("not_evaluated")
+             : assertion.passed   ? QStringLiteral("passed")
+                                  : QStringLiteral("failed")},
             {QStringLiteral("observed_min"), assertion.observedMinimum},
             {QStringLiteral("observed_max"), assertion.observedMaximum},
             {QStringLiteral("required_min"), assertion.requiredMinimum},

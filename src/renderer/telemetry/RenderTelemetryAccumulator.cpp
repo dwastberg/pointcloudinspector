@@ -206,10 +206,8 @@ RenderMetrics projectRenderMetrics(const RenderTelemetrySnapshot &telemetry)
         .rasterResidentTiles = telemetry.residency.rasterResidentTiles,
         .rasterSelectedTiles = telemetry.residency.rasterSelectedTiles,
         .rasterDrawnTiles = telemetry.residency.rasterDrawnTiles,
-        .rasterSurfaceDrawnTiles =
-            telemetry.residency.rasterSurfaceDrawnTiles,
-        .rasterSurfaceTriangles =
-            telemetry.residency.rasterSurfaceTriangles,
+        .rasterSurfaceDrawnTiles = telemetry.residency.rasterSurfaceDrawnTiles,
+        .rasterSurfaceTriangles = telemetry.residency.rasterSurfaceTriangles,
         .rasterPendingReads = telemetry.residency.rasterPendingReads,
         .rasterFinestLevel = telemetry.residency.rasterFinestLevel,
         .rasterCoarsestLevel = telemetry.residency.rasterCoarsestLevel,

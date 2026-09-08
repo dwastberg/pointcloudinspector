@@ -28,8 +28,8 @@ struct ImportServices {
 
     [[nodiscard]] bool valid() const noexcept
     {
-        return scheduler && pointCloud && vector && raster &&
-               rasterElevation && colorize && statistics &&
+        return scheduler && pointCloud && vector && raster && rasterElevation &&
+               colorize && statistics &&
                pointCloud->schedulerIdentity() == scheduler.get() &&
                vector->schedulerIdentity() == scheduler.get() &&
                raster->schedulerIdentity() == scheduler.get() &&

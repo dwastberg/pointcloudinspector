@@ -24,9 +24,8 @@ bool measured(const RenderMetrics &frame) noexcept
 
 double exactFrameMilliseconds(const RenderMetrics &frame) noexcept
 {
-    return frame.sampledFrameMilliseconds > 0.0
-               ? frame.sampledFrameMilliseconds
-               : frame.frameMilliseconds;
+    return frame.sampledFrameMilliseconds > 0.0 ? frame.sampledFrameMilliseconds
+                                                : frame.frameMilliseconds;
 }
 
 double percentile(std::vector<double> values, const double fraction)
@@ -35,10 +34,10 @@ double percentile(std::vector<double> values, const double fraction)
         return 0.0;
     }
     std::ranges::sort(values);
-    const std::size_t index = static_cast<std::size_t>(std::clamp(
-        fraction * static_cast<double>(values.size() - 1U),
-        0.0,
-        static_cast<double>(values.size() - 1U)));
+    const std::size_t index = static_cast<std::size_t>(
+        std::clamp(fraction * static_cast<double>(values.size() - 1U),
+                   0.0,
+                   static_cast<double>(values.size() - 1U)));
     return values[index];
 }
 
@@ -77,8 +76,7 @@ void append(QualificationEvaluation &evaluation,
 }
 
 std::vector<const RenderMetrics *>
-phaseFrames(const std::span<const RenderMetrics> frames,
-            const QString &phase)
+phaseFrames(const std::span<const RenderMetrics> frames, const QString &phase)
 {
     std::vector<const RenderMetrics *> result;
     for (const RenderMetrics &frame : frames) {
@@ -123,8 +121,9 @@ evaluateQualification(const std::span<const RenderMetrics> frames)
                           replay.back()->qualificationFinalFrame;
         for (std::size_t index = 0; index < replay.size() && complete.passed;
              ++index) {
-            complete.passed = replay[index]->qualificationFrameIndex == index &&
-                              replay[index]->qualificationFrameCount == expected;
+            complete.passed =
+                replay[index]->qualificationFrameIndex == index &&
+                replay[index]->qualificationFrameCount == expected;
         }
     }
     append(evaluation, std::move(complete));
@@ -152,9 +151,9 @@ evaluateQualification(const std::span<const RenderMetrics> frames)
                 static_cast<double>(frame.decodedPointBudgetBytes));
         }
         if (frame.gpuPointBudgetBytes > 0) {
-            gpuUtilization.push_back(static_cast<double>(frame.gpuPointBytes) /
-                                     static_cast<double>(
-                                         frame.gpuPointBudgetBytes));
+            gpuUtilization.push_back(
+                static_cast<double>(frame.gpuPointBytes) /
+                static_cast<double>(frame.gpuPointBudgetBytes));
         }
     }
 
@@ -177,18 +176,20 @@ evaluateQualification(const std::span<const RenderMetrics> frames)
                       QStringLiteral("layers"),
                       QStringLiteral("No visible hierarchy falls back to only "
                                      "its root after warm-up.")));
-    append(evaluation,
-           upperBound(QStringLiteral("point_upload_bytes_per_frame"),
-                      uploads,
-                      maximumUploadBytes,
-                      QStringLiteral("bytes"),
-                      QStringLiteral("Point uploads stay at or below 48 MiB.")));
-    append(evaluation,
-           upperBound(QStringLiteral("decoded_cpu_cache_ceiling"),
-                      cpuUtilization,
-                      1.0,
-                      QStringLiteral("resident/budget"),
-                      QStringLiteral("Decoded point pages stay inside budget.")));
+    append(
+        evaluation,
+        upperBound(QStringLiteral("point_upload_bytes_per_frame"),
+                   uploads,
+                   maximumUploadBytes,
+                   QStringLiteral("bytes"),
+                   QStringLiteral("Point uploads stay at or below 48 MiB.")));
+    append(
+        evaluation,
+        upperBound(QStringLiteral("decoded_cpu_cache_ceiling"),
+                   cpuUtilization,
+                   1.0,
+                   QStringLiteral("resident/budget"),
+                   QStringLiteral("Decoded point pages stay inside budget.")));
     append(evaluation,
            upperBound(QStringLiteral("gpu_point_cache_ceiling"),
                       gpuUtilization,
@@ -217,8 +218,8 @@ evaluateQualification(const std::span<const RenderMetrics> frames)
         .requiredMaximum = maximumInteractingP95Milliseconds,
         .sampleCount = interactionTimes.size(),
         .unit = QStringLiteral("ms"),
-        .details = QStringLiteral(
-            "Warm interacting p95 targets one 60 Hz frame."),
+        .details =
+            QStringLiteral("Warm interacting p95 targets one 60 Hz frame."),
     };
     if (!interactionTimes.empty()) {
         const double value = percentile(interactionTimes, 0.95);
@@ -230,7 +231,8 @@ evaluateQualification(const std::span<const RenderMetrics> frames)
 
     std::vector<double> density;
     const std::size_t densityStart = interacting.size() * 2U / 3U;
-    for (std::size_t index = densityStart; index < interacting.size(); ++index) {
+    for (std::size_t index = densityStart; index < interacting.size();
+         ++index) {
         const RenderMetrics &frame = *interacting[index];
         if (frame.outputWidth <= 0 || frame.outputHeight <= 0 ||
             frame.visibleLayerCount == 0) {
@@ -306,11 +308,9 @@ evaluateQualification(const std::span<const RenderMetrics> frames)
         for (std::size_t index = dwell.size() - 30U; index < dwell.size();
              ++index) {
             maximum = std::max(
-                maximum,
-                static_cast<double>(dwell[index]->uploadedPointBytes));
+                maximum, static_cast<double>(dwell[index]->uploadedPointBytes));
             maximum = std::max(
-                maximum,
-                static_cast<double>(dwell[index]->pendingUploadBytes));
+                maximum, static_cast<double>(dwell[index]->pendingUploadBytes));
         }
         settledUploads.observedMinimum = maximum;
         settledUploads.observedMaximum = maximum;

@@ -227,20 +227,18 @@ defaultRasterLayerStyle(const RasterLayerMetadata &metadata);
 // Scene-facing bounds: the raster's XY footprint at the styled elevation. Only
 // the zero-thickness Z dimension is inflated, so scene fitting has something to
 // frame while the quad still draws at exactly the configured Z.
-[[nodiscard]] Bounds3d
-rasterSceneBounds(const RasterLayerMetadata &metadata,
-                  const RasterLayerStyle &style,
-                  RasterElevationStatus elevationStatus =
-                      RasterElevationStatus::NotApplicable,
-                  std::optional<RasterElevationRange> exactRange =
-                      std::nullopt) noexcept;
+[[nodiscard]] Bounds3d rasterSceneBounds(
+    const RasterLayerMetadata &metadata,
+    const RasterLayerStyle &style,
+    RasterElevationStatus elevationStatus =
+        RasterElevationStatus::NotApplicable,
+    std::optional<RasterElevationRange> exactRange = std::nullopt) noexcept;
 
-[[nodiscard]] RasterRenderMode
-rasterEffectiveRenderMode(const RasterLayerMetadata &metadata,
-                          const RasterLayerStyle &style,
-                          RasterElevationStatus elevationStatus,
-                          const std::optional<RasterElevationRange> &exactRange)
-    noexcept;
+[[nodiscard]] RasterRenderMode rasterEffectiveRenderMode(
+    const RasterLayerMetadata &metadata,
+    const RasterLayerStyle &style,
+    RasterElevationStatus elevationStatus,
+    const std::optional<RasterElevationRange> &exactRange) noexcept;
 
 // True when a style change alters decoded pixels and must therefore invalidate
 // cached tiles. Opacity and elevation are shader uniforms and do not.

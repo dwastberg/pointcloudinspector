@@ -136,9 +136,8 @@ public:
         return 0;
     }
 
-    [[nodiscard]] virtual RasterElevationRange exactElevationRange(
-        std::stop_token,
-        RasterElevationProgressCallback) const
+    [[nodiscard]] virtual RasterElevationRange
+    exactElevationRange(std::stop_token, RasterElevationProgressCallback) const
     {
         throw RasterReadError("Exact raster elevation analysis is unavailable");
     }

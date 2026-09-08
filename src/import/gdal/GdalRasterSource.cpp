@@ -421,22 +421,21 @@ struct ExpandedTile {
     bool hasTranslucentAlpha = false;
 };
 
-ExpandedTile
-expandPremultipliedRgba(const ChannelPlanes &planes,
-                        const ReadExtent &extent,
-                        const DecodeTarget &target,
-                        const RasterBandSelection &selection,
-                        const RasterDecodeParameters &decode,
-                        const RasterTilePayloadProfile profile,
-                        const double elevationAnchor)
+ExpandedTile expandPremultipliedRgba(const ChannelPlanes &planes,
+                                     const ReadExtent &extent,
+                                     const DecodeTarget &target,
+                                     const RasterBandSelection &selection,
+                                     const RasterDecodeParameters &decode,
+                                     const RasterTilePayloadProfile profile,
+                                     const double elevationAnchor)
 {
     ExpandedTile result;
     const std::size_t pixelCount =
         static_cast<std::size_t>(target.width) * target.height;
     result.rgba.assign(pixelCount * 4, std::byte{});
     if (profile == RasterTilePayloadProfile::RenderElevation) {
-        result.elevation.assign(
-            pixelCount, std::numeric_limits<float>::quiet_NaN());
+        result.elevation.assign(pixelCount,
+                                std::numeric_limits<float>::quiet_NaN());
         result.elevationMinimum = std::numeric_limits<float>::infinity();
         result.elevationMaximum = -std::numeric_limits<float>::infinity();
     }
@@ -535,8 +534,8 @@ expandPremultipliedRgba(const ChannelPlanes &planes,
             if (!planes.mask.empty()) {
                 maskValid = planes.mask[sourceIndex] > 0;
             }
-            const bool heightValid = valid && maskValid && sourceAlpha > 0.0 &&
-                                     std::isfinite(first);
+            const bool heightValid =
+                valid && maskValid && sourceAlpha > 0.0 && std::isfinite(first);
 
             double alpha = static_cast<double>(color[3]) * sourceAlpha *
                            (maskValid && valid ? 1.0 : 0.0);
@@ -551,11 +550,10 @@ expandPremultipliedRgba(const ChannelPlanes &planes,
             result.rgba[destination + 2] = quantize(color[2] * alpha);
             const std::byte storedAlpha = quantize(alpha);
             result.rgba[destination + 3] = storedAlpha;
-            const unsigned int alphaByte = std::to_integer<unsigned int>(
-                storedAlpha);
-            result.hasTranslucentAlpha =
-                result.hasTranslucentAlpha ||
-                (alphaByte > 0U && alphaByte < 255U);
+            const unsigned int alphaByte =
+                std::to_integer<unsigned int>(storedAlpha);
+            result.hasTranslucentAlpha = result.hasTranslucentAlpha ||
+                                         (alphaByte > 0U && alphaByte < 255U);
 
             if (profile == RasterTilePayloadProfile::RenderElevation &&
                 heightValid) {
@@ -737,8 +735,7 @@ GdalRasterSource::exactElevationScanReservationBytes() const noexcept
 }
 
 RasterElevationRange GdalRasterSource::exactElevationRange(
-    const std::stop_token stop,
-    RasterElevationProgressCallback progress) const
+    const std::stop_token stop, RasterElevationProgressCallback progress) const
 {
     if (!metadata_.elevation.available ||
         selection_.sampleKind != RasterSampleKind::ContinuousScalar ||
@@ -750,13 +747,13 @@ RasterElevationRange GdalRasterSource::exactElevationRange(
     const HandleLease lease(*handles_, acquireHandle(*handles_, stop));
     GDALRasterBand *band =
         lease.dataset().GetRasterBand(selection_.colorBands.front());
-    GDALRasterBand *alpha = selection_.alphaBand == 0
-                                ? nullptr
-                                : lease.dataset().GetRasterBand(
-                                      selection_.alphaBand);
-    GDALRasterBand *mask =
-        selection_.usesDatasetMask && band != nullptr ? band->GetMaskBand()
-                                                      : nullptr;
+    GDALRasterBand *alpha =
+        selection_.alphaBand == 0
+            ? nullptr
+            : lease.dataset().GetRasterBand(selection_.alphaBand);
+    GDALRasterBand *mask = selection_.usesDatasetMask && band != nullptr
+                               ? band->GetMaskBand()
+                               : nullptr;
     if (band == nullptr || (selection_.alphaBand != 0 && alpha == nullptr) ||
         (selection_.usesDatasetMask && mask == nullptr)) {
         throw RasterReadError("Raster elevation bands are unavailable");
@@ -852,9 +849,8 @@ RasterElevationRange GdalRasterSource::exactElevationRange(
             for (std::size_t index = 0; index < count; ++index) {
                 const double raw = values[index];
                 if (!std::isfinite(raw) || matchesNodata(raw, nodata) ||
-                    (alpha != nullptr &&
-                     (!std::isfinite(alphaValues[index]) ||
-                      alphaValues[index] <= 0.0)) ||
+                    (alpha != nullptr && (!std::isfinite(alphaValues[index]) ||
+                                          alphaValues[index] <= 0.0)) ||
                     (mask != nullptr && maskValues[index] == 0)) {
                     continue;
                 }
@@ -958,14 +954,14 @@ RasterTileData GdalRasterSource::readTile(const RasterTileRequest &request,
         tile.validWidth = static_cast<std::uint16_t>(window.validWidth);
         tile.validHeight = static_cast<std::uint16_t>(window.validHeight);
         tile.profile = request.profile;
-        ExpandedTile expanded = expandPremultipliedRgba(
-            planes,
-            extent,
-            target,
-            selection_,
-            decode,
-            request.profile,
-            metadata_.elevation.anchor);
+        ExpandedTile expanded =
+            expandPremultipliedRgba(planes,
+                                    extent,
+                                    target,
+                                    selection_,
+                                    decode,
+                                    request.profile,
+                                    metadata_.elevation.anchor);
         tile.rgba = std::move(expanded.rgba);
         tile.elevation = std::move(expanded.elevation);
         tile.elevationMinimum = expanded.elevationMinimum;

@@ -190,8 +190,7 @@ public:
         tile.validWidth = static_cast<std::uint16_t>(extent.width);
         tile.validHeight = static_cast<std::uint16_t>(extent.height);
         tile.rgba.assign(pci::rasterStoredTileBytes, std::byte{0});
-        if (request.profile ==
-            pci::RasterTilePayloadProfile::RenderElevation) {
+        if (request.profile == pci::RasterTilePayloadProfile::RenderElevation) {
             tile.elevation.assign(
                 static_cast<std::size_t>(pci::rasterStoredTilePixels) *
                     pci::rasterStoredTilePixels,
@@ -242,10 +241,9 @@ public:
                 tile.rgba[index + 2] = premultiply(color.blue);
                 tile.rgba[index + 3] = static_cast<std::byte>(color.alpha);
                 if (!tile.elevation.empty()) {
-                    const float residual =
-                        static_cast<float>(50.0 * clampedX /
-                                           std::max<std::uint32_t>(
-                                               1, metadata_.width - 1));
+                    const float residual = static_cast<float>(
+                        50.0 * clampedX /
+                        std::max<std::uint32_t>(1, metadata_.width - 1));
                     tile.elevation[index / 4] = residual;
                     tile.elevationMaximum =
                         std::max(tile.elevationMaximum, residual);
@@ -631,8 +629,7 @@ TEST_CASE("GPU Surface uploads and draws an R32F height field",
 
     auto document = std::make_shared<pci::SceneDocument>();
     const pci::SceneLayerId layer = document->addRasterLayer(patternLayer(
-        std::move(metadata),
-        [](std::uint32_t, double, double) -> Rgba {
+        std::move(metadata), [](std::uint32_t, double, double) -> Rgba {
             return {220, 160, 40};
         }));
     pci::RasterLayerStyle style = document->rasterLayer(layer)->style;
@@ -674,8 +671,7 @@ TEST_CASE("GPU Surface 4K grid characterization",
 
     auto document = std::make_shared<pci::SceneDocument>();
     const pci::SceneLayerId layer = document->addRasterLayer(patternLayer(
-        std::move(metadata),
-        [](std::uint32_t, double, double) -> Rgba {
+        std::move(metadata), [](std::uint32_t, double, double) -> Rgba {
             return {220, 160, 40};
         }));
     pci::RasterLayerStyle style = document->rasterLayer(layer)->style;
@@ -718,10 +714,9 @@ TEST_CASE("GPU Surface 4K grid characterization",
     const QImage finalImage = viewport->grabFramebuffer();
     const std::size_t drawnTiles =
         pci::testAccess(*viewport).rasterSurfaceDrawnTilesForTesting();
-    const std::uint64_t triangles =
-        static_cast<std::uint64_t>(drawnTiles) *
-        pci::rasterSurfaceGridCellsPerSide *
-        pci::rasterSurfaceGridCellsPerSide * 2ULL;
+    const std::uint64_t triangles = static_cast<std::uint64_t>(drawnTiles) *
+                                    pci::rasterSurfaceGridCellsPerSide *
+                                    pci::rasterSurfaceGridCellsPerSide * 2ULL;
     qInfo("Surface 4K: %dx%d, %zu tiles, %llu triangles, %.3f ms/frame",
           finalImage.width(),
           finalImage.height(),

@@ -29,8 +29,8 @@ public:
         return metadata_;
     }
 
-    [[nodiscard]] pci::RasterTileData
-    readTile(const pci::RasterTileRequest &, std::stop_token) const override
+    [[nodiscard]] pci::RasterTileData readTile(const pci::RasterTileRequest &,
+                                               std::stop_token) const override
     {
         throw pci::RasterReadError("unused tile read");
     }
@@ -52,7 +52,10 @@ public:
         }
         struct ActiveGuard {
             std::atomic_int *active;
-            ~ActiveGuard() { --*active; }
+            ~ActiveGuard()
+            {
+                --*active;
+            }
         } guard{&active};
         if (progress) {
             progress({.processedBlocks = 0, .totalBlocks = 2});
@@ -110,11 +113,10 @@ TEST_CASE("DEM exact scans serialize without occupying both import workers",
     // non-preemptive scheduler. An inspection-priority task can therefore use
     // the other worker immediately instead of waiting behind two DEM scans.
     std::atomic_bool inspectionRan{false};
-    static_cast<void>(scheduler.submit(pci::TaskPriority::Inspection,
-                                       1,
-                                       [&inspectionRan] {
-                                           inspectionRan = true;
-                                       }));
+    static_cast<void>(
+        scheduler.submit(pci::TaskPriority::Inspection, 1, [&inspectionRan] {
+            inspectionRan = true;
+        }));
     REQUIRE(QTest::qWaitFor(
         [&inspectionRan] {
             return inspectionRan.load();

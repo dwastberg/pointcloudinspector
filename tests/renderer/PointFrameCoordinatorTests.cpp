@@ -68,8 +68,7 @@ public:
         return {
             .id = id,
             .bounds = pci::pointCloudNodeBounds(
-                {.minimum = {-1.0, -1.0, -1.0},
-                 .maximum = {1.0, 1.0, 1.0}},
+                {.minimum = {-1.0, -1.0, -1.0}, .maximum = {1.0, 1.0, 1.0}},
                 id),
             .geometricError = id.level == 0 ? 1.0 : 0.0,
             .estimatedPointCount = 10,
@@ -150,14 +149,12 @@ TEST_CASE("point frame coordinator owns flat budget settlement",
     const std::vector layers{flatLayer(1, scene, snapshot)};
 
     pci::PointFrameCoordinator coordinator;
-    const pci::PointBudgetUpdate first =
-        coordinator.pointBudgetUpdate(
-            layers, 1024, 50 * sizeof(pci::GpuPoint), 10);
+    const pci::PointBudgetUpdate first = coordinator.pointBudgetUpdate(
+        layers, 1024, 50 * sizeof(pci::GpuPoint), 10);
     CHECK(first.total == 50);
     CHECK(first.current == 50);
-    const pci::PointBudgetUpdate unchanged =
-        coordinator.pointBudgetUpdate(
-            layers, 1024, 50 * sizeof(pci::GpuPoint), 20);
+    const pci::PointBudgetUpdate unchanged = coordinator.pointBudgetUpdate(
+        layers, 1024, 50 * sizeof(pci::GpuPoint), 20);
     CHECK(unchanged.total == 50);
     CHECK_FALSE(unchanged.current);
 }
@@ -183,10 +180,7 @@ TEST_CASE("hierarchical documents recover the interactive bootstrap budget",
     CHECK(*published.current == 1'000'000);
 
     const pci::PointBudgetUpdate adapted = coordinator.pointBudgetUpdate(
-        layers,
-        512ULL * 1024 * 1024,
-        512ULL * 1024 * 1024,
-        1'500'000);
+        layers, 512ULL * 1024 * 1024, 512ULL * 1024 * 1024, 1'500'000);
     REQUIRE(adapted.current);
     CHECK(*adapted.current == 1'500'000);
 }
@@ -286,8 +280,7 @@ TEST_CASE("point frame coordinator isolates a failed hierarchy layer",
     });
     REQUIRE(frame.plan);
     REQUIRE(frame.plan->layerErrors.size() == 1);
-    CHECK(frame.plan->layerErrors.front().layerId ==
-          pci::PointCloudLayerId{1});
+    CHECK(frame.plan->layerErrors.front().layerId == pci::PointCloudLayerId{1});
     CHECK(frame.plan->layerErrors.front().message ==
           "fixture hierarchy failed");
     CHECK(std::ranges::any_of(frame.plan->blocks, [](const auto &block) {

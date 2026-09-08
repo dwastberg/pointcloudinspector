@@ -121,6 +121,7 @@ public:
                       std::uint64_t currentPointBudget);
 
     [[nodiscard]] PointFrameResult plan(PointFrameInput input);
+
 private:
     struct FlatFramePlanKey {
         std::uint64_t cameraRevision = 0;

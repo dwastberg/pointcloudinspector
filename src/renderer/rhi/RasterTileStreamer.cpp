@@ -176,11 +176,11 @@ void RasterTileStreamer::workerLoop(std::stop_token stop)
             const std::scoped_lock lock(mutex_);
             const auto live = liveGenerations_.find(request.key.sourceId);
             if (live == liveGenerations_.end() ||
-                live->second != LiveRequestIdentity{
-                                    .renderGeneration =
-                                        request.key.renderGeneration,
-                                    .profile = request.key.profile,
-                                }) {
+                live->second !=
+                    LiveRequestIdentity{
+                        .renderGeneration = request.key.renderGeneration,
+                        .profile = request.key.profile,
+                    }) {
                 completion.tile.reset();
                 completion.error.clear();
                 completion.cancelled = true;

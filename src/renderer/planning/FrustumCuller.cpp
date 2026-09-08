@@ -35,8 +35,7 @@ FrustumCuller FrustumCuller::fromCamera(const Vec3d position,
         const Vec3d center = position + forward * depth;
         const double vertical = halfVertical * depth;
         const double horizontal = halfHorizontal * depth;
-        culler.corners_[offset] =
-            center - right * horizontal - up * vertical;
+        culler.corners_[offset] = center - right * horizontal - up * vertical;
         culler.corners_[offset + 1] =
             center + right * horizontal - up * vertical;
         culler.corners_[offset + 2] =

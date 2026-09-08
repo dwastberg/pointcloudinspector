@@ -461,8 +461,7 @@ MainWindow::MainWindow(
     viewport_->setRasterSurfaceCapabilityCallback(
         [this](const RasterSurfaceCapability capability,
                const QString &reason) {
-            layerInspectorDock_->setRasterSurfaceCapability(capability,
-                                                            reason);
+            layerInspectorDock_->setRasterSurfaceCapability(capability, reason);
         });
 
     fileMenu->addSeparator();

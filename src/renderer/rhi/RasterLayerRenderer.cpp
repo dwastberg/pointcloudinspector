@@ -68,8 +68,7 @@ std::array<std::uint16_t, rasterSurfaceGridIndexCount> surfaceGridIndices()
             const auto topRight = static_cast<std::uint16_t>(topLeft + 1);
             const auto bottomLeft = static_cast<std::uint16_t>(
                 topLeft + rasterSurfaceGridVerticesPerSide);
-            const auto bottomRight =
-                static_cast<std::uint16_t>(bottomLeft + 1);
+            const auto bottomRight = static_cast<std::uint16_t>(bottomLeft + 1);
             result[output++] = topLeft;
             result[output++] = bottomLeft;
             result[output++] = topRight;
@@ -218,8 +217,7 @@ bool RasterLayerRenderer::surfaceSupported() const noexcept
     return surfaceSupported_;
 }
 
-const std::string &
-RasterLayerRenderer::surfaceCapabilityReason() const noexcept
+const std::string &RasterLayerRenderer::surfaceCapabilityReason() const noexcept
 {
     return surfaceCapabilityReason_;
 }
@@ -434,8 +432,8 @@ void RasterLayerRenderer::createSurfaceResources(
 void RasterLayerRenderer::createSurfaceUniformBuffer(
     const std::size_t drawCapacity)
 {
-    const auto stride = static_cast<quint32>(
-        rhi_->ubufAligned(sizeof(RasterSurfaceUniform)));
+    const auto stride =
+        static_cast<quint32>(rhi_->ubufAligned(sizeof(RasterSurfaceUniform)));
     if (drawCapacity > std::numeric_limits<quint32>::max() / stride) {
         throw std::length_error(
             "surface uniform capacity exceeds QRhi buffer limits");
@@ -556,18 +554,15 @@ void RasterLayerRenderer::createSurfacePipelines(
                                      : QRhiGraphicsPipeline::LessOrEqual);
             pipeline->setShaderStages({
                 {QRhiShaderStage::Vertex,
-                 shader(QStringLiteral(
-                     ":/shaders/raster_surface.vert.qsb"))},
+                 shader(QStringLiteral(":/shaders/raster_surface.vert.qsb"))},
                 {QRhiShaderStage::Fragment,
-                 shader(QStringLiteral(
-                     ":/shaders/raster_surface.frag.qsb"))},
+                 shader(QStringLiteral(":/shaders/raster_surface.frag.qsb"))},
             });
             if (transparent) {
                 pipeline->setTargetBlends({premultipliedBlend()});
             }
             pipeline->setVertexInputLayout(layout);
-            pipeline->setShaderResourceBindings(
-                surfacePipelineBindings_.get());
+            pipeline->setShaderResourceBindings(surfacePipelineBindings_.get());
             pipeline->setRenderPassDescriptor(renderPass);
             requireCreated(pipeline->create(),
                            "raster surface graphics pipeline");
@@ -619,11 +614,9 @@ std::size_t RasterLayerRenderer::uploadPending(
     std::uint64_t spent = 0;
     std::size_t uploaded = 0;
     RhiResourceUpdateBatchPtr updates(rhi_->nextResourceUpdateBatch());
-    if (surfaceSupported_ && surfaceIndexBuffer_ &&
-        !surfaceIndexUploaded_) {
+    if (surfaceSupported_ && surfaceIndexBuffer_ && !surfaceIndexUploaded_) {
         const auto indices = surfaceGridIndices();
-        updates->uploadStaticBuffer(
-            surfaceIndexBuffer_.get(), indices.data());
+        updates->uploadStaticBuffer(surfaceIndexBuffer_.get(), indices.data());
         surfaceIndexUploaded_ = true;
     }
     for (const RasterPendingUpload &entry : pending) {
@@ -739,26 +732,25 @@ std::size_t RasterLayerRenderer::uploadPending(
                            "raster surface tile shader bindings");
         }
 
-        tiles_.emplace(entry.key,
-                       GpuTile{
-                           .texture = std::move(texture),
-                           .bindings = std::move(bindings),
-                           .elevationTexture = std::move(elevationTexture),
-                           .surfaceBindings = std::move(surfaceBindings),
-                           .layerId = entry.layerId,
-                           .bytes = bytes,
-                           .heightBytes = heightBytes,
-                           .lastUsedFrame = frameCounter_,
-                           .validWidth = entry.tile->validWidth,
-                           .validHeight = entry.tile->validHeight,
-                           .hasTranslucentAlpha =
-                               entry.tile->hasTranslucentAlpha,
-                           .nearest = entry.nearest,
-                           .elevationMinimum = entry.tile->elevationMinimum,
-                           .elevationMaximum = entry.tile->elevationMaximum,
-                           .hasValidElevation =
-                               entry.tile->hasValidElevation,
-                       });
+        tiles_.emplace(
+            entry.key,
+            GpuTile{
+                .texture = std::move(texture),
+                .bindings = std::move(bindings),
+                .elevationTexture = std::move(elevationTexture),
+                .surfaceBindings = std::move(surfaceBindings),
+                .layerId = entry.layerId,
+                .bytes = bytes,
+                .heightBytes = heightBytes,
+                .lastUsedFrame = frameCounter_,
+                .validWidth = entry.tile->validWidth,
+                .validHeight = entry.tile->validHeight,
+                .hasTranslucentAlpha = entry.tile->hasTranslucentAlpha,
+                .nearest = entry.nearest,
+                .elevationMinimum = entry.tile->elevationMinimum,
+                .elevationMaximum = entry.tile->elevationMaximum,
+                .hasValidElevation = entry.tile->hasValidElevation,
+            });
         gpuBytes_ += bytes;
         peakGpuBytes_ = std::max(peakGpuBytes_, gpuBytes_);
         spent += bytes;
@@ -944,8 +936,8 @@ void RasterLayerRenderer::updateUniforms(
                                      staging.data());
     }
     if (!surfaceDraws.empty()) {
-        const std::vector<std::byte> staging = stageRasterSurfaceUniforms(
-            surfaceDraws, surfaceUniformStride_);
+        const std::vector<std::byte> staging =
+            stageRasterSurfaceUniforms(surfaceDraws, surfaceUniformStride_);
         updates->updateDynamicBuffer(surfaceUniformBuffer_.get(),
                                      0,
                                      static_cast<quint32>(staging.size()),
@@ -974,8 +966,7 @@ void RasterLayerRenderer::recordDraws(
     std::uint32_t surfaceIndex = 0;
     for (const RasterLayerDraw &draw : draws) {
         const std::uint32_t drawIndex =
-            draw.mode == RasterDrawMode::Surface ? surfaceIndex++
-                                                 : flatIndex++;
+            draw.mode == RasterDrawMode::Surface ? surfaceIndex++ : flatIndex++;
         const auto found = tiles_.find(draw.tileKey);
         if (found == tiles_.end()) {
             continue;

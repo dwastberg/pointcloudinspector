@@ -288,10 +288,10 @@ struct GpuStressHierarchy {
     pci::PointCloudScenePtr scene;
 };
 
-GpuStressHierarchy makeGpuStressHierarchy(
-    const std::uint32_t color,
-    const std::uint64_t reportedSourcePointCount =
-        GpuStressHierarchySource::leafPointCount)
+GpuStressHierarchy
+makeGpuStressHierarchy(const std::uint32_t color,
+                       const std::uint64_t reportedSourcePointCount =
+                           GpuStressHierarchySource::leafPointCount)
 {
     auto source = std::make_shared<GpuStressHierarchySource>(color);
     pci::PointCloudNodePayloadPtr root = source->rootPayload();
@@ -1210,8 +1210,7 @@ TEST_CASE("GPU asynchronously published hierarchies recover the bootstrap "
     REQUIRE(QTest::qWaitFor(
         [&] {
             return !failure.isEmpty() ||
-                   pci::testAccess(viewport).renderedFrameCountForTesting() >
-                       0;
+                   pci::testAccess(viewport).renderedFrameCountForTesting() > 0;
         },
         2000));
     REQUIRE(failure.isEmpty());

@@ -337,11 +337,11 @@ RasterLayerStyle defaultRasterLayerStyle(const RasterLayerMetadata &metadata)
     return clampRasterLayerStyle(std::move(style));
 }
 
-Bounds3d rasterSceneBounds(const RasterLayerMetadata &metadata,
-                           const RasterLayerStyle &style,
-                           const RasterElevationStatus elevationStatus,
-                           const std::optional<RasterElevationRange> exactRange)
-    noexcept
+Bounds3d
+rasterSceneBounds(const RasterLayerMetadata &metadata,
+                  const RasterLayerStyle &style,
+                  const RasterElevationStatus elevationStatus,
+                  const std::optional<RasterElevationRange> exactRange) noexcept
 {
     Bounds3d result = metadata.bounds;
     if (rasterEffectiveRenderMode(
@@ -401,10 +401,9 @@ RasterLayerStyle clampRasterLayerStyle(RasterLayerStyle style)
     if (!std::isfinite(style.verticalExaggeration)) {
         style.verticalExaggeration = 1.0;
     }
-    style.verticalExaggeration =
-        std::clamp(style.verticalExaggeration,
-                   minimumRasterVerticalExaggeration,
-                   maximumRasterVerticalExaggeration);
+    style.verticalExaggeration = std::clamp(style.verticalExaggeration,
+                                            minimumRasterVerticalExaggeration,
+                                            maximumRasterVerticalExaggeration);
 
     if (!std::isfinite(style.surfaceShadingStrength)) {
         style.surfaceShadingStrength = 1.0F;

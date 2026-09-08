@@ -11,9 +11,10 @@ namespace pci {
 namespace {
 
 template <typename Completion>
-void post(const std::shared_ptr<
-              QueuedControllerTarget<RasterElevationController>> &target,
-          Completion completion)
+void post(
+    const std::shared_ptr<QueuedControllerTarget<RasterElevationController>>
+        &target,
+    Completion completion)
 {
     postToObject(target, std::move(completion));
 }
@@ -31,8 +32,9 @@ RasterElevationController::RasterElevationController(TaskScheduler &scheduler,
                                                      QObject *parent)
     : QObject(parent)
     , scheduler_(&scheduler)
-    , callbackTarget_(std::make_shared<
-                      QueuedControllerTarget<RasterElevationController>>(this))
+    , callbackTarget_(
+          std::make_shared<QueuedControllerTarget<RasterElevationController>>(
+              this))
 {
     qRegisterMetaType<RasterElevationRange>();
 }
@@ -106,14 +108,13 @@ void RasterElevationController::scheduleNext()
         const RasterTileSourcePtr source = job.data->source;
         const std::stop_token stop = job.stop.get_token();
         const auto callbackTarget = callbackTarget_;
-        const auto cancelledCallback =
-            [callbackTarget, jobId, generation] {
-                post(callbackTarget,
-                     [jobId, generation](RasterElevationController *controller) {
-                         controller->finish(
-                             jobId, generation, std::nullopt, {}, true);
-                     });
-            };
+        const auto cancelledCallback = [callbackTarget, jobId, generation] {
+            post(callbackTarget,
+                 [jobId, generation](RasterElevationController *controller) {
+                     controller->finish(
+                         jobId, generation, std::nullopt, {}, true);
+                 });
+        };
         job.task = scheduler_->submit(
             TaskPriority::Background,
             source->exactElevationScanReservationBytes(),
@@ -124,26 +125,24 @@ void RasterElevationController::scheduleNext()
                             stop,
                             [callbackTarget, jobId, generation](
                                 const RasterElevationScanProgress progress) {
-                                post(callbackTarget,
-                                     [jobId, generation, progress](
-                                         RasterElevationController *controller) {
-                                         controller->observeProgress(
-                                             jobId, generation, progress);
-                                     });
+                                post(
+                                    callbackTarget,
+                                    [jobId, generation, progress](
+                                        RasterElevationController *controller) {
+                                        controller->observeProgress(
+                                            jobId, generation, progress);
+                                    });
                             });
                     post(callbackTarget,
                          [jobId, generation, range](
                              RasterElevationController *controller) {
-                             controller->finish(jobId,
-                                                generation,
-                                                range,
-                                                {},
-                                                false);
+                             controller->finish(
+                                 jobId, generation, range, {}, false);
                          });
                 } catch (const RasterReadCancelled &) {
                     post(callbackTarget,
-                         [jobId, generation](
-                             RasterElevationController *controller) {
+                         [jobId,
+                          generation](RasterElevationController *controller) {
                              controller->finish(
                                  jobId, generation, std::nullopt, {}, true);
                          });
@@ -207,10 +206,8 @@ void RasterElevationController::finish(
         job->second.phase = RasterElevationJobPhase::Ready;
         state->second.phase = RasterElevationJobPhase::Ready;
         state->second.processedBlocks = state->second.totalBlocks;
-        emit completed(jobId,
-                       job->second.layerId,
-                       job->second.data->sourceId,
-                       *range);
+        emit completed(
+            jobId, job->second.layerId, job->second.data->sourceId, *range);
     } else {
         job->second.phase = RasterElevationJobPhase::Failed;
         state->second.phase = RasterElevationJobPhase::Failed;
@@ -226,7 +223,8 @@ void RasterElevationController::finish(
 
 void RasterElevationController::cancelLayer(const SceneLayerId layerId)
 {
-    if (const auto found = layerJobs_.find(layerId); found != layerJobs_.end()) {
+    if (const auto found = layerJobs_.find(layerId);
+        found != layerJobs_.end()) {
         cancel(found->second);
     }
 }
@@ -358,10 +356,9 @@ std::vector<LoadJobRow> RasterElevationController::jobRows() const
             .completion = std::clamp(completion, 0.0, 1.0),
             .terminal = isTerminal,
             .capabilities =
-                isTerminal
-                    ? terminalLoadJobCapabilities(
-                          state.phase == RasterElevationJobPhase::Failed)
-                    : activeLoadJobCapabilities(),
+                isTerminal ? terminalLoadJobCapabilities(
+                                 state.phase == RasterElevationJobPhase::Failed)
+                           : activeLoadJobCapabilities(),
         });
     }
     return rows;

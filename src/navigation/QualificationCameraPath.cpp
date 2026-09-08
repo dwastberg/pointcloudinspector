@@ -64,8 +64,7 @@ Vec3d interpolate(const Vec3d from,
     return from + (to - from) * fraction;
 }
 
-Vec3d worldPivot(const Bounds3d &bounds,
-                 const Vec3d normalized) noexcept
+Vec3d worldPivot(const Bounds3d &bounds, const Vec3d normalized) noexcept
 {
     return {
         bounds.minimum[0] +
@@ -92,22 +91,23 @@ QualificationCameraPath::QualificationCameraPath(Bounds3d sceneBounds)
 
 QualificationCameraFrame QualificationCameraPath::current() const noexcept
 {
-    const auto upper = std::ranges::lower_bound(
-        pathKeyframes, frameIndex_, {}, &QualificationCameraKeyframe::frameIndex);
+    const auto upper =
+        std::ranges::lower_bound(pathKeyframes,
+                                 frameIndex_,
+                                 {},
+                                 &QualificationCameraKeyframe::frameIndex);
     const QualificationCameraKeyframe &to =
         upper == pathKeyframes.end() ? pathKeyframes.back() : *upper;
     const QualificationCameraKeyframe &from =
         upper == pathKeyframes.begin() ? *upper : *(upper - 1);
     const std::uint32_t span = to.frameIndex - from.frameIndex;
-    const double fraction = span == 0
-                                ? 0.0
-                                : static_cast<double>(frameIndex_ -
-                                                      from.frameIndex) /
-                                      static_cast<double>(span);
+    const double fraction =
+        span == 0 ? 0.0
+                  : static_cast<double>(frameIndex_ - from.frameIndex) /
+                        static_cast<double>(span);
     const Vec3d normalizedPivot =
         interpolate(from.normalizedPivot, to.normalizedPivot, fraction);
-    const Vec3d eyeOffset =
-        interpolate(from.eyeOffset, to.eyeOffset, fraction);
+    const Vec3d eyeOffset = interpolate(from.eyeOffset, to.eyeOffset, fraction);
     const Vec3d pivot = worldPivot(sceneBounds_, normalizedPivot);
     const double diameter = sceneBounds_.maximumExtent();
     return {
@@ -136,8 +136,8 @@ QualificationCameraPath::keyframes() noexcept
     return pathKeyframes;
 }
 
-const char *qualificationFramePhaseName(
-    const QualificationFramePhase phase) noexcept
+const char *
+qualificationFramePhaseName(const QualificationFramePhase phase) noexcept
 {
     switch (phase) {
     case QualificationFramePhase::Warmup:

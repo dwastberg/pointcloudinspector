@@ -260,19 +260,16 @@ SceneLayerListModel::project(const SceneDocumentSnapshot &snapshot)
             });
         } else if (const auto *raster =
                        std::get_if<RasterLayerState>(&sceneLayer.payload)) {
-            const RasterLayer layer{.id = sceneLayer.id,
-                                    .data = raster->data,
-                                    .visible = sceneLayer.visible,
-                                    .style = raster->style,
-                                    .elevationStatus = raster->elevationStatus,
-                                    .exactElevationRange =
-                                        raster->exactElevationRange,
-                                    .elevationFailure =
-                                        raster->elevationFailure,
-                                    .elevationGeneration =
-                                        raster->elevationGeneration,
-                                    .renderGeneration =
-                                        raster->renderGeneration};
+            const RasterLayer layer{
+                .id = sceneLayer.id,
+                .data = raster->data,
+                .visible = sceneLayer.visible,
+                .style = raster->style,
+                .elevationStatus = raster->elevationStatus,
+                .exactElevationRange = raster->exactElevationRange,
+                .elevationFailure = raster->elevationFailure,
+                .elevationGeneration = raster->elevationGeneration,
+                .renderGeneration = raster->renderGeneration};
             const RasterLayerMetadata *metadata =
                 layer.data ? &layer.data->metadata() : nullptr;
             result.push_back({

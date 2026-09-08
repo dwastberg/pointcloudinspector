@@ -499,8 +499,8 @@ TEST_CASE("new scene clears layers and cannot restore a cancelled replacement",
 
     REQUIRE(waitFor([&session] {
         const auto states = session.pointLoadJobStates();
-        return states.size() == 2 && states.back().phase ==
-                                         pci::PointCloudLoadJobPhase::Cancelled;
+        return states.size() == 2 &&
+               states.back().phase == pci::PointCloudLoadJobPhase::Cancelled;
     }));
     CHECK_FALSE(session.document()->hasAnyLayer());
 }

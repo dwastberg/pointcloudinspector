@@ -4,8 +4,8 @@
 
 #include "pointcloud/PointColorMapCatalog.h"
 #include "pointcloud/PointColorPolicy.h"
-#include "scene/SceneDocumentSnapshot.h"
 #include "renderer/RenderViewport.h"
+#include "scene/SceneDocumentSnapshot.h"
 
 #include <QDockWidget>
 

@@ -153,8 +153,8 @@ public:
     {
         return RasterSurfaceCapability::Unknown;
     }
-    virtual void setRasterSurfaceCapabilityCallback(
-        RasterSurfaceCapabilityCallback callback)
+    virtual void
+    setRasterSurfaceCapabilityCallback(RasterSurfaceCapabilityCallback callback)
     {
         if (callback)
             callback(rasterSurfaceCapability(), {});

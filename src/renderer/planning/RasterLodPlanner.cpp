@@ -25,9 +25,8 @@ struct PixelRect {
     }
 };
 
-[[nodiscard]] double cross(const Point2 origin,
-                           const Point2 a,
-                           const Point2 b) noexcept
+[[nodiscard]] double
+cross(const Point2 origin, const Point2 a, const Point2 b) noexcept
 {
     return (a[0] - origin[0]) * (b[1] - origin[1]) -
            (a[1] - origin[1]) * (b[0] - origin[0]);
@@ -272,11 +271,11 @@ std::vector<Point2> rasterVisiblePixelPolygon(const RasterLayer &layer,
         return {};
     }
 
-    const RasterRenderMode mode = rasterEffectiveRenderMode(
-        metadata,
-        layer.style,
-        layer.elevationStatus,
-        layer.exactElevationRange);
+    const RasterRenderMode mode =
+        rasterEffectiveRenderMode(metadata,
+                                  layer.style,
+                                  layer.elevationStatus,
+                                  layer.exactElevationRange);
     if (mode == RasterRenderMode::Surface) {
         const double low = layer.exactElevationRange->minimum *
                                layer.style.verticalExaggeration +
@@ -303,11 +302,9 @@ std::vector<Point2> rasterVisiblePixelPolygon(const RasterLayer &layer,
         };
         std::vector<Vec3d> intersectionVertices;
         for (const auto &face : faces) {
-            std::vector<Vec3d> clipped =
-                camera.culler.clipConvexPolygon(face);
-            intersectionVertices.insert(intersectionVertices.end(),
-                                        clipped.begin(),
-                                        clipped.end());
+            std::vector<Vec3d> clipped = camera.culler.clipConvexPolygon(face);
+            intersectionVertices.insert(
+                intersectionVertices.end(), clipped.begin(), clipped.end());
         }
         // Clipped prism faces alone are not conservative when a frustum corner
         // lies inside the prism. Include those original intersection vertices.
@@ -315,8 +312,8 @@ std::vector<Point2> rasterVisiblePixelPolygon(const RasterLayer &layer,
             if (corner.z < floor[0].z || corner.z > ceiling[0].z) {
                 continue;
             }
-            const auto pixel = rasterWorldToPixel(
-                metadata.geoTransform, corner.x, corner.y);
+            const auto pixel =
+                rasterWorldToPixel(metadata.geoTransform, corner.x, corner.y);
             if (pixel && pixel->pixel >= 0.0 &&
                 pixel->pixel <= static_cast<double>(metadata.width) &&
                 pixel->line >= 0.0 &&
@@ -328,16 +325,14 @@ std::vector<Point2> rasterVisiblePixelPolygon(const RasterLayer &layer,
         std::vector<Point2> pixels;
         pixels.reserve(intersectionVertices.size());
         for (const Vec3d vertex : intersectionVertices) {
-            const auto pixel = rasterWorldToPixel(
-                metadata.geoTransform, vertex.x, vertex.y);
+            const auto pixel =
+                rasterWorldToPixel(metadata.geoTransform, vertex.x, vertex.y);
             if (pixel) {
                 pixels.push_back({
-                    std::clamp(pixel->pixel,
-                               0.0,
-                               static_cast<double>(metadata.width)),
-                    std::clamp(pixel->line,
-                               0.0,
-                               static_cast<double>(metadata.height)),
+                    std::clamp(
+                        pixel->pixel, 0.0, static_cast<double>(metadata.width)),
+                    std::clamp(
+                        pixel->line, 0.0, static_cast<double>(metadata.height)),
                 });
             }
         }
@@ -345,11 +340,11 @@ std::vector<Point2> rasterVisiblePixelPolygon(const RasterLayer &layer,
             hull.size() >= 3) {
             return hull;
         }
-        if (!camera.culler.intersects(rasterSceneBounds(
-                metadata,
-                layer.style,
-                layer.elevationStatus,
-                layer.exactElevationRange))) {
+        if (!camera.culler.intersects(
+                rasterSceneBounds(metadata,
+                                  layer.style,
+                                  layer.elevationStatus,
+                                  layer.exactElevationRange))) {
             return {};
         }
         // Degenerate/contained intersections deliberately over-plan rather than

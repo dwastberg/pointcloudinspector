@@ -181,14 +181,12 @@ TEST_CASE("DEM payload stores residual heights and actual float extrema",
     const pci::RasterLayerMetadata &metadata = data->metadata();
     REQUIRE(metadata.elevation.available);
     const pci::RasterTileData tile = readFirstElevationTile(*data);
-    REQUIRE(tile.profile ==
-            pci::RasterTilePayloadProfile::RenderElevation);
+    REQUIRE(tile.profile == pci::RasterTilePayloadProfile::RenderElevation);
     REQUIRE(tile.elevation.size() ==
             pci::rasterStoredTilePixels * pci::rasterStoredTilePixels);
     REQUIRE(tile.hasValidElevation);
 
-    const auto height = [&tile](const std::uint32_t x,
-                                const std::uint32_t y) {
+    const auto height = [&tile](const std::uint32_t x, const std::uint32_t y) {
         return tile.elevation[static_cast<std::size_t>(y) *
                                   pci::rasterStoredTilePixels +
                               x];
@@ -203,8 +201,8 @@ TEST_CASE("DEM payload stores residual heights and actual float extrema",
     const auto [minimum, maximum] = std::ranges::minmax(tile.elevation);
     CHECK(minimum == tile.elevationMinimum);
     CHECK(maximum == tile.elevationMaximum);
-    CHECK(tile.byteSize() >= pci::rasterStoredTileBytes +
-                                 tile.elevation.size() * sizeof(float));
+    CHECK(tile.byteSize() >=
+          pci::rasterStoredTileBytes + tile.elevation.size() * sizeof(float));
 }
 
 TEST_CASE("DEM exact analysis reports the valid scaled range and progress",
@@ -226,9 +224,9 @@ TEST_CASE("DEM exact analysis reports the valid scaled range and progress",
 
     std::stop_source cancelled;
     cancelled.request_stop();
-    CHECK_THROWS_AS(data->source->exactElevationRange(cancelled.get_token(),
-                                                      {}),
-                    pci::RasterReadCancelled);
+    CHECK_THROWS_AS(
+        data->source->exactElevationRange(cancelled.get_token(), {}),
+        pci::RasterReadCancelled);
 }
 
 TEST_CASE("DEM validity applies explicit alpha before scaled extrema",
@@ -252,8 +250,7 @@ TEST_CASE("DEM validity applies explicit alpha before scaled extrema",
     const pci::RasterTileData tile = readFirstElevationTile(*data);
     REQUIRE(tile.hasValidElevation);
     CHECK(texel(tile, 5, 5)[3] == std::byte{0});
-    const std::size_t invalid =
-        5U * pci::rasterStoredTilePixels + 5U;
+    const std::size_t invalid = 5U * pci::rasterStoredTilePixels + 5U;
     CHECK(tile.elevation[invalid] == tile.elevationMinimum);
 }
 

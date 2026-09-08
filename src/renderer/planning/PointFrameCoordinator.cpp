@@ -111,9 +111,9 @@ PointBudgetUpdate PointFrameCoordinator::pointBudgetUpdate(
         usableTransitionBudget(decodedByteBudget) / decodedBytesPerPoint;
     const std::uint64_t stableGpuPointCapacity =
         usableTransitionBudget(gpuByteBudget) / sizeof(GpuPoint);
-    const bool stableHierarchyFits =
-        allHierarchicalComplete && capacity <= stableDecodedPointCapacity &&
-        capacity <= stableGpuPointCapacity;
+    const bool stableHierarchyFits = allHierarchicalComplete &&
+                                     capacity <= stableDecodedPointCapacity &&
+                                     capacity <= stableGpuPointCapacity;
     if (stableHierarchyFits) {
         // Keep small, completed paged sources visually stable without
         // resurrecting whole-hierarchy warming: selection remains

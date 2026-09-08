@@ -3,8 +3,8 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
-#include <cstring>
 #include <cmath>
+#include <cstring>
 #include <vector>
 
 namespace {
@@ -88,9 +88,7 @@ TEST_CASE("raster surface uniform staging honours the device stride",
     REQUIRE(staging.size() == draws.size() * stride);
     for (std::size_t index = 0; index < draws.size(); ++index) {
         pci::RasterSurfaceUniform copy;
-        std::memcpy(&copy,
-                    staging.data() + index * stride,
-                    sizeof(copy));
+        std::memcpy(&copy, staging.data() + index * stride, sizeof(copy));
         CHECK(copy.heightParams[0] ==
               draws[index].surfaceUniform.heightParams[0]);
     }
@@ -105,14 +103,13 @@ TEST_CASE("surface edge reconstruction closes ordinary and short tile seams",
                                 const float validWidth,
                                 const float unit) {
         const float sample = static_cast<float>(pci::rasterTileGutter) +
-                                 unit * validWidth -
-                             0.5F;
+                             unit * validWidth - 0.5F;
         const auto low = static_cast<std::size_t>(std::floor(sample));
         const float weight = sample - std::floor(sample);
         return std::lerp(stored[low], stored[low + 1], weight);
     };
-    for (const std::uint16_t leftWidth : {std::uint16_t{256},
-                                          std::uint16_t{100}}) {
+    for (const std::uint16_t leftWidth :
+         {std::uint16_t{256}, std::uint16_t{100}}) {
         std::vector<float> left(pci::rasterStoredTilePixels, -99.0F);
         std::vector<float> right(pci::rasterStoredTilePixels, -99.0F);
         left[pci::rasterTileGutter + leftWidth - 1] = 12.0F;

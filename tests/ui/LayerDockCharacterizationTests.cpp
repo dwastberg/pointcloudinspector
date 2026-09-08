@@ -579,8 +579,9 @@ TEST_CASE("layer inspector exposes true-elevation Surface controls",
     CHECK(status->text().contains(QStringLiteral("No R32F support")));
     auto *model = qobject_cast<QStandardItemModel *>(mode->model());
     REQUIRE(model != nullptr);
-    CHECK_FALSE(model->item(mode->findData(
-                                static_cast<int>(pci::RasterRenderMode::Surface)))
+    CHECK_FALSE(model
+                    ->item(mode->findData(
+                        static_cast<int>(pci::RasterRenderMode::Surface)))
                     ->isEnabled());
 }
 

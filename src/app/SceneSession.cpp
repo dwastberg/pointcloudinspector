@@ -1205,8 +1205,8 @@ void SceneSession::retryJob(const LoadJobKey key)
     case LoadJobKind::RasterElevation: {
         const std::vector<RasterElevationJobState> states =
             rasterElevationController().jobStates();
-        const auto state = std::ranges::find(states, key.id,
-                                             &RasterElevationJobState::jobId);
+        const auto state =
+            std::ranges::find(states, key.id, &RasterElevationJobState::jobId);
         if (state != states.end()) {
             static_cast<void>(document_->setRasterElevationState(
                 state->layerId, RasterElevationStatus::Scanning));
@@ -1313,9 +1313,8 @@ void SceneSession::retryRasterElevation(const SceneLayerId layerId)
     bool accepted = false;
     const std::vector<RasterElevationJobState> states =
         rasterElevationController().jobStates();
-    if (const auto state = std::ranges::find(states,
-                                             layerId,
-                                             &RasterElevationJobState::layerId);
+    if (const auto state = std::ranges::find(
+            states, layerId, &RasterElevationJobState::layerId);
         state != states.end()) {
         accepted = rasterElevationController().retry(state->jobId);
     }
@@ -1870,11 +1869,10 @@ void SceneSession::updateBatchProgress()
                     static_cast<long double>(load->renderUploadTotal),
                 0.0L,
                 1.0L);
-            completion =
-                std::max(completion,
-                         paged ? pagedPreparation +
-                                     (0.99L - pagedPreparation) * fraction
-                               : 0.75L + 0.24L * fraction);
+            completion = std::max(
+                completion,
+                paged ? pagedPreparation + (0.99L - pagedPreparation) * fraction
+                      : 0.75L + 0.24L * fraction);
         }
         if (!paged && load->importCompleted && load->firstFrameCompleted) {
             completion = std::max(completion, 0.80L);

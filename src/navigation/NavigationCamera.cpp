@@ -143,8 +143,7 @@ void NavigationCamera::setPivot(const Vec3d pivot) noexcept
     markChanged();
 }
 
-void NavigationCamera::setView(const Vec3d position,
-                               const Vec3d pivot) noexcept
+void NavigationCamera::setView(const Vec3d position, const Vec3d pivot) noexcept
 {
     if (!isFinite(position) || !isFinite(pivot)) {
         return;
