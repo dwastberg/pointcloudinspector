@@ -104,6 +104,7 @@ private:
     QAction *openAction_ = nullptr;
     QAction *fitSceneAction_ = nullptr;
     QAction *topDownSceneAction_ = nullptr;
+    QAction *mapViewAction_ = nullptr;
     QAction *orthographicAction_ = nullptr;
     QAction *eyeDomeLightingAction_ = nullptr;
     QAction *navigateToolAction_ = nullptr;

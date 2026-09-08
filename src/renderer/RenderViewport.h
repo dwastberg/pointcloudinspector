@@ -98,6 +98,9 @@ public:
     virtual void frameVisibleLayersTopDown() = 0;
     [[nodiscard]] virtual bool isOrthographic() const noexcept = 0;
     virtual void setOrthographic(bool enabled) = 0;
+    // A GIS-style navigation mode with a locked top-down orthographic camera.
+    [[nodiscard]] virtual bool isMapView() const noexcept = 0;
+    virtual void setMapView(bool enabled) = 0;
     // Frames the camera on a single layer's bounds (e.g. "zoom to layer").
     virtual void frameLayer(PointCloudLayerId layerId) = 0;
     [[nodiscard]] virtual bool eyeDomeLightingEnabled() const noexcept = 0;

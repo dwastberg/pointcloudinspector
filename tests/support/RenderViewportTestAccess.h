@@ -25,6 +25,11 @@ public:
         return viewport_.input_;
     }
 
+    void advanceKeyboardNavigationForTesting(const double deltaSeconds)
+    {
+        viewport_.applyKeyboardNavigation(deltaSeconds);
+    }
+
     void requestRawPickForTesting(QPoint position,
                                   PointPicker::Completion completion)
     {

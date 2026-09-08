@@ -126,6 +126,23 @@ void drawGlyph(QPainter &painter,
         painter.drawLine(QPointF(3.0, 15.5), QPointF(17.0, 15.5));
         painter.drawLine(QPointF(5.0, 13.0), QPointF(15.0, 13.0));
         break;
+    case ToolbarIcon::Map: {
+        QPainterPath map;
+        map.moveTo(2.5, 5.0);
+        map.lineTo(7.5, 2.8);
+        map.lineTo(12.5, 5.0);
+        map.lineTo(17.5, 2.8);
+        map.lineTo(17.5, 15.0);
+        map.lineTo(12.5, 17.2);
+        map.lineTo(7.5, 15.0);
+        map.lineTo(2.5, 17.2);
+        map.closeSubpath();
+        painter.drawPath(map);
+        painter.drawLine(QPointF(7.5, 2.8), QPointF(7.5, 15.0));
+        painter.drawLine(QPointF(12.5, 5.0), QPointF(12.5, 17.2));
+        drawNode(painter, QPointF(10.0, 10.0), accent);
+        break;
+    }
     case ToolbarIcon::Orthographic:
         painter.drawRect(QRectF(3.0, 5.0, 10.0, 11.0));
         painter.drawLine(QPointF(6.0, 2.5), QPointF(16.5, 2.5));

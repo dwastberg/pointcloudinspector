@@ -660,7 +660,29 @@ public:
 
     void setOrthographic(const bool enabled) override
     {
+        if (mapView_ && !enabled) {
+            return;
+        }
         orthographic_ = enabled;
+    }
+
+    bool isMapView() const noexcept override
+    {
+        return mapView_;
+    }
+
+    void setMapView(const bool enabled) override
+    {
+        if (mapView_ == enabled) {
+            return;
+        }
+        mapView_ = enabled;
+        if (enabled) {
+            orthographicBeforeMapView_ = orthographic_;
+            orthographic_ = true;
+        } else {
+            orthographic_ = orthographicBeforeMapView_;
+        }
     }
 
     void frameLayer(pci::PointCloudLayerId layerId) override
@@ -894,6 +916,8 @@ private:
     int frameVisibleLayersTopDownCount_ = 0;
     int qualificationPathStartCount_ = 0;
     bool orthographic_ = false;
+    bool mapView_ = false;
+    bool orthographicBeforeMapView_ = false;
     bool lastDocumentWasFramed_ = false;
     bool continuousMetricsEnabled_ = false;
     bool qualificationPathSupported_ = false;
@@ -970,6 +994,39 @@ TEST_CASE("orthographic camera action stays synchronized with the viewport",
     CHECK(viewportPointer->isOrthographic());
     orthographic->setChecked(false);
     CHECK_FALSE(viewportPointer->isOrthographic());
+}
+
+TEST_CASE("2D map view locks orthographic projection and updates controls",
+          "[ui][mainwindow][viewport][map]")
+{
+    auto viewport = std::make_unique<FakeViewport>();
+    FakeViewport *viewportPointer = viewport.get();
+    auto services = makeTestImportServices(std::make_shared<ImmediateLoader>());
+    pci::MainWindow window(std::move(viewport), std::move(services), 100);
+
+    auto *mapView =
+        window.findChild<QAction *>(QStringLiteral("mapViewAction"));
+    auto *orthographic =
+        window.findChild<QAction *>(QStringLiteral("orthographicCameraAction"));
+    auto *hint =
+        window.findChild<QLabel *>(QStringLiteral("viewportNavigationHint"));
+    REQUIRE(mapView != nullptr);
+    REQUIRE(orthographic != nullptr);
+    REQUIRE(hint != nullptr);
+
+    mapView->setChecked(true);
+    CHECK(viewportPointer->isMapView());
+    CHECK(viewportPointer->isOrthographic());
+    CHECK(orthographic->isChecked());
+    CHECK_FALSE(orthographic->isEnabled());
+    CHECK(hint->text().contains(QStringLiteral("Left-drag")));
+    CHECK(hint->text().contains(QStringLiteral("W / A / S / D")));
+
+    mapView->setChecked(false);
+    CHECK_FALSE(viewportPointer->isMapView());
+    CHECK_FALSE(viewportPointer->isOrthographic());
+    CHECK_FALSE(orthographic->isChecked());
+    CHECK(orthographic->isEnabled());
 }
 
 TEST_CASE("main window shares its open action between menu and toolbar",
@@ -1072,6 +1129,8 @@ TEST_CASE("main toolbar follows data, camera, display, settings order",
     auto *fit = window.findChild<QAction *>(QStringLiteral("fitSceneAction"));
     auto *topDown =
         window.findChild<QAction *>(QStringLiteral("topDownSceneAction"));
+    auto *mapView =
+        window.findChild<QAction *>(QStringLiteral("mapViewAction"));
     auto *orthographic =
         window.findChild<QAction *>(QStringLiteral("orthographicCameraAction"));
     auto *settings =
@@ -1091,6 +1150,7 @@ TEST_CASE("main toolbar follows data, camera, display, settings order",
     CHECK(raster == nullptr);
     REQUIRE(fit != nullptr);
     REQUIRE(topDown != nullptr);
+    REQUIRE(mapView != nullptr);
     REQUIRE(orthographic != nullptr);
     REQUIRE(settings != nullptr);
     REQUIRE(pointSize != nullptr);
@@ -1118,7 +1178,8 @@ TEST_CASE("main toolbar follows data, camera, display, settings order",
     CHECK(ordered(newScene, open));
     CHECK(ordered(open, fit));
     CHECK(ordered(fit, topDown));
-    CHECK(ordered(topDown, orthographic));
+    CHECK(ordered(topDown, mapView));
+    CHECK(ordered(mapView, orthographic));
     CHECK(ordered(orthographic, pointSizeAction));
     CHECK(ordered(pointSizeAction, depthAction));
     CHECK(ordered(depthAction, spacerAction));
@@ -1128,10 +1189,12 @@ TEST_CASE("main toolbar follows data, camera, display, settings order",
     CHECK(open->iconText() == QStringLiteral("Open…"));
     CHECK(fit->iconText() == QStringLiteral("Fit"));
     CHECK(topDown->iconText() == QStringLiteral("Top Down"));
+    CHECK(mapView->iconText() == QStringLiteral("2D Map"));
     CHECK(orthographic->iconText() == QStringLiteral("Orthographic"));
     CHECK_FALSE(open->icon().isNull());
     CHECK_FALSE(fit->icon().isNull());
     CHECK_FALSE(topDown->icon().isNull());
+    CHECK_FALSE(mapView->icon().isNull());
     CHECK_FALSE(orthographic->icon().isNull());
     CHECK_FALSE(settings->icon().isNull());
     CHECK(toolBar->iconSize() == QSize(20, 20));

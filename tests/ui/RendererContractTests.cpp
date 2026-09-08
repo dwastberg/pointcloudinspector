@@ -44,6 +44,13 @@ TEST_CASE("render viewport exposes its public widget contract",
 
     viewport->setOrthographic(true);
     CHECK(viewport->isOrthographic());
+    viewport->setOrthographic(false);
+    viewport->setMapView(true);
+    CHECK(viewport->isMapView());
+    CHECK(viewport->isOrthographic());
+    viewport->setMapView(false);
+    CHECK_FALSE(viewport->isMapView());
+    CHECK_FALSE(viewport->isOrthographic());
     viewport->setEyeDomeLightingEnabled(false);
     CHECK_FALSE(viewport->eyeDomeLightingEnabled());
     viewport->setPointSizePixels(pci::maximumPointSizePixels);

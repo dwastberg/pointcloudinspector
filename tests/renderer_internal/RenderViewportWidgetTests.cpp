@@ -4,6 +4,7 @@
 #include "renderer/rhi/ShaderLoader.h"
 #include "support/RenderViewportTestAccess.h"
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include <QApplication>
@@ -58,6 +59,65 @@ TEST_CASE("render viewport routes navigation input internally",
     QApplication::sendEvent(&viewport, &frame);
     CHECK(pci::testAccess(viewport).cameraForTesting().position() ==
           pci::Vec3d{0.0, -4.0, 0.0});
+}
+
+TEST_CASE("map view locks top-down orthographic GIS navigation",
+          "[ui][renderer-internal][input][map]")
+{
+    pci::RenderViewportWidget viewport(true);
+    viewport.resize(1000, 1000);
+    auto document = std::make_shared<pci::SceneDocument>();
+    static_cast<void>(document->addLayer(pci::buildSyntheticScene(1'000)));
+    viewport.setDocument(document->snapshot(), true);
+
+    viewport.setMapView(true);
+    REQUIRE(viewport.isMapView());
+    CHECK(viewport.isOrthographic());
+    const pci::NavigationCamera &camera =
+        pci::testAccess(viewport).cameraForTesting();
+    CHECK(camera.forward() == pci::Vec3d{0.0, 0.0, -1.0});
+
+    const pci::Vec3d pivotBeforeDrag = camera.pivot();
+    QMouseEvent press(QEvent::MouseButtonPress,
+                      QPointF(20.0, 20.0),
+                      QPointF(20.0, 20.0),
+                      Qt::LeftButton,
+                      Qt::LeftButton,
+                      Qt::NoModifier);
+    QApplication::sendEvent(&viewport, &press);
+    QMouseEvent move(QEvent::MouseMove,
+                     QPointF(40.0, 30.0),
+                     QPointF(40.0, 30.0),
+                     Qt::NoButton,
+                     Qt::LeftButton,
+                     Qt::NoModifier);
+    QApplication::sendEvent(&viewport, &move);
+    CHECK(camera.forward() == pci::Vec3d{0.0, 0.0, -1.0});
+    CHECK(camera.pivot().x < pivotBeforeDrag.x);
+    CHECK(camera.pivot().y > pivotBeforeDrag.y);
+
+    QMouseEvent release(QEvent::MouseButtonRelease,
+                        QPointF(40.0, 30.0),
+                        QPointF(40.0, 30.0),
+                        Qt::LeftButton,
+                        Qt::NoButton,
+                        Qt::NoModifier);
+    QApplication::sendEvent(&viewport, &release);
+
+    const pci::Vec3d pivotBeforeKeyboard = camera.pivot();
+    QKeyEvent forwardPress(QEvent::KeyPress, Qt::Key_W, Qt::NoModifier);
+    QApplication::sendEvent(&viewport, &forwardPress);
+    pci::testAccess(viewport).advanceKeyboardNavigationForTesting(0.1);
+    CHECK(camera.pivot().x == Catch::Approx(pivotBeforeKeyboard.x));
+    CHECK(camera.pivot().y > pivotBeforeKeyboard.y);
+    CHECK(camera.pivot().z == Catch::Approx(pivotBeforeKeyboard.z));
+
+    viewport.setOrthographic(false);
+    CHECK(viewport.isOrthographic());
+    CHECK(camera.forward() == pci::Vec3d{0.0, 0.0, -1.0});
+    viewport.setMapView(false);
+    CHECK_FALSE(viewport.isMapView());
+    CHECK_FALSE(viewport.isOrthographic());
 }
 
 TEST_CASE("render viewport reports internal QRhi failures",

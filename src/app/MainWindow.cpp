@@ -241,8 +241,12 @@ MainWindow::MainWindow(
     centralStack->addWidget(emptySceneLabel_);
 
     navigationHintLabel_ = new QLabel(
-        QStringLiteral("Orbit  Left-drag    Pan  Right-drag    Zoom  Wheel    "
-                       "Pivot  Double-click    Measure  M    Fit  F"),
+        viewport_->isMapView()
+            ? QStringLiteral("Pan  Left-drag    Move  W / A / S / D    "
+                             "Zoom  Wheel    Fit  F")
+            : QStringLiteral(
+                  "Orbit  Left-drag    Pan  Right-drag    Zoom  Wheel    "
+                  "Pivot  Double-click    Measure  M    Fit  F"),
         centralContainer);
     navigationHintLabel_->setObjectName(
         QStringLiteral("viewportNavigationHint"));
@@ -517,6 +521,15 @@ MainWindow::MainWindow(
         viewport_->frameVisibleLayersTopDown();
     });
 
+    mapViewAction_ = viewMenu->addAction(QStringLiteral("2D Map View"));
+    mapViewAction_->setObjectName(QStringLiteral("mapViewAction"));
+    mapViewAction_->setIconText(QStringLiteral("2D Map"));
+    mapViewAction_->setIcon(toolbarIcon(ToolbarIcon::Map, palette()));
+    mapViewAction_->setCheckable(true);
+    mapViewAction_->setChecked(viewport_->isMapView());
+    mapViewAction_->setToolTip(QStringLiteral(
+        "Use a locked top-down orthographic view with GIS-style controls"));
+
     orthographicAction_ =
         viewMenu->addAction(QStringLiteral("Orthographic Camera"));
     orthographicAction_->setObjectName(
@@ -526,6 +539,7 @@ MainWindow::MainWindow(
         toolbarIcon(ToolbarIcon::Orthographic, palette()));
     orthographicAction_->setCheckable(true);
     orthographicAction_->setChecked(viewport_->isOrthographic());
+    orthographicAction_->setEnabled(!viewport_->isMapView());
     orthographicAction_->setToolTip(QStringLiteral(
         "Toggle between perspective and orthographic camera projection"));
     connect(orthographicAction_,
@@ -534,6 +548,28 @@ MainWindow::MainWindow(
             [this](const bool enabled) {
                 viewport_->setOrthographic(enabled);
             });
+    connect(
+        mapViewAction_, &QAction::toggled, this, [this](const bool enabled) {
+            viewport_->setMapView(enabled);
+            {
+                const QSignalBlocker blocker(orthographicAction_);
+                orthographicAction_->setChecked(viewport_->isOrthographic());
+            }
+            orthographicAction_->setEnabled(!enabled);
+            navigationHintLabel_->setText(
+                enabled
+                    ? QStringLiteral("Pan  Left-drag    Move  W / A / S / D    "
+                                     "Zoom  Wheel    Fit  F")
+                    : QStringLiteral("Orbit  Left-drag    Pan  Right-drag    "
+                                     "Zoom  Wheel    Pivot  Double-click    "
+                                     "Measure  M    Fit  F"));
+            statusBar()->showMessage(
+                enabled ? QStringLiteral(
+                              "2D Map View: left-drag or WASD to move; wheel "
+                              "to zoom.")
+                        : QStringLiteral("3D navigation enabled"),
+                3000);
+        });
 
     QMenu *panelsMenu = viewMenu->addMenu(QStringLiteral("&Panels"));
     panelsMenu->setObjectName(QStringLiteral("panelsMenu"));
@@ -687,6 +723,7 @@ MainWindow::MainWindow(
     pointCloudToolBar->addSeparator();
     pointCloudToolBar->addAction(fitSceneAction_);
     pointCloudToolBar->addAction(topDownSceneAction_);
+    pointCloudToolBar->addAction(mapViewAction_);
     pointCloudToolBar->addAction(orthographicAction_);
     pointCloudToolBar->addSeparator();
     auto *pointSizeSpinBox = new QSpinBox(pointCloudToolBar);
@@ -1070,7 +1107,11 @@ void MainWindow::showControlsReference()
                        "Move down / up — Q / E<br>"
                        "Move faster — hold Shift<br>"
                        "Fine movement — hold Alt<br>"
-                       "Fit visible scene — F"),
+                       "Fit visible scene — F<br><br>"
+                       "<b>2D Map View</b><br>"
+                       "Pan — left-drag or W / A / S / D<br>"
+                       "Zoom — wheel or trackpad scroll<br>"
+                       "The camera stays top-down and cannot rotate"),
         QMessageBox::Ok,
         this);
     dialog->setObjectName(QStringLiteral("viewportControlsDialog"));

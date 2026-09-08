@@ -15,6 +15,7 @@ enum class ToolbarIcon {
     RevertColors,
     Fit,
     TopDown,
+    Map,
     Orthographic,
     Settings,
     Navigate,

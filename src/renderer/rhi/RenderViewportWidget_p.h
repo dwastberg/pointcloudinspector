@@ -70,6 +70,8 @@ public:
     void frameVisibleLayersTopDown() override;
     [[nodiscard]] bool isOrthographic() const noexcept override;
     void setOrthographic(bool enabled) override;
+    [[nodiscard]] bool isMapView() const noexcept override;
+    void setMapView(bool enabled) override;
     void frameLayer(PointCloudLayerId layerId) override;
     [[nodiscard]] bool eyeDomeLightingEnabled() const noexcept override;
     void setEyeDomeLightingEnabled(bool enabled) override;
@@ -152,6 +154,7 @@ private:
                    PixelPosition position,
                    QSize targetSize) const;
     void updateKeyboardNavigation();
+    void applyKeyboardNavigation(double deltaSeconds);
     void submitPendingPick(QRhiCommandBuffer *commandBuffer,
                            const std::vector<BlockDraw> &draws);
     void resolvePick(PickRequest request,
@@ -254,6 +257,8 @@ private:
     bool failed_ = false;
     ViewportSettings viewportSettings_;
     bool orthographic_ = false;
+    bool mapView_ = false;
+    bool orthographicBeforeMapView_ = false;
     bool eyeDomeLightingActive_ = false;
     int pointSizePixels_ = defaultPointSizePixels;
     RenderTelemetryAccumulator telemetry_;

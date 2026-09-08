@@ -432,7 +432,9 @@ void RenderViewportWidget::frameVisibleLayersTopDown()
 {
     const SceneDocumentSnapshotPtr &document = sceneSnapshotCache_.document();
     frameBounds(document ? document->visibleBounds : std::nullopt, 1.15);
-    camera_.frameTopDown(1.15);
+    if (!mapView_) {
+        camera_.frameTopDown(1.15);
+    }
     requestRender();
 }
 
@@ -443,11 +445,44 @@ bool RenderViewportWidget::isOrthographic() const noexcept
 
 void RenderViewportWidget::setOrthographic(const bool enabled)
 {
+    if (mapView_ && !enabled) {
+        return;
+    }
     if (orthographic_ == enabled) {
         return;
     }
     orthographic_ = enabled;
     camera_.setOrthographic(enabled);
+    requestRender();
+}
+
+bool RenderViewportWidget::isMapView() const noexcept
+{
+    return mapView_;
+}
+
+void RenderViewportWidget::setMapView(const bool enabled)
+{
+    if (mapView_ == enabled) {
+        return;
+    }
+
+    mapView_ = enabled;
+    input_.clearMovement();
+    dragMode_ = DragMode::None;
+    pendingMeasureClick_ = false;
+    if (!enabled) {
+        orthographic_ = orthographicBeforeMapView_;
+        camera_.setOrthographic(orthographic_);
+        requestRender();
+        return;
+    }
+
+    orthographicBeforeMapView_ = orthographic_;
+    orthographic_ = true;
+    camera_.setOrthographic(true);
+    const SceneDocumentSnapshotPtr &document = sceneSnapshotCache_.document();
+    frameBounds(document ? document->visibleBounds : std::nullopt, 1.15);
     requestRender();
 }
 
@@ -461,7 +496,11 @@ void RenderViewportWidget::frameBounds(const std::optional<Bounds3d> &bounds,
     } else {
         camera_.setScene({0.0, 0.0, 0.0}, 2.0);
     }
-    camera_.frameScene(distanceMultiplier);
+    if (mapView_) {
+        camera_.frameTopDown(distanceMultiplier);
+    } else {
+        camera_.frameScene(distanceMultiplier);
+    }
 }
 
 void RenderViewportWidget::frameLayer(const PointCloudLayerId layerId)
@@ -621,6 +660,7 @@ bool RenderViewportWidget::startQualificationCameraPath()
         return false;
     }
     qualificationCameraPath_.emplace(*document->visibleBounds);
+    mapView_ = false;
     orthographic_ = false;
     camera_.setOrthographic(false);
     applyQualificationCameraFrame();
@@ -2366,18 +2406,32 @@ void RenderViewportWidget::updateKeyboardNavigation()
 {
     const double deltaSeconds = NavigationInputState::boundedDeltaSeconds(
         static_cast<double>(navigationTimer_.restart()) / 1000.0);
+    applyKeyboardNavigation(deltaSeconds);
+}
+
+void RenderViewportWidget::applyKeyboardNavigation(const double deltaSeconds)
+{
+    if (!std::isfinite(deltaSeconds) || deltaSeconds <= 0.0) {
+        return;
+    }
     const Vec3d inputDirection = input_.movementDirection();
-    if (length(inputDirection) == 0.0 || deltaSeconds == 0.0) {
+    if (length(inputDirection) == 0.0) {
         return;
     }
 
     const Vec3d worldDirection =
-        normalized(camera_.right() * inputDirection.x +
-                   NavigationCamera::worldUp * inputDirection.y +
-                   camera_.forward() * inputDirection.z);
-    camera_.translate(worldDirection *
-                      camera_.movementSpeed(input_.speedMultiplier()) *
-                      deltaSeconds);
+        mapView_ ? normalized(camera_.right() * inputDirection.x +
+                              camera_.up() * inputDirection.z)
+                 : normalized(camera_.right() * inputDirection.x +
+                              NavigationCamera::worldUp * inputDirection.y +
+                              camera_.forward() * inputDirection.z);
+    if (length(worldDirection) == 0.0) {
+        return;
+    }
+    const double speed =
+        mapView_ ? camera_.orthographicScale() * input_.speedMultiplier()
+                 : camera_.movementSpeed(input_.speedMultiplier());
+    camera_.translate(worldDirection * speed * deltaSeconds);
 }
 
 void RenderViewportWidget::publishMetrics(const bool force)
@@ -2572,7 +2626,7 @@ void RenderViewportWidget::mousePressEvent(QMouseEvent *event)
             event->accept();
             return;
         }
-        dragMode_ = DragMode::Orbit;
+        dragMode_ = mapView_ ? DragMode::Pan : DragMode::Orbit;
         previousMousePosition_ = event->position().toPoint();
         event->accept();
         return;
@@ -2612,7 +2666,7 @@ void RenderViewportWidget::mouseMoveEvent(QMouseEvent *event)
         if ((position - leftPressPosition_).manhattanLength() >=
             QApplication::startDragDistance()) {
             pendingMeasureClick_ = false;
-            dragMode_ = DragMode::Orbit;
+            dragMode_ = mapView_ ? DragMode::Pan : DragMode::Orbit;
         }
     }
     if (dragMode_ != DragMode::None) {
@@ -2663,8 +2717,9 @@ void RenderViewportWidget::mouseReleaseEvent(QMouseEvent *event)
     }
     const bool releasesOrbit =
         event->button() == Qt::LeftButton && dragMode_ == DragMode::Orbit;
-    const bool releasesPan =
-        event->button() == Qt::RightButton && dragMode_ == DragMode::Pan;
+    const bool releasesPan = dragMode_ == DragMode::Pan &&
+                             (event->button() == Qt::RightButton ||
+                              (mapView_ && event->button() == Qt::LeftButton));
     if (releasesOrbit || releasesPan) {
         dragMode_ = DragMode::None;
         requestRender();
@@ -2717,6 +2772,11 @@ void RenderViewportWidget::keyPressEvent(QKeyEvent *event)
         return;
     }
     if (const auto key = movementKey(event->key())) {
+        if (mapView_ &&
+            (*key == MovementKey::Down || *key == MovementKey::Up)) {
+            event->accept();
+            return;
+        }
         input_.press(*key);
         navigationTimer_.restart();
         requestRender();
@@ -2740,7 +2800,11 @@ void RenderViewportWidget::keyPressEvent(QKeyEvent *event)
         return;
     }
     if (event->key() == Qt::Key_F) {
-        camera_.frameScene();
+        if (mapView_) {
+            camera_.frameTopDown();
+        } else {
+            camera_.frameScene();
+        }
         requestRender();
         event->accept();
         return;
