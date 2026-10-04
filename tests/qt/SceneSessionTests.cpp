@@ -229,6 +229,23 @@ private:
     }
 };
 
+bool waitForInstalledPreview(const pci::SceneSession &session,
+                             const SessionLoader &loader,
+                             const std::filesystem::path &sourcePath)
+{
+    return waitFor([&] {
+        // The worker flag only confirms enqueueing; Qt must also deliver the
+        // preview and install its replacement document before tests proceed.
+        if (!loader.previewPublished.load()) {
+            return false;
+        }
+        const auto snapshot = session.documentSnapshot();
+        const auto layers = snapshot->pointLayers();
+        return layers.size() == 1 &&
+               layers.front().descriptor.metadata.sourcePath == sourcePath;
+    });
+}
+
 class UnavailableVectorLoader final : public pci::VectorLoader {
 public:
     pci::VectorImportPreflight
@@ -823,9 +840,8 @@ TEST_CASE(
 
     session.loadPointCloud("cancel-after-preview.las",
                            pci::PointCloudLoadMode::Replace);
-    REQUIRE(waitFor([&loader] {
-        return loader->previewPublished.load();
-    }));
+    REQUIRE(
+        waitForInstalledPreview(session, *loader, "cancel-after-preview.las"));
     const auto layerId = testDocument(session)->layers().front().id;
     clock.advance(std::chrono::milliseconds(17));
     session.onRenderLoadProgress({
@@ -1046,16 +1062,8 @@ TEST_CASE("scene session rolls back cancellation and failure after preview",
 
     session.loadPointCloud("cancel-after-preview.las",
                            pci::PointCloudLoadMode::Replace);
-    REQUIRE(waitFor([&loader] {
-        return loader->previewPublished.load();
-    }));
-    REQUIRE(waitFor([&session] {
-        return testDocument(session)
-                   ->layers()
-                   .front()
-                   .descriptor.metadata.sourcePath ==
-               std::filesystem::path("cancel-after-preview.las");
-    }));
+    REQUIRE(
+        waitForInstalledPreview(session, *loader, "cancel-after-preview.las"));
     session.cancelAll();
     REQUIRE(waitFor([&session] {
         return !session.loading();
@@ -1074,9 +1082,8 @@ TEST_CASE("scene session rolls back cancellation and failure after preview",
     loader->previewPublished = false;
     session.loadPointCloud("fail-after-preview.las",
                            pci::PointCloudLoadMode::Replace);
-    REQUIRE(waitFor([&loader] {
-        return loader->previewPublished.load();
-    }));
+    REQUIRE(
+        waitForInstalledPreview(session, *loader, "fail-after-preview.las"));
     loader->releaseFailure = true;
     REQUIRE(waitFor([&session] {
         return !session.loading();
@@ -1117,9 +1124,8 @@ TEST_CASE("scene session generations follow installation and reset boundaries",
     loader->previewPublished = false;
     session.loadPointCloud("cancel-after-preview.las",
                            pci::PointCloudLoadMode::Replace);
-    REQUIRE(waitFor([&loader] {
-        return loader->previewPublished.load();
-    }));
+    REQUIRE(
+        waitForInstalledPreview(session, *loader, "cancel-after-preview.las"));
     const pci::DocumentGeneration replacementDocument =
         testDocument(session)->snapshot()->generation;
     CHECK(replacementDocument == pci::nextGeneration(initialDocument));
@@ -1328,9 +1334,8 @@ TEST_CASE("new scene clears layers and cannot restore a cancelled replacement",
 
     session.loadPointCloud("cancel-after-preview.las",
                            pci::PointCloudLoadMode::Replace);
-    REQUIRE(waitFor([&loader] {
-        return loader->previewPublished.load();
-    }));
+    REQUIRE(
+        waitForInstalledPreview(session, *loader, "cancel-after-preview.las"));
     REQUIRE(testDocument(session) != originalDocument);
 
     session.newScene();
@@ -1828,14 +1833,8 @@ TEST_CASE(
     finishVisibleLoads(session);
     session.loadPointCloud("cancel-after-preview.las",
                            pci::PointCloudLoadMode::Replace);
-    REQUIRE(waitFor([&] {
-        return loader->previewPublished &&
-               testDocument(session)
-                       ->layers()
-                       .front()
-                       .descriptor.metadata.sourcePath.filename() ==
-                   "cancel-after-preview.las";
-    }));
+    REQUIRE(
+        waitForInstalledPreview(session, *loader, "cancel-after-preview.las"));
     const auto generation = session.sessionGeneration();
     session.newScene();
     REQUIRE(waitFor([&] {
