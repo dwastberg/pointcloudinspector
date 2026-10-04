@@ -64,6 +64,15 @@
 
 namespace {
 
+auto dragEnterPosition()
+{
+#if QT_VERSION >= QT_VERSION_CHECK(6, 12, 0)
+    return QPointF(10.0, 10.0);
+#else
+    return QPoint(10, 10);
+#endif
+}
+
 template <typename Predicate> bool waitFor(Predicate &&predicate)
 {
     return QTest::qWaitFor(std::forward<Predicate>(predicate), 2000);
@@ -1342,7 +1351,7 @@ TEST_CASE("main window accepts and opens mixed local file drops",
     mimeData.setUrls({QUrl::fromLocalFile(cloudPath),
                       QUrl::fromLocalFile(rasterPath),
                       QUrl::fromLocalFile(vectorPath)});
-    QDragEnterEvent enter(QPoint(10, 10),
+    QDragEnterEvent enter(dragEnterPosition(),
                           Qt::CopyAction,
                           &mimeData,
                           Qt::LeftButton,
@@ -1382,7 +1391,7 @@ TEST_CASE("main window rejects non-local and directory-only drops",
     QMimeData mimeData;
     mimeData.setUrls({QUrl(QStringLiteral("https://example.com/cloud.laz")),
                       QUrl::fromLocalFile(directory.path())});
-    QDragEnterEvent enter(QPoint(10, 10),
+    QDragEnterEvent enter(dragEnterPosition(),
                           Qt::CopyAction,
                           &mimeData,
                           Qt::LeftButton,

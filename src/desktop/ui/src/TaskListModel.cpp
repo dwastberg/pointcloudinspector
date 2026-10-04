@@ -162,7 +162,7 @@ void TaskListModel::reindex(int first)
 
 void TaskListModel::reconcile(std::vector<LoadJobRow> next)
 {
-    decltype(rowIndices_) desiredIndices;
+    decltype(rowIndices_) desiredIndices{0, KeyHash{}, KeyEqual{nullptr}};
     desiredIndices.reserve(next.size());
     for (std::size_t i = 0; i < next.size(); ++i)
         desiredIndices.emplace(next[i].key, static_cast<int>(i));

@@ -39,7 +39,10 @@ private:
 
 namespace std {
 
+// Specializing std::hash for a program-defined type is permitted; clang-tidy 22
+// misclassifies this dependent partial specialization.
 template <typename Tag, typename Representation>
+// NOLINTNEXTLINE(bugprone-std-namespace-modification)
 struct hash<pci::StrongId<Tag, Representation>> {
     [[nodiscard]] std::size_t
     operator()(const pci::StrongId<Tag, Representation> &id) const
