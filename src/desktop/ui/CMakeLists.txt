@@ -20,6 +20,7 @@ add_library(pcinspector_app_ui STATIC
         src/WindowActions.cpp
         src/WindowActions.h
         src/MainWindow.cpp
+        src/ApplicationShutdown.cpp
         include/pci/desktop/ui/MainWindow.h
         src/PointCloudStatisticsDialog.cpp
         src/PointCloudStatisticsDialog.h

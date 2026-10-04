@@ -19,6 +19,7 @@
 #include <cstdint>
 #include <deque>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -64,6 +65,12 @@ public:
     // the current settings once installed is the caller's responsibility.
     void setGdalCacheControls(GdalCacheControls controls);
     void setGdalRuntimeInfo(GdalRuntimeInfo info);
+    using PointCacheCleanup = std::function<StorageMaintenanceResult()>;
+    // Installed for persistent caches by bootstrap; cleanup outlives the
+    // window.
+    void setPointCacheCleanup(std::function<bool()> hasCreatedCaches,
+                              PointCacheCleanup cleanup);
+    [[nodiscard]] PointCacheCleanup takePointCacheCleanup();
 #ifdef PCINSPECTOR_ENABLE_DIAGNOSTIC_UI
     void configureQualificationReport(std::filesystem::path outputPath,
                                       bool exitAfterWrite = false);
@@ -118,6 +125,11 @@ private:
     std::deque<PendingVectorSelection> pendingVectorSelections_;
     std::optional<LoadJobId> activeVectorSelectionJob_;
     bool navigationHintDismissed_ = false;
+    std::function<bool()> hasCreatedCaches_;
+    PointCacheCleanup pointCacheCleanup_;
+    bool closePromptActive_ = false;
+    bool closeConfirmed_ = false;
+    bool deleteCachesOnClose_ = false;
     PerformanceSettings performanceSettings_;
     GdalCacheControls gdalCache_;
     GdalRuntimeInfo gdalRuntimeInfo_;
@@ -128,5 +140,9 @@ private:
     QualificationReporter qualificationReporter_;
 #endif
 };
+
+// Releases all scene/renderer/worker handles before running the approved
+// cleanup.
+void finishApplicationShutdown(std::unique_ptr<MainWindow> window);
 
 } // namespace pci

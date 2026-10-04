@@ -4,6 +4,7 @@
 #include <pci/operations/StorageMaintenance.h>
 
 namespace pci {
+class LocalPageCacheContext;
 struct StorageMaintenanceLocations {
     std::filesystem::path pointCache;
     std::filesystem::path workingFiles;
@@ -12,4 +13,8 @@ struct StorageMaintenanceLocations {
 };
 [[nodiscard]] std::shared_ptr<const StorageMaintenance>
 makeLocalStorageMaintenance(StorageMaintenanceLocations locations);
+// Snapshot session publications when run, after all publishers have stopped.
+[[nodiscard]] std::shared_ptr<const StorageMaintenance>
+makeSessionPointCacheMaintenance(
+    std::shared_ptr<const LocalPageCacheContext> cache);
 } // namespace pci

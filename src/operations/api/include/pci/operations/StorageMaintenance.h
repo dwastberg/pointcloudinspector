@@ -32,6 +32,7 @@ struct StorageMaintenanceResult {
     std::array<StorageUsage, 3> usage;
     std::uint64_t removedBytes = 0;
     std::uint64_t removedEntries = 0;
+    std::uint64_t skippedEntries = 0;
     std::uint64_t errorCount = 0;
     // Bounded samples; errorCount includes failures beyond these samples.
     std::vector<std::string> errors;

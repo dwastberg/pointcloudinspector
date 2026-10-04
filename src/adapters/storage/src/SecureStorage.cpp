@@ -11,10 +11,12 @@
 #include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QTemporaryFile>
+#include <QUuid>
 
 #include <algorithm>
 #include <cerrno>
 #include <cstring>
+#include <mutex>
 #include <system_error>
 #include <utility>
 #include <vector>
@@ -539,6 +541,8 @@ struct LocalPageCacheContext::Impl {
     ManifestAuthenticationKey key{};
     bool persistent = false;
     std::unique_ptr<PrivateTemporaryDirectory> temporaryDirectory;
+    std::mutex createdMutex;
+    std::vector<CreatedPointCacheEntry> created;
 };
 
 LocalPageCacheContext::LocalPageCacheContext(std::unique_ptr<Impl> impl)
@@ -562,6 +566,43 @@ LocalPageCacheContext::manifestAuthenticationKey() const noexcept
 bool LocalPageCacheContext::persistent() const noexcept
 {
     return impl_->persistent;
+}
+
+void LocalPageCacheContext::recordCreatedEntry(
+    const std::filesystem::path &entry) const
+{
+    if (!persistent())
+        return;
+    if (entry.parent_path() != directory())
+        throw PrivateStorageError("created cache is outside its cache root");
+    validatePrivateStorageDirectory(entry);
+    const auto identity = QUuid::createUuid().toByteArray(QUuid::WithoutBraces);
+    QFile marker(pathToQString(entry / pointCacheCreationMarker));
+    if (!marker.open(QIODevice::WriteOnly | QIODevice::NewOnly) ||
+        marker.write(identity) != identity.size() || !marker.flush())
+        throw PrivateStorageError("could not record created cache identity");
+    const std::lock_guard lock(impl_->createdMutex);
+    std::erase_if(impl_->created, [&](const auto &previous) {
+        return previous.path == entry;
+    });
+    impl_->created.push_back({entry, identity.toStdString()});
+}
+
+std::vector<CreatedPointCacheEntry>
+LocalPageCacheContext::createdEntries() const
+{
+    const std::lock_guard lock(impl_->createdMutex);
+    return impl_->created;
+}
+
+bool LocalPageCacheContext::hasCreatedEntries() const
+{
+    for (const auto &entry : createdEntries()) {
+        std::error_code error;
+        if (std::filesystem::exists(entry.path, error))
+            return true;
+    }
+    return false;
 }
 
 std::shared_ptr<const LocalPageCacheContext>

@@ -1,3 +1,4 @@
+#include <pci/adapters/storage/ManagedStorage.h>
 #include <pci/adapters/storage/SecureStorage.h>
 
 #include <catch2/catch_test_macros.hpp>
@@ -99,6 +100,39 @@ TEST_CASE("temporary cache contexts own and remove their cache root",
         CHECK(std::filesystem::is_directory(cachePath));
     }
     CHECK_FALSE(std::filesystem::exists(cachePath));
+}
+
+TEST_CASE("cache creation records are session scoped and survive reopening",
+          "[unit][storage][cache-close]")
+{
+    const TemporaryBase base;
+    const auto cache = pci::LocalPageCacheContext::createPersistent(
+        base.path() / "cache", base.path() / "config");
+    const auto entry =
+        cache->directory() / (std::string(64, 'a') + ".pcipages");
+    pci::ensurePrivateStorageDirectory(entry);
+    {
+        const pci::StorageDirectoryGuard gate(cache->directory());
+        cache->recordCreatedEntry(entry);
+    }
+    REQUIRE(cache->createdEntries().size() == 1);
+    CHECK(cache->createdEntries().front().path == entry);
+    CHECK_FALSE(cache->createdEntries().front().identity.empty());
+    CHECK(cache->hasCreatedEntries());
+    const auto reopened = pci::LocalPageCacheContext::createPersistent(
+        cache->directory(), base.path() / "config");
+    CHECK(reopened->createdEntries().empty());
+    CHECK_FALSE(reopened->hasCreatedEntries());
+    std::filesystem::remove_all(entry);
+    CHECK_FALSE(cache->hasCreatedEntries());
+    CHECK(cache->createdEntries().size() == 1);
+
+    const auto temporary =
+        pci::LocalPageCacheContext::createTemporary(base.path());
+    const auto temporaryEntry = temporary->directory() / "entry";
+    pci::ensurePrivateStorageDirectory(temporaryEntry);
+    temporary->recordCreatedEntry(temporaryEntry);
+    CHECK(temporary->createdEntries().empty());
 }
 
 TEST_CASE("concurrent cache initialization publishes one authentication key",

@@ -48,6 +48,102 @@ struct StorageFixture {
 };
 } // namespace
 
+TEST_CASE("session cleanup removes only its publications and checks identity",
+          "[storage][maintenance][cache-close]")
+{
+    StorageFixture f;
+    const auto cache = pci::LocalPageCacheContext::createPersistent(
+        f.locations.pointCache, f.base / "config");
+    // Construct before publication to cover imports finishing during shutdown.
+    const auto cleanup = pci::makeSessionPointCacheMaintenance(cache);
+    const auto created =
+        f.add(f.locations.pointCache, f.key() + ".pcipages", 30);
+    const auto reused =
+        f.add(f.locations.pointCache, f.key('b') + ".pcipages", 40);
+    const auto replaced =
+        f.add(f.locations.pointCache, f.key('c') + ".pcipages", 50);
+    const auto missing =
+        f.add(f.locations.pointCache, f.key('d') + ".pcipages", 60);
+    const auto work =
+        f.add(f.locations.workingFiles, "pcinspector-colorize-Ab1234", 70);
+    const auto legacy =
+        f.add(f.locations.legacyPointCache, f.key() + ".pcipages", 80);
+    {
+        const pci::StorageDirectoryGuard gate(cache->directory());
+        for (const auto &entry : {created, replaced, missing})
+            cache->recordCreatedEntry(entry);
+    }
+    std::filesystem::remove_all(missing);
+    std::filesystem::remove_all(replaced);
+    f.add(f.locations.pointCache, f.key('c') + ".pcipages", 90);
+    const auto otherSession = pci::LocalPageCacheContext::createPersistent(
+        f.locations.pointCache, f.base / "config");
+    {
+        const pci::StorageDirectoryGuard gate(cache->directory());
+        otherSession->recordCreatedEntry(replaced);
+    }
+    const auto result =
+        cleanup->run(pci::StorageMaintenanceAction::CleanUnused, {}, {});
+    CHECK(result.errorCount == 0);
+    CHECK(result.removedEntries == 1);
+    CHECK(result.skippedEntries == 1);
+    CHECK_FALSE(std::filesystem::exists(created));
+    for (const auto &entry : {reused, replaced, work, legacy})
+        CHECK(std::filesystem::exists(entry));
+}
+
+TEST_CASE("session cleanup preserves caches leased by another process",
+          "[storage][maintenance][cache-close][process]")
+{
+    StorageFixture f;
+    const auto cache = pci::LocalPageCacheContext::createPersistent(
+        f.locations.pointCache, f.base / "config");
+    const auto entry =
+        f.add(f.locations.pointCache, f.key() + ".pcipages", 128);
+    {
+        const pci::StorageDirectoryGuard gate(cache->directory());
+        cache->recordCreatedEntry(entry);
+    }
+    QProcess child;
+    child.start(QString::fromUtf8(PCI_STORAGE_LEASE_PROBE),
+                {pci::pathToQString(entry)});
+    REQUIRE(child.waitForStarted());
+    REQUIRE(child.waitForReadyRead());
+    REQUIRE(child.readAllStandardOutput().contains("ready"));
+    const auto cleanup = pci::makeSessionPointCacheMaintenance(cache);
+    const auto protectedResult =
+        cleanup->run(pci::StorageMaintenanceAction::CleanUnused, {}, {});
+    CHECK(protectedResult.removedEntries == 0);
+    CHECK(protectedResult.skippedEntries == 1);
+    CHECK(std::filesystem::exists(entry));
+    child.kill();
+    REQUIRE(child.waitForFinished());
+    CHECK(cleanup->run(pci::StorageMaintenanceAction::CleanUnused, {}, {})
+              .removedEntries == 1);
+}
+
+TEST_CASE("session cleanup reports unsafe entries without deleting them",
+          "[storage][maintenance][cache-close]")
+{
+    StorageFixture f;
+    const auto cache = pci::LocalPageCacheContext::createPersistent(
+        f.locations.pointCache, f.base / "config");
+    const auto entry =
+        f.add(f.locations.pointCache, f.key() + ".pcipages", 128);
+    {
+        const pci::StorageDirectoryGuard gate(cache->directory());
+        cache->recordCreatedEntry(entry);
+    }
+    std::filesystem::create_hard_link(entry / "payload.bin",
+                                      f.base / "linked-payload");
+    const auto result = pci::makeSessionPointCacheMaintenance(cache)->run(
+        pci::StorageMaintenanceAction::CleanUnused, {}, {});
+    CHECK(result.errorCount != 0);
+    CHECK_FALSE(result.errors.empty());
+    CHECK(result.removedEntries == 0);
+    CHECK(std::filesystem::exists(entry / "payload.bin"));
+}
+
 TEST_CASE("storage usage separates reclaimable active and legacy files",
           "[storage][maintenance]")
 {

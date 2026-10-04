@@ -105,7 +105,9 @@ int main(int argc, char *argv[])
     try {
         std::unique_ptr<pci::MainWindow> window =
             pci::bootstrapApplication(config, colorMapCatalog.freeze());
-        return application.exec();
+        const int exitCode = application.exec();
+        pci::finishApplicationShutdown(std::move(window));
+        return exitCode;
     } catch (const std::exception &error) {
         qCritical().noquote() << QStringLiteral("Could not start renderer: %1")
                                      .arg(QString::fromUtf8(error.what()));

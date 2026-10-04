@@ -333,6 +333,16 @@ bootstrapApplication(const ApplicationConfig &config,
                                      memoryBudget.automaticParameters,
                                      cache,
                                      colorMaps);
+    if (cache->persistent()) {
+        window->setPointCacheCleanup(
+            [cache] {
+                return cache->hasCreatedEntries();
+            },
+            [cache] {
+                return makeSessionPointCacheMaintenance(cache)->run(
+                    StorageMaintenanceAction::CleanUnused, {}, {});
+            });
+    }
     // The window budgets and reports the GDAL cache without linking GDAL.
     window->setGdalCacheControls(GdalCacheControls{
         .setByteBudget =

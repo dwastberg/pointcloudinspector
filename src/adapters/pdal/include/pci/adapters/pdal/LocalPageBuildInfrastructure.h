@@ -73,7 +73,7 @@ public:
     static void commit(const std::filesystem::path &temporaryDirectory,
                        const std::filesystem::path &finalDirectory,
                        const LocalPointPageManifest &manifest,
-                       const ManifestAuthenticationKey &authenticationKey);
+                       const LocalPageCacheContext &cache);
 };
 
 } // namespace pci::local_index

@@ -655,6 +655,25 @@ TEST_CASE("raster import compares CRS without reprojecting",
         matching->metadata().spatialReferenceWkt;
     CHECK_FALSE(loader.inspect(request).data->metadata().crsMismatch);
 
+    request.targetSpatialReferenceWkt =
+        R"(GEOGCS["WGS 84",DATUM["WGS_1984",SPHEROID["WGS 84",6378137,298.257223563]],PRIMEM["Greenwich",0],UNIT["degree",0.0174532925199433]])";
+    const auto mismatched = loader.inspect(request).data;
+    REQUIRE(mismatched);
+    const auto &before = matching->metadata();
+    const auto &after = mismatched->metadata();
+    CHECK(after.crsMismatch);
+    CHECK(after.spatialReferenceWkt == before.spatialReferenceWkt);
+    CHECK(after.geoTransform == before.geoTransform);
+    CHECK(after.bounds.minimum == before.bounds.minimum);
+    CHECK(after.bounds.maximum == before.bounds.maximum);
+    CHECK(after.width == before.width);
+    CHECK(after.height == before.height);
+    const auto originalTile = readFirstTile(*matching);
+    const auto mismatchedTile = readFirstTile(*mismatched);
+    CHECK(mismatchedTile.validWidth == originalTile.validWidth);
+    CHECK(mismatchedTile.validHeight == originalTile.validHeight);
+    CHECK(mismatchedTile.rgba == originalTile.rgba);
+
     pci::Bounds3d elsewhere;
     elsewhere.minimum = {0.0, 0.0, 0.0};
     elsewhere.maximum = {10.0, 10.0, 0.0};
@@ -854,15 +873,15 @@ TEST_CASE("VRT mosaic exposes the union extent and its common overviews",
     CHECK(metadata.bands.size() == 3);
 }
 
-TEST_CASE("GTI catalog opens without enumerating its members",
+TEST_CASE("GTI inspection bounds adapter sampling over a large logical extent",
           "[component][gdal][catalog]")
 {
     const pci::GdalRasterLoader loader;
     const pci::RasterLayerDataPtr data = load(fixtures().catalog, loader);
 
-    // Inspection cost must come from the sample budget, not from catalog
-    // cardinality or pixel count. 200512 squared is about 4e10 pixels; a scan
-    // proportional to either would not return in a test.
+    // Four members span about 4e10 logical pixels. This bounds the adapter's
+    // sample calls; it does not measure member enumeration or GDAL's internal
+    // reads, nor does it establish scaling with catalog cardinality.
     CHECK(loader.sampleReadCount() <= 64);
 
     const pci::RasterLayerMetadata &metadata = data->metadata();

@@ -56,7 +56,7 @@ void addGpkgLayers(GDALDataset *dataset, OGRSpatialReference &srs)
     addFeature(parcels, parcel);
 
     OGRLayer *survey =
-        dataset->CreateLayer("survey", &srs, wkbGeometryCollection, nullptr);
+        dataset->CreateLayer("survey", &srs, wkbGeometryCollection25D, nullptr);
     auto *collection = new OGRGeometryCollection();
     collection->addGeometryDirectly(new OGRPoint(674025.0, 6580025.0, 7.0));
     auto *surveyLine = new OGRLineString();

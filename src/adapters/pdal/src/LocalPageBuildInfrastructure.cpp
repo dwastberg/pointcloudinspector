@@ -219,17 +219,17 @@ void LocalPageCacheLocator::prune(const std::uint64_t byteBudget) const
     }
 }
 
-void LocalPageCommitter::commit(
-    const std::filesystem::path &temporaryDirectory,
-    const std::filesystem::path &finalDirectory,
-    const LocalPointPageManifest &manifest,
-    const ManifestAuthenticationKey &authenticationKey)
+void LocalPageCommitter::commit(const std::filesystem::path &temporaryDirectory,
+                                const std::filesystem::path &finalDirectory,
+                                const LocalPointPageManifest &manifest,
+                                const LocalPageCacheContext &cache)
 {
     const StorageDirectoryGuard guard(finalDirectory.parent_path());
     // The manifest is the validity marker and must remain the final file
     // written before the directory is atomically published.
-    writeLocalPointManifest(
-        temporaryDirectory / "manifest.pci", manifest, authenticationKey);
+    writeLocalPointManifest(temporaryDirectory / "manifest.pci",
+                            manifest,
+                            cache.manifestAuthenticationKey());
 
     std::error_code error;
     if (std::filesystem::exists(finalDirectory, error)) {
@@ -244,6 +244,7 @@ void LocalPageCommitter::commit(
         throw std::runtime_error(
             "could not atomically commit local page cache: " + error.message());
     }
+    cache.recordCreatedEntry(finalDirectory);
 }
 
 } // namespace pci::local_index

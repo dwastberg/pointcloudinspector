@@ -1,13 +1,17 @@
+#include <pci/adapters/platform/QtPath.h>
 #include <pci/adapters/storage/ManagedStorage.h>
+#include <pci/adapters/storage/SecureStorage.h>
 #include <pci/foundation/CheckedArithmetic.h>
 #include <pci/operations/local/LocalStorageMaintenance.h>
 
+#include <QFile>
 #include <QRandomGenerator>
 
 #include <algorithm>
 #include <array>
 #include <charconv>
 #include <system_error>
+#include <unordered_map>
 
 namespace pci {
 namespace {
@@ -149,11 +153,25 @@ public:
     {
     }
 
+    explicit LocalStorageMaintenance(
+        std::shared_ptr<const LocalPageCacheContext> cache)
+        : locations_{cache->directory(), {}, {}, {}}
+        , sessionCache_(std::move(cache))
+    {
+    }
+
     StorageMaintenanceResult run(StorageMaintenanceAction action,
                                  std::stop_token stop,
                                  const Progress &progress) const override
     {
         StorageMaintenanceResult result;
+        std::unordered_map<std::filesystem::path, std::string> targets;
+        if (sessionCache_) {
+            for (const auto &entry : sessionCache_->createdEntries())
+                targets.emplace(entry.path, entry.identity);
+            if (targets.empty())
+                return result;
+        }
         struct Root {
             std::filesystem::path path;
             StorageCategory category;
@@ -197,6 +215,8 @@ public:
                     if (stop.stop_requested())
                         break;
                     auto entry = it->path();
+                    if (sessionCache_ && !targets.contains(entry))
+                        continue;
                     const auto name = entry.filename().string();
                     const bool staged = stagedEntry(name, root.points);
                     if (!staged &&
@@ -217,6 +237,20 @@ public:
                             if (!plainStorageEntry(entry))
                                 throw std::runtime_error(
                                     "Storage entry changed to a link");
+                            if (sessionCache_) {
+                                const auto markerPath =
+                                    entry / pointCacheCreationMarker;
+                                QFile marker(pathToQString(markerPath));
+                                const auto &identity = targets.at(entry);
+                                if (!plainStorageEntry(markerPath) ||
+                                    !marker.open(QIODevice::ReadOnly) ||
+                                    marker.read(static_cast<qint64>(
+                                                    identity.size() + 1))
+                                            .toStdString() != identity) {
+                                    ++result.skippedEntries;
+                                    continue;
+                                }
+                            }
                             protectedEntry =
                                 storageEntryProtected(entry) ||
                                 (!root.points && nestedProtected(entry));
@@ -226,6 +260,8 @@ public:
                                           StorageMaintenanceAction::CleanLegacy
                                     : action ==
                                           StorageMaintenanceAction::CleanUnused;
+                            if (sessionCache_ && requested && protectedEntry)
+                                ++result.skippedEntries;
                             if (requested && !protectedEntry) {
                                 // Staging stays in the same filesystem. Legacy
                                 // entries also use staging, recognized below on
@@ -321,6 +357,7 @@ public:
 
 private:
     StorageMaintenanceLocations locations_;
+    std::shared_ptr<const LocalPageCacheContext> sessionCache_;
 };
 } // namespace
 
@@ -328,5 +365,11 @@ std::shared_ptr<const StorageMaintenance>
 makeLocalStorageMaintenance(StorageMaintenanceLocations locations)
 {
     return std::make_shared<LocalStorageMaintenance>(std::move(locations));
+}
+
+std::shared_ptr<const StorageMaintenance> makeSessionPointCacheMaintenance(
+    std::shared_ptr<const LocalPageCacheContext> cache)
+{
+    return std::make_shared<LocalStorageMaintenance>(std::move(cache));
 }
 } // namespace pci

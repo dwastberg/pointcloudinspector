@@ -42,6 +42,8 @@
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QMimeData>
+#include <QPushButton>
+#include <QScopedValueRollback>
 #include <QSignalBlocker>
 #include <QSizePolicy>
 #include <QSpinBox>
@@ -685,8 +687,57 @@ LoadJobId MainWindow::importRasterLayer(RasterImportRequest request)
     return session_->startRasterImport(std::move(request));
 }
 
+void MainWindow::setPointCacheCleanup(std::function<bool()> hasCreatedCaches,
+                                      PointCacheCleanup cleanup)
+{
+    hasCreatedCaches_ = std::move(hasCreatedCaches);
+    pointCacheCleanup_ = std::move(cleanup);
+}
+
+MainWindow::PointCacheCleanup MainWindow::takePointCacheCleanup()
+{
+    return closeConfirmed_ && deleteCachesOnClose_
+               ? std::exchange(pointCacheCleanup_, {})
+               : PointCacheCleanup{};
+}
+
 void MainWindow::closeEvent(QCloseEvent *event)
 {
+    if (closePromptActive_) {
+        event->ignore();
+        return;
+    }
+    if (!closeConfirmed_ && pointCacheCleanup_ && hasCreatedCaches_ &&
+        (hasCreatedCaches_() || session_->loading())) {
+        const QScopedValueRollback promptGuard(closePromptActive_, true);
+        QMessageBox dialog(QMessageBox::Question,
+                           tr("Point cloud cache files"),
+                           tr("Delete point cloud cache files created during "
+                              "this session?"),
+                           QMessageBox::NoButton,
+                           this);
+        dialog.setObjectName(QStringLiteral("closeCacheConfirmation"));
+        dialog.setInformativeText(
+            tr("Deleting caches frees disk space. They will be rebuilt when "
+               "you reopen the point clouds. Source files are kept."));
+        auto *remove = dialog.addButton(tr("Delete and Close"),
+                                        QMessageBox::DestructiveRole);
+        remove->setObjectName(QStringLiteral("deleteCachesAndCloseButton"));
+        auto *keep =
+            dialog.addButton(tr("Keep and Close"), QMessageBox::AcceptRole);
+        keep->setObjectName(QStringLiteral("keepCachesAndCloseButton"));
+        auto *cancel = dialog.addButton(QMessageBox::Cancel);
+        dialog.setDefaultButton(keep);
+        dialog.setEscapeButton(cancel);
+        dialog.exec();
+        if (dialog.clickedButton() != remove &&
+            dialog.clickedButton() != keep) {
+            event->ignore();
+            return;
+        }
+        deleteCachesOnClose_ = dialog.clickedButton() == remove;
+    }
+    closeConfirmed_ = true;
     if (SettingsDialog *dialog = findChild<SettingsDialog *>();
         dialog && dialog->isVisible()) {
         dialog->reject();

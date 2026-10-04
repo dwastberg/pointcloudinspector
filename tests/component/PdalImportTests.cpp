@@ -27,6 +27,7 @@
 #include <filesystem>
 #include <fstream>
 #include <future>
+#include <span>
 #include <stop_token>
 #include <string>
 #include <string_view>
@@ -105,6 +106,89 @@ sortedPoints(const pci::PointDatasetRuntimePtr &scene)
     return points;
 }
 
+// Expected colors are literal app RGBA values, independent of PDAL mapping.
+constexpr std::array<std::uint32_t, 8> fixtureColors{0xff0000ffU,
+                                                     0xff00ff00U,
+                                                     0xffff0000U,
+                                                     0xff00ffffU,
+                                                     0xffff00ffU,
+                                                     0xffffff00U,
+                                                     0xff808080U,
+                                                     0xffffffffU};
+
+void checkPointBlocks(const std::span<const pci::PointBlockPtr> blocks,
+                      const std::span<const pci::test::FixturePoint> expected,
+                      const std::span<const std::uint32_t> colors)
+{
+    REQUIRE(colors.size() == expected.size());
+    std::vector<bool> seen(expected.size(), false);
+    std::size_t count = 0;
+    for (const auto &block : blocks) {
+        REQUIRE(block);
+        REQUIRE(block->attributes.size() == block->points.size());
+        for (std::size_t index = 0; index < block->points.size(); ++index) {
+            const auto &point = block->points[index];
+            const auto position = pci::decodeBlockPosition(*block, point);
+            const double tolerance = block->scale * 0.5 + 1e-8;
+            std::size_t match = expected.size();
+            for (std::size_t candidate = 0; candidate < expected.size();
+                 ++candidate) {
+                const auto &value = expected[candidate];
+                if (!seen[candidate] &&
+                    std::abs(position.x - value.x) <= tolerance &&
+                    std::abs(position.y - value.y) <= tolerance &&
+                    std::abs(position.z - value.z) <= tolerance) {
+                    match = candidate;
+                    break;
+                }
+            }
+            CAPTURE(position.x, position.y, position.z);
+            REQUIRE(match < expected.size());
+            seen[match] = true;
+            ++count;
+            const auto &value = expected[match];
+            const auto &attributes = block->attributes[index];
+            CHECK(point.rgba == colors[match]);
+            CHECK(attributes.intensity == value.intensity);
+            CHECK(attributes.classification == value.classification);
+            CHECK(attributes.returnNumber == value.returnNumber);
+            CHECK(attributes.numberOfReturns == value.numberOfReturns);
+            CHECK((point.attributes & 0xffU) == value.classification);
+            CHECK((point.attributes >> 8U) == (value.intensity >> 8U));
+            CHECK(pci::gpuPointIntensity(point.packedProperties) ==
+                  value.intensity);
+            CHECK(pci::gpuPointReturnNumber(point.packedProperties) ==
+                  value.returnNumber);
+            CHECK(pci::gpuPointNumberOfReturns(point.packedProperties) ==
+                  value.numberOfReturns);
+        }
+    }
+    CHECK(count == expected.size());
+    CHECK(std::ranges::all_of(seen, [](const bool value) {
+        return value;
+    }));
+}
+
+void checkFixtureBlocks(const std::span<const pci::PointBlockPtr> blocks)
+{
+    checkPointBlocks(blocks, pci::test::fixturePoints, fixtureColors);
+}
+
+std::vector<pci::PointBlockPtr>
+leafBlocks(const pci::LocalPointPageSourcePtr &source)
+{
+    const auto detail = source->fullDetailInfo();
+    REQUIRE(detail);
+    std::vector<pci::PointBlockPtr> blocks;
+    for (const auto id : detail->leafNodes) {
+        const auto payload = source->loadNode(id, {});
+        REQUIRE(payload);
+        blocks.insert(
+            blocks.end(), payload->blocks.begin(), payload->blocks.end());
+    }
+    return blocks;
+}
+
 std::vector<std::byte> fileBytes(const std::filesystem::path &path)
 {
     std::ifstream input(path, std::ios::binary | std::ios::ate);
@@ -130,15 +214,6 @@ std::string sha256(const std::filesystem::path &path)
                QCryptographicHash::Sha256)
         .toHex()
         .toStdString();
-}
-
-TEST_CASE("PDAL fixtures create valid LAS, LAZ, and COPC inputs",
-          "[component][pdal]")
-{
-    const FixtureDirectory fixture;
-    CHECK(std::filesystem::is_regular_file(fixture.paths().las));
-    CHECK(std::filesystem::is_regular_file(fixture.paths().laz));
-    CHECK(std::filesystem::is_regular_file(fixture.paths().copc));
 }
 
 TEST_CASE("PDAL inspection identifies supported point-cloud formats",
@@ -259,6 +334,9 @@ TEST_CASE("PDAL loads equivalent block scenes from supported formats",
     CHECK(copc->hierarchical());
     CHECK(sortedPoints(las) == sortedPoints(laz));
     CHECK(sortedPoints(las) == sortedPoints(copc));
+    checkFixtureBlocks(las->blocks());
+    checkFixtureBlocks(laz->blocks());
+    checkFixtureBlocks(copc->blocks());
     CHECK(las->intensityMaximum() == 800);
 
     const auto blocks = las->blocks();
@@ -311,6 +389,7 @@ TEST_CASE("COPC hierarchy queries partition and bound decoded nodes",
 
     std::uint64_t sourcePoints = 0;
     std::uint64_t decodedPoints = 0;
+    std::vector<pci::PointBlockPtr> childBlocks;
     for (const pci::PointCloudNodeId child :
          pci::childNodeIds(pci::rootPointCloudNode)) {
         const pci::PointCloudNodePayloadPtr payload =
@@ -318,9 +397,25 @@ TEST_CASE("COPC hierarchy queries partition and bound decoded nodes",
         sourcePoints += payload->sourcePointCount;
         decodedPoints += pci::pointCloudNodePayloadPoints(*payload);
         CHECK(pci::pointCloudNodePayloadPoints(*payload) <= 2);
+        const auto bounds = source.node(child).bounds;
+        for (const auto &block : payload->blocks) {
+            for (const auto &point : block->points) {
+                const auto position = pci::decodeBlockPosition(*block, point);
+                const std::array coordinates{
+                    position.x, position.y, position.z};
+                for (std::size_t axis = 0; axis < coordinates.size(); ++axis) {
+                    CHECK(coordinates[axis] >=
+                          bounds.minimum[axis] - block->scale * 0.5);
+                    CHECK(coordinates[axis] <=
+                          bounds.maximum[axis] + block->scale * 0.5);
+                }
+            }
+            childBlocks.push_back(block);
+        }
     }
     CHECK(sourcePoints == pci::test::fixturePoints.size());
     CHECK(decodedPoints == pci::test::fixturePoints.size());
+    checkFixtureBlocks(childBlocks);
 
     std::stop_source cancelled;
     cancelled.request_stop();
@@ -464,7 +559,7 @@ TEST_CASE("a single-page local index retains every source point",
           pci::pointCloudNodePayloadBytes(*result.rootPayload));
 }
 
-TEST_CASE("committed v1 local page fixture is rejected for rebuilding",
+TEST_CASE("committed legacy local page fixture is rejected",
           "[component][pdal][local-pages][compatibility]")
 {
     const std::filesystem::path store =
@@ -583,6 +678,11 @@ TEST_CASE(
 
     const auto reused = builder.openOrBuild(preflight, 8, optionsFor(cacheA));
     CHECK(reused.reused);
+    REQUIRE(cacheA->createdEntries().size() == 1);
+    CHECK(cacheA->createdEntries().front().path == first.storeDirectory);
+    const auto reopenedCache = testCache(fixture, "cache-a");
+    CHECK(builder.openOrBuild(preflight, 8, optionsFor(reopenedCache)).reused);
+    CHECK(reopenedCache->createdEntries().empty());
     const pci::PointCloudStorageMetrics reusedStorage =
         reused.source->storageMetrics();
     CHECK(reusedStorage.localPersistent);
@@ -719,10 +819,18 @@ TEST_CASE("concurrent local page builds publish one reusable store",
     const auto second = secondFuture.get();
     CHECK(first.storeDirectory == second.storeDirectory);
     CHECK(first.reused != second.reused);
+    CHECK(options.cache->createdEntries().size() == 1);
     CHECK(first.source->committed());
     CHECK(second.source->committed());
-    CHECK(fileBytes(first.storeDirectory / "manifest.pci") ==
-          fileBytes(second.storeDirectory / "manifest.pci"));
+    checkFixtureBlocks(leafBlocks(first.source));
+    checkFixtureBlocks(leafBlocks(second.source));
+    const pci::local_index::LocalPageCacheLocator locator(preflight, options);
+    const auto reopened = pci::LocalPointPageSource::openCommitted(
+        first.storeDirectory,
+        locator.fingerprint(),
+        options.cache->manifestAuthenticationKey(),
+        8);
+    checkFixtureBlocks(leafBlocks(reopened));
 }
 
 TEST_CASE("local page build resources clean up with scope",
@@ -915,6 +1023,7 @@ TEST_CASE("cancelled local page construction never commits a partial index",
                         }
                     }),
                 pci::PointCloudImportCancelled);
+            CHECK(cacheContext->createdEntries().empty());
             if (std::filesystem::exists(cache)) {
                 for (const auto &entry :
                      std::filesystem::directory_iterator(cache)) {
@@ -1082,6 +1191,335 @@ TEST_CASE("PDAL rejects a zero point limit", "[component][pdal]")
         FAIL("loading unexpectedly succeeded");
     } catch (const pci::PointCloudImportError &error) {
         CHECK(std::string_view(error.what()).contains("decodedByteBudget"));
+    }
+}
+
+TEST_CASE("PDAL inspection preserves context for invalid LAS inputs",
+          "[component][pdal]")
+{
+    const FixtureDirectory fixture;
+    std::filesystem::path path;
+    SECTION("missing supported format")
+    {
+        path = fixture.directory() / "missing.las";
+    }
+    SECTION("existing malformed supported format")
+    {
+        path = fixture.directory() / "malformed.las";
+        std::ofstream output(path, std::ios::binary);
+        output << "not a LAS header";
+        output.close();
+        REQUIRE(output);
+    }
+    try {
+        static_cast<void>(pci::PdalSourceInspector().inspect(path));
+        FAIL("inspection unexpectedly succeeded");
+    } catch (const pci::PointCloudImportError &error) {
+        CHECK(std::string_view(error.what()).contains(path.string()));
+    }
+}
+
+TEST_CASE("PDAL selects COPC for a mixed-case filename suffix",
+          "[component][pdal][copc]")
+{
+    const FixtureDirectory fixture;
+    const auto path = fixture.directory() / "mixed.CoPc.LaZ";
+    std::filesystem::copy_file(fixture.paths().copc, path);
+    checkMetadata(pci::PdalSourceInspector().inspect(path), "readers.copc");
+    const auto scene = pci::createPointDatasetRuntime(
+        pci::PdalPointCloudLoader().load({.sourcePath = path}));
+    REQUIRE(scene);
+    CHECK(scene->hierarchical());
+    checkFixtureBlocks(scene->blocks());
+}
+
+TEST_CASE("PDAL mapping rounds RGB channels at byte conversion boundaries",
+          "[component][pdal]")
+{
+    const FixtureDirectory fixture;
+    constexpr std::array<std::uint16_t, 5> channels{0, 128, 129, 32768, 65535};
+    constexpr std::array<std::uint32_t, 5> colors{
+        0xff000000U, 0xff000000U, 0xff010101U, 0xff808080U, 0xffffffffU};
+    std::vector<pci::test::FixturePoint> points;
+    for (std::size_t index = 0; index < channels.size(); ++index) {
+        points.push_back({1000.0 + static_cast<double>(index),
+                          2000.0,
+                          10.0,
+                          channels[index],
+                          channels[index],
+                          channels[index],
+                          static_cast<std::uint16_t>(index),
+                          2,
+                          1,
+                          1});
+    }
+    const auto path = fixture.directory() / "rgb-boundaries.las";
+    pci::test::writePdalLasFixture(path, points);
+    const auto scene = pci::createPointDatasetRuntime(
+        pci::PdalPointCloudLoader().load({.sourcePath = path}));
+    REQUIRE(scene);
+    checkPointBlocks(scene->blocks(), points, colors);
+}
+
+TEST_CASE("PDAL XYZ-only sources retain absent attributes and use defaults",
+          "[component][pdal][statistics]")
+{
+    const FixtureDirectory fixture;
+    const auto path = fixture.directory() / "xyz.csv";
+    {
+        std::ofstream output(path);
+        output << "X,Y,Z\n1000,2000,10\n1001,2002,13\n";
+        output.close();
+        REQUIRE(output);
+    }
+    const auto metadata = pci::PdalSourceInspector().inspect(path);
+    CHECK_FALSE(metadata.hasColor);
+    CHECK_FALSE(metadata.hasIntensity);
+    CHECK_FALSE(metadata.hasClassification);
+    CHECK_FALSE(metadata.hasReturnNumber);
+    CHECK_FALSE(metadata.hasNumberOfReturns);
+    const auto scene = pci::createPointDatasetRuntime(
+        pci::PdalPointCloudLoader().load({.sourcePath = path}));
+    REQUIRE(scene);
+    constexpr std::array<pci::test::FixturePoint, 2> expected{{
+        {1000, 2000, 10, 0, 0, 0, 0, 0, 0, 0},
+        {1001, 2002, 13, 0, 0, 0, 0, 0, 0, 0},
+    }};
+    constexpr std::array colors{0xffffffffU, 0xffffffffU};
+    checkPointBlocks(scene->blocks(), expected, colors);
+    const auto statistics = pci::PdalPointCloudStatistics().calculate(metadata);
+    CHECK(statistics.scannedPointCount == 2);
+    CHECK_FALSE(statistics.intensity);
+    CHECK_FALSE(statistics.red);
+    CHECK_FALSE(statistics.green);
+    CHECK_FALSE(statistics.blue);
+    CHECK_FALSE(statistics.hasClassification);
+    CHECK_FALSE(statistics.hasReturnNumber);
+    CHECK_FALSE(statistics.hasNumberOfReturns);
+    const auto allZero = [](const auto &counts) {
+        return std::ranges::all_of(counts, [](const auto count) {
+            return count == 0;
+        });
+    };
+    CHECK(allZero(statistics.classificationCounts));
+    CHECK(allZero(statistics.returnNumberCounts));
+    CHECK(allZero(statistics.numberOfReturnsCounts));
+}
+
+TEST_CASE("legacy page stores rebuild completely and then become reusable",
+          "[component][pdal][local-pages][compatibility]")
+{
+    const FixtureDirectory fixture;
+    const auto preflight = pci::PdalPointCloudLoader().inspect(
+        {.sourcePath = fixture.paths().las});
+    const pci::LocalPointPageStoreOptions options{
+        .cache = testCache(fixture, "legacy-rebuild-cache"),
+        .pointsPerLeaf = 2,
+        .rootPreviewPoints = 2,
+        .sortMemoryBytes = 4096,
+    };
+    const pci::local_index::LocalPageCacheLocator locator(preflight, options);
+    const auto legacy =
+        std::filesystem::path(__FILE__).parent_path().parent_path() /
+        "data/local-page-v1/store.pcipages";
+    std::filesystem::copy(legacy,
+                          locator.finalDirectory(),
+                          std::filesystem::copy_options::recursive);
+    pci::LocalPointIndexBuilder builder;
+    const auto rebuilt = builder.openOrBuild(preflight, 8, options);
+    CHECK_FALSE(rebuilt.reused);
+    CHECK(rebuilt.sourcePointsScanned == 8);
+    REQUIRE(rebuilt.source);
+    CHECK(rebuilt.source->committed());
+    CHECK(rebuilt.storeDirectory == locator.finalDirectory());
+    checkFixtureBlocks(leafBlocks(rebuilt.source));
+    const auto reused = builder.openOrBuild(preflight, 8, options);
+    CHECK(reused.reused);
+    CHECK(reused.sourcePointsScanned == 0);
+    checkFixtureBlocks(leafBlocks(reused.source));
+}
+
+TEST_CASE("local page sorting merges multiple runs without losing points",
+          "[component][pdal][local-pages]")
+{
+    const FixtureDirectory fixture;
+    std::vector<pci::test::FixturePoint> points;
+    for (std::uint32_t index = 0; index < 256; ++index) {
+        // An odd multiplier permutes all 256 grid indices.
+        const auto value = (index * 73U) % 256U;
+        points.push_back({1000.0 + value % 8U,
+                          2000.0 + (value / 8U) % 8U,
+                          10.0 + value / 64U,
+                          65535,
+                          65535,
+                          65535,
+                          static_cast<std::uint16_t>(value),
+                          2,
+                          1,
+                          1});
+    }
+    const std::vector<std::uint32_t> colors(points.size(), 0xffffffffU);
+    const auto path = fixture.directory() / "multi-run.las";
+    pci::test::writePdalLasFixture(path, points);
+    const auto preflight =
+        pci::PdalPointCloudLoader().inspect({.sourcePath = path});
+    const auto optionsFor = [&](const std::string_view name) {
+        return pci::LocalPointPageStoreOptions{
+            .cache = testCache(fixture, name),
+            .pointsPerLeaf = 16,
+            .rootPreviewPoints = 8,
+            .sortMemoryBytes = 4096,
+        };
+    };
+    const auto optionsA = optionsFor("multi-run-a");
+    const auto optionsB = optionsFor("multi-run-b");
+    REQUIRE(optionsA.cache->manifestAuthenticationKey() ==
+            optionsB.cache->manifestAuthenticationKey());
+    std::size_t runCount = 0;
+    const auto first = pci::LocalPointIndexBuilder().openOrBuild(
+        preflight,
+        points.size(),
+        optionsA,
+        {},
+        [&](const pci::PointCloudImportProgress &progress) {
+            if (progress.stage != pci::PointCloudImportStage::Optimizing ||
+                progress.processed != 0)
+                return;
+            for (const auto &entry :
+                 std::filesystem::recursive_directory_iterator(
+                     optionsA.cache->directory())) {
+                if (entry.is_regular_file() &&
+                    entry.path().parent_path().filename() == "runs")
+                    ++runCount;
+            }
+        });
+    REQUIRE(runCount > 1);
+    REQUIRE(first.source);
+    CHECK_FALSE(first.reused);
+    CHECK(first.sourcePointsScanned == points.size());
+    checkPointBlocks(leafBlocks(first.source), points, colors);
+    const auto second = pci::LocalPointIndexBuilder().openOrBuild(
+        preflight, points.size(), optionsB);
+    CHECK_FALSE(second.reused);
+    checkPointBlocks(leafBlocks(second.source), points, colors);
+    CHECK(fileBytes(first.storeDirectory / "manifest.pci") ==
+          fileBytes(second.storeDirectory / "manifest.pci"));
+    CHECK(fileBytes(first.storeDirectory / "payload.bin") ==
+          fileBytes(second.storeDirectory / "payload.bin"));
+    const pci::local_index::LocalPageCacheLocator locator(preflight, optionsA);
+    const auto reopened = pci::LocalPointPageSource::openCommitted(
+        first.storeDirectory,
+        locator.fingerprint(),
+        optionsA.cache->manifestAuthenticationKey(),
+        points.size());
+    checkPointBlocks(leafBlocks(reopened), points, colors);
+}
+
+TEST_CASE("PDAL statistics detect an isolated point in an asymmetric source",
+          "[component][pdal][statistics]")
+{
+    const FixtureDirectory fixture;
+    std::vector<pci::test::FixturePoint> points;
+    for (int index = 0; index < 20; ++index) {
+        points.push_back(
+            {static_cast<double>(index), 0, 0, 0, 0, 0, 0, 0, 1, 1});
+    }
+    points.push_back({10000, 0, 0, 0, 0, 0, 0, 0, 1, 1});
+    const auto path = fixture.directory() / "isolated-point.las";
+    pci::test::writePdalLasFixture(path, points);
+    const auto statistics = pci::PdalPointCloudStatistics().calculate(
+        pci::PdalSourceInspector().inspect(path));
+    // Sum(0..19) = 190 and sum of their squares = 2470.
+    constexpr double mean = 10190.0 / 21.0;
+    const double deviation = std::sqrt(100002470.0 / 21.0 - mean * mean);
+    CHECK(statistics.scannedPointCount == 21);
+    CHECK(statistics.x.minimum == 0);
+    CHECK(statistics.x.maximum == 10000);
+    CHECK(statistics.x.mean == Catch::Approx(mean));
+    CHECK(statistics.x.standardDeviation == Catch::Approx(deviation));
+    CHECK(statistics.y.mean == 0);
+    CHECK(statistics.z.mean == 0);
+    REQUIRE(statistics.spatialOutliers);
+    CHECK(statistics.spatialOutliers->samplePointCount == 21);
+    CHECK(statistics.spatialOutliers->sampleOutlierCount == 1);
+    CHECK(statistics.spatialOutliers->estimatedSourceOutlierCount == 1);
+    CHECK(statistics.spatialOutliers->estimatedPercentage ==
+          Catch::Approx(100.0 / 21.0));
+}
+
+TEST_CASE("PDAL single-point statistics omit undefined density and outliers",
+          "[component][pdal][statistics]")
+{
+    const FixtureDirectory fixture;
+    const auto path = fixture.directory() / "single-point.las";
+    const std::array points{pci::test::fixturePoints.front()};
+    pci::test::writePdalLasFixture(path, points);
+    const auto statistics = pci::PdalPointCloudStatistics().calculate(
+        pci::PdalSourceInspector().inspect(path));
+    CHECK(statistics.scannedPointCount == 1);
+    CHECK(statistics.x.mean == 1000);
+    CHECK(statistics.y.mean == 2000);
+    CHECK(statistics.z.mean == 10);
+    CHECK(statistics.x.standardDeviation == 0);
+    CHECK(statistics.y.standardDeviation == 0);
+    CHECK(statistics.z.standardDeviation == 0);
+    CHECK_FALSE(statistics.horizontalBoundingArea);
+    CHECK_FALSE(statistics.boundingVolume);
+    CHECK_FALSE(statistics.horizontalDensity);
+    CHECK_FALSE(statistics.volumetricDensity);
+    CHECK_FALSE(statistics.nominalHorizontalSpacing);
+    CHECK_FALSE(statistics.spatialOutliers);
+}
+
+TEST_CASE("PDAL loading and statistics cancel during source processing",
+          "[component][pdal][cancellation]")
+{
+    const FixtureDirectory fixture;
+    constexpr std::uint64_t pointCount = 65537;
+    const std::vector points(pointCount, pci::test::fixturePoints.front());
+    const auto path = fixture.directory() / "cancel-mid-read.las";
+    pci::test::writePdalLasFixture(path, points);
+    const auto metadata = pci::PdalSourceInspector().inspect(path);
+    for (const bool statistics : {false, true}) {
+        DYNAMIC_SECTION((statistics ? "statistics" : "flat loading"))
+        {
+            std::stop_source stop;
+            std::vector<std::uint64_t> progress;
+            const auto cancelAfterProgress = [&](const std::uint64_t processed,
+                                                 const std::uint64_t total) {
+                CHECK(total == pointCount);
+                progress.push_back(processed);
+                if (processed > 0 && processed < total)
+                    stop.request_stop();
+            };
+            if (statistics) {
+                CHECK_THROWS_AS(
+                    pci::PdalPointCloudStatistics().calculate(
+                        metadata, stop.get_token(), cancelAfterProgress),
+                    pci::PointCloudStatisticsCancelled);
+            } else {
+                const pci::PointCloudLoadContext context{
+                    .stopToken = stop.get_token(),
+                    .progress =
+                        [&](const pci::PointCloudImportProgress value) {
+                            if (value.stage ==
+                                pci::PointCloudImportStage::Reading)
+                                cancelAfterProgress(value.processed,
+                                                    value.total);
+                        },
+                };
+                CHECK_THROWS_AS(pci::PdalPointCloudLoader().load(
+                                    {.sourcePath = path}, {}, context),
+                                pci::PointCloudImportCancelled);
+            }
+            REQUIRE(stop.stop_requested());
+            REQUIRE_FALSE(progress.empty());
+            CHECK(progress.back() > 0);
+            CHECK(std::ranges::is_sorted(progress));
+            CHECK(std::ranges::all_of(progress, [](const auto value) {
+                return value < pointCount;
+            }));
+        }
     }
 }
 

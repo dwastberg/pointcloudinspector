@@ -539,10 +539,7 @@ LocalPointPageBuildResult LocalPointIndexBuilder::openOrBuild(
             throw PointCloudImportCancelled();
         }
         local_index::LocalPageCommitter::commit(
-            temporaryDirectory,
-            finalDirectory,
-            manifest,
-            options.cache->manifestAuthenticationKey());
+            temporaryDirectory, finalDirectory, manifest, *options.cache);
         PointCloudScalarRanges completeRanges;
         if (preflight.metadata.hasIntensity && haveRanges) {
             completeRanges.intensity = PointScalarRange{

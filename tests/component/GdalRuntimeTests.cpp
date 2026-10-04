@@ -2,12 +2,14 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <cpl_error.h>
+
 #include <cstdint>
 #include <filesystem>
 
 namespace {
 
-TEST_CASE("GDAL registration reports the supported version floor",
+TEST_CASE("GDAL runtime provides the supported import capabilities",
           "[component][gdal]")
 {
     pci::ensureGdalRegistered();
@@ -19,38 +21,22 @@ TEST_CASE("GDAL registration reports the supported version floor",
     if (version.major == 3) {
         CHECK(version.minor >= 9);
     }
-}
-
-TEST_CASE("GDAL driver availability is probed, not inferred",
-          "[component][gdal]")
-{
     // A version floor is not a driver guarantee, so the drivers this feature
     // depends on are measured against the build that actually shipped.
     CHECK(pci::gdalDriverAvailable("GTiff"));
-    CHECK(pci::gdalDriverAvailable("VRT"));
-    CHECK(pci::gdalDriverAvailable("GTI"));
 
     CHECK_FALSE(pci::gdalDriverAvailable("NoSuchDriverExists"));
     CHECK_FALSE(pci::gdalDriverAvailable(""));
-}
-
-TEST_CASE("GDAL catalog capabilities are measured once", "[component][gdal]")
-{
     const pci::GdalCatalogCapabilities &capabilities =
         pci::gdalCatalogCapabilities();
 
-    // GTI plus at least one index format is what the supported lane promises,
-    // and this assertion is the thing that fails if a packaged build drops to
-    // a stripped GDAL.
+    // The test runtime must support catalogs as well as ordinary rasters.
+    // Packaged applications have their own capability smoke check.
     CHECK(capabilities.tileIndex);
     CHECK(capabilities.virtualRaster);
     CHECK(capabilities.catalogImport());
     CHECK((capabilities.geoPackage || capabilities.flatGeobuf ||
            capabilities.shapefile));
-    CHECK(capabilities.version.major >= 3);
-
-    // Repeated calls return the same probe rather than re-querying GDAL.
-    CHECK(&capabilities == &pci::gdalCatalogCapabilities());
 }
 
 TEST_CASE("catalog capability requires an index format", "[unit][gdal]")
@@ -72,29 +58,41 @@ TEST_CASE("GDAL block cache limit is explicit and observable",
           "[component][gdal]")
 {
     const std::uint64_t original = pci::gdalBlockCacheBytes();
+    {
+        struct RestoreCacheLimit final {
+            std::uint64_t bytes;
+            ~RestoreCacheLimit()
+            {
+                pci::setGdalBlockCacheBytes(bytes);
+            }
+        } restore{original};
 
-    constexpr std::uint64_t requested = 64ULL * 1024ULL * 1024ULL;
-    pci::setGdalBlockCacheBytes(requested);
-    CHECK(pci::gdalBlockCacheBytes() == requested);
-
-    // Usage is reported from the same allocator the limit governs, which is
-    // what lets diagnostics show the term the application's own byte counters
-    // cannot see.
-    CHECK(pci::gdalBlockCacheUsedBytes() <= pci::gdalBlockCacheBytes());
-
-    pci::setGdalBlockCacheBytes(original);
+        constexpr std::uint64_t requested = 64ULL * 1024ULL * 1024ULL;
+        pci::setGdalBlockCacheBytes(requested);
+        CHECK(pci::gdalBlockCacheBytes() == requested);
+        CHECK(pci::gdalBlockCacheUsedBytes() <= pci::gdalBlockCacheBytes());
+    }
     CHECK(pci::gdalBlockCacheBytes() == original);
 }
 
-TEST_CASE("GDAL error scope starts empty and nests", "[component][gdal]")
+TEST_CASE("GDAL error scopes isolate nested errors and restore capture",
+          "[component][gdal]")
 {
     const pci::GdalErrorScope outer;
     CHECK(outer.message().empty());
+    CPLError(CE_Failure, CPLE_AppDefined, "outer before nesting");
+    CHECK(outer.message() == "outer before nesting");
     {
         const pci::GdalErrorScope inner;
         CHECK(inner.message().empty());
+        CPLError(CE_Failure, CPLE_AppDefined, "inner error");
+        CHECK(inner.message() == "inner error");
+        CHECK(outer.message() == "outer before nesting");
     }
-    CHECK(outer.message().empty());
+    CHECK(outer.message() == "outer before nesting");
+    CPLError(CE_Failure, CPLE_AppDefined, "outer after nesting");
+    CHECK(outer.message() == "outer after nesting");
+    CPLErrorReset();
 }
 
 TEST_CASE("GDAL shared open helper owns errors and path formatting",

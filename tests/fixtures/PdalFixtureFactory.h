@@ -3,6 +3,7 @@
 #include <array>
 #include <cstdint>
 #include <filesystem>
+#include <span>
 
 namespace pci::test {
 
@@ -35,6 +36,9 @@ struct PdalFixturePaths {
     std::filesystem::path laz;
     std::filesystem::path copc;
 };
+
+void writePdalLasFixture(const std::filesystem::path &path,
+                         std::span<const FixturePoint> points);
 
 [[nodiscard]] PdalFixturePaths
 writePdalFixtures(const std::filesystem::path &directory);

@@ -21,6 +21,7 @@
 #include <QAction>
 #include <QApplication>
 #include <QCheckBox>
+#include <QCloseEvent>
 #include <QComboBox>
 #include <QDialog>
 #include <QDockWidget>
@@ -37,6 +38,7 @@
 #include <QListView>
 #include <QListWidget>
 #include <QMenu>
+#include <QMessageBox>
 #include <QMimeData>
 #include <QProgressBar>
 #include <QPushButton>
@@ -289,6 +291,7 @@ class SlowLoader final : public pci::PointCloudLoader {
 public:
     mutable std::atomic<bool> started = false;
     mutable std::atomic<bool> stopped = false;
+    std::function<void()> onStop;
 
     pci::PreparedPointDatasetPtr
     load(const pci::PointCloudLoadOptions &,
@@ -307,6 +310,8 @@ public:
         while (!context.stopToken.stop_requested()) {
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
+        if (onStop)
+            onStop();
         stopped = true;
         throw pci::PointCloudImportCancelled();
     }
@@ -3759,4 +3764,229 @@ TEST_CASE("main window keeps rasters when point clouds are replaced",
     const pci::SceneDocumentSnapshotPtr document = viewportPointer->document();
     REQUIRE(document->rasterLayerCount() == 1);
     CHECK(document->rasterLayers().front().id == rasterId);
+}
+
+TEST_CASE("closing prompts only for eligible caches and respects the choice",
+          "[ui][mainwindow][cache-close]")
+{
+    auto services = makeTestImportServices(std::make_shared<ImmediateLoader>());
+    pci::MainWindow window(
+        std::make_unique<FakeViewport>(), std::move(services), 100);
+    bool eligible = true;
+    bool cleanupRan = false;
+    window.setPointCacheCleanup(
+        [&] {
+            return eligible;
+        },
+        [&] {
+            cleanupRan = true;
+            return pci::StorageMaintenanceResult{};
+        });
+    window.show();
+    QString choice = QStringLiteral("keepCachesAndCloseButton");
+    bool shouldClose = true;
+    bool shouldDelete = false;
+    bool escape = false;
+    SECTION("delete")
+    {
+        choice = QStringLiteral("deleteCachesAndCloseButton");
+        shouldDelete = true;
+    }
+    SECTION("keep is the default") {}
+    SECTION("cancel")
+    {
+        choice.clear();
+        shouldClose = false;
+    }
+    SECTION("escape")
+    {
+        escape = true;
+        shouldClose = false;
+    }
+    SECTION("no created caches")
+    {
+        eligible = false;
+    }
+
+    bool sawPrompt = false;
+    QTimer::singleShot(0, &window, [&] {
+        auto *dialog = window.findChild<QMessageBox *>(
+            QStringLiteral("closeCacheConfirmation"));
+        REQUIRE(dialog);
+        sawPrompt = true;
+        CHECK(dialog->defaultButton()->objectName() ==
+              QStringLiteral("keepCachesAndCloseButton"));
+        // A second close while the question is open must neither close nor
+        // prompt again.
+        QCloseEvent repeatedClose;
+        QApplication::sendEvent(&window, &repeatedClose);
+        CHECK_FALSE(repeatedClose.isAccepted());
+        CHECK(window.isVisible());
+        CHECK(window.findChildren<QMessageBox *>().size() == 1);
+        if (escape)
+            QTest::keyClick(dialog, Qt::Key_Escape);
+        else if (choice.isEmpty())
+            dialog->button(QMessageBox::Cancel)->click();
+        else
+            dialog->findChild<QPushButton *>(choice)->click();
+    });
+    CHECK(window.close() == shouldClose);
+    CHECK(sawPrompt == eligible);
+    CHECK(window.isVisible() == !shouldClose);
+    CHECK_FALSE(cleanupRan);
+    CHECK(static_cast<bool>(window.takePointCacheCleanup()) == shouldDelete);
+    CHECK_FALSE(window.takePointCacheCleanup());
+    if (!shouldClose) {
+        // Cancelling leaves the window usable and asks again on the next close.
+        QTimer::singleShot(0, &window, [&] {
+            auto *dialog = window.findChild<QMessageBox *>(
+                QStringLiteral("closeCacheConfirmation"));
+            REQUIRE(dialog);
+            dialog
+                ->findChild<QPushButton *>(
+                    QStringLiteral("keepCachesAndCloseButton"))
+                ->click();
+        });
+        CHECK(window.close());
+    }
+}
+
+TEST_CASE("cache cleanup waits for workers and viewport destruction",
+          "[ui][mainwindow][cache-close][shutdown]")
+{
+    const auto loader = std::make_shared<SlowLoader>();
+    std::atomic<int> latePublications = 0;
+    loader->onStop = [&] {
+        ++latePublications;
+    };
+    auto services = makeTestImportServices(loader);
+    auto viewport = std::make_unique<FakeViewport>();
+    std::atomic<bool> viewportDestroyed = false;
+    QObject::connect(viewport->widget(), &QObject::destroyed, [&] {
+        viewportDestroyed = true;
+    });
+    auto window = std::make_unique<pci::MainWindow>(
+        std::move(viewport), std::move(services), 100);
+    bool cleanupRan = false;
+    bool handlesReleased = false;
+    bool ranInBackground = false;
+    const auto mainThread = std::this_thread::get_id();
+    window->setPointCacheCleanup(
+        [] {
+            return false;
+        },
+        [&] {
+            cleanupRan = true;
+            handlesReleased =
+                viewportDestroyed && loader->stopped && latePublications == 1;
+            ranInBackground = std::this_thread::get_id() != mainThread;
+            return pci::StorageMaintenanceResult{};
+        });
+    window->show();
+    window->loadPointCloud("closing.las");
+    REQUIRE(waitFor([&] {
+        return loader->started.load();
+    }));
+    QTimer::singleShot(0, window.get(), [&] {
+        auto *dialog = window->findChild<QMessageBox *>(
+            QStringLiteral("closeCacheConfirmation"));
+        REQUIRE(dialog);
+        dialog
+            ->findChild<QPushButton *>(
+                QStringLiteral("deleteCachesAndCloseButton"))
+            ->click();
+    });
+    REQUIRE(window->close());
+    CHECK_FALSE(cleanupRan);
+    pci::finishApplicationShutdown(std::move(window));
+    CHECK(cleanupRan);
+    CHECK(handlesReleased);
+    CHECK(ranInBackground);
+}
+
+TEST_CASE("cache cleanup reports failures before exiting",
+          "[ui][mainwindow][cache-close][shutdown]")
+{
+    auto services = makeTestImportServices(std::make_shared<ImmediateLoader>());
+    auto window = std::make_unique<pci::MainWindow>(
+        std::make_unique<FakeViewport>(), std::move(services), 100);
+    window->setPointCacheCleanup(
+        [] {
+            return true;
+        },
+        []() -> pci::StorageMaintenanceResult {
+            throw std::runtime_error("test deletion failure");
+        });
+    window->show();
+    QTimer::singleShot(0, window.get(), [&] {
+        auto *dialog = window->findChild<QMessageBox *>(
+            QStringLiteral("closeCacheConfirmation"));
+        REQUIRE(dialog);
+        dialog
+            ->findChild<QPushButton *>(
+                QStringLiteral("deleteCachesAndCloseButton"))
+            ->click();
+    });
+    REQUIRE(window->close());
+    bool sawWarning = false;
+    QTimer dismiss;
+    QObject::connect(&dismiss, &QTimer::timeout, [&] {
+        for (auto *widget : QApplication::topLevelWidgets()) {
+            auto *message = qobject_cast<QMessageBox *>(widget);
+            if (message && message->objectName() ==
+                               QStringLiteral("cacheCleanupWarning")) {
+                sawWarning = true;
+                CHECK(message->detailedText().contains(
+                    QStringLiteral("test deletion failure")));
+                message->accept();
+            }
+        }
+    });
+    dismiss.start(10);
+    pci::finishApplicationShutdown(std::move(window));
+    CHECK(sawWarning);
+}
+
+TEST_CASE("application quit prompts and cleanup runs after the main event loop",
+          "[ui][mainwindow][cache-close][shutdown]")
+{
+    auto services = makeTestImportServices(std::make_shared<ImmediateLoader>());
+    auto window = std::make_unique<pci::MainWindow>(
+        std::make_unique<FakeViewport>(), std::move(services), 100);
+    bool cleanupRan = false;
+    window->setPointCacheCleanup(
+        [] {
+            return true;
+        },
+        [&] {
+            cleanupRan = true;
+            return pci::StorageMaintenanceResult{};
+        });
+    window->show();
+    bool sawPrompt = false;
+    QTimer watchdog;
+    watchdog.setSingleShot(true);
+    QObject::connect(&watchdog, &QTimer::timeout, [] {
+        QCoreApplication::exit(19);
+    });
+    watchdog.start(2000);
+    QTimer::singleShot(0, window.get(), [&] {
+        QTimer::singleShot(0, window.get(), [&] {
+            auto *dialog = window->findChild<QMessageBox *>(
+                QStringLiteral("closeCacheConfirmation"));
+            REQUIRE(dialog);
+            sawPrompt = true;
+            dialog
+                ->findChild<QPushButton *>(
+                    QStringLiteral("deleteCachesAndCloseButton"))
+                ->click();
+        });
+        QCoreApplication::quit();
+    });
+    CHECK(QApplication::exec() == 0);
+    watchdog.stop();
+    CHECK(sawPrompt);
+    CHECK_FALSE(cleanupRan);
+    pci::finishApplicationShutdown(std::move(window));
+    CHECK(cleanupRan);
 }

@@ -30,13 +30,14 @@ void registerFixtureDimensions(pdal::PointLayout &layout)
     });
 }
 
-pdal::PointViewPtr createFixtureView(pdal::PointTable &table)
+pdal::PointViewPtr createFixtureView(pdal::PointTable &table,
+                                     const std::span<const FixturePoint> points)
 {
     registerFixtureDimensions(*table.layout());
 
     auto view = std::make_shared<pdal::PointView>(table);
-    for (pdal::PointId index = 0; index < fixturePoints.size(); ++index) {
-        const FixturePoint &point = fixturePoints[index];
+    for (pdal::PointId index = 0; index < points.size(); ++index) {
+        const FixturePoint &point = points[index];
         view->setField(pdal::Dimension::Id::X, index, point.x);
         view->setField(pdal::Dimension::Id::Y, index, point.y);
         view->setField(pdal::Dimension::Id::Z, index, point.z);
@@ -96,12 +97,13 @@ pdal::PointViewPtr createResidencyStressView(pdal::PointTable &table)
 void writeFixture(const std::filesystem::path &path,
                   const std::string &writerDriver,
                   const bool compressed,
-                  const bool residencyStress = false)
+                  const bool residencyStress = false,
+                  const std::span<const FixturePoint> points = fixturePoints)
 {
     pdal::PointTable table;
     const pdal::PointViewPtr view = residencyStress
                                         ? createResidencyStressView(table)
-                                        : createFixtureView(table);
+                                        : createFixtureView(table, points);
 
     pdal::BufferReader reader;
     reader.addView(view);
@@ -131,6 +133,13 @@ void writeFixture(const std::filesystem::path &path,
 }
 
 } // namespace
+
+void writePdalLasFixture(const std::filesystem::path &path,
+                         const std::span<const FixturePoint> points)
+{
+    std::filesystem::create_directories(path.parent_path());
+    writeFixture(path, "writers.las", false, false, points);
+}
 
 PdalFixturePaths writePdalFixtures(const std::filesystem::path &directory)
 {
