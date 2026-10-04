@@ -48,18 +48,15 @@ TEST_CASE("application invocation parser returns typed configuration",
         QStringLiteral("pcinspector"),
         QStringLiteral("--points"),
         QStringLiteral("25"),
-        QStringLiteral("--max-points=50"),
-        QStringLiteral("--cpu-cache-mb=256"),
-        QStringLiteral("--gpu-cache-mb=64"),
         QStringLiteral("--graphics-api=auto"),
         QStringLiteral("--smoke-test"),
         QStringLiteral("cloud.las"),
     });
     CHECK(config.syntheticPointCount == 25);
-    CHECK(config.maximumLoadPoints == 50);
-    CHECK(config.cpuBudget ==
-          pci::MemoryBudgetOption{.automatic = false, .mebibytes = 256});
-    CHECK(config.gpuByteBudget == std::uint64_t{64} * 1024 * 1024);
+    CHECK(config.maximumLoadPoints == pci::defaultMaximumLoadPoints);
+    CHECK(config.cpuBudget == pci::MemoryBudgetOption{.automatic = true});
+    CHECK(config.gpuByteBudget ==
+          pci::mebibytesToBytes(pci::defaultGpuCacheMebibytes));
     CHECK(config.graphicsApi == pci::GraphicsApi::Auto);
     CHECK(config.smokeTest);
     REQUIRE(config.sources.size() == 1);
@@ -107,18 +104,6 @@ TEST_CASE("application invocation parser reports CLI failures without exiting",
             QStringLiteral("--points must"),
             2},
         FailureCase{{QStringLiteral("pcinspector"),
-                     QStringLiteral("--max-points=18446744073709551616")},
-                    QStringLiteral("--max-points must"),
-                    2},
-        FailureCase{{QStringLiteral("pcinspector"),
-                     QStringLiteral("--cpu-cache-mb=17592186044416")},
-                    QStringLiteral("--cpu-cache-mb must"),
-                    2},
-        FailureCase{{QStringLiteral("pcinspector"),
-                     QStringLiteral("--gpu-cache-mb=17592186044416")},
-                    QStringLiteral("--gpu-cache-mb must"),
-                    2},
-        FailureCase{{QStringLiteral("pcinspector"),
                      QStringLiteral("--graphics-api=software")},
                     QStringLiteral("--graphics-api must"),
                     2},
@@ -157,28 +142,54 @@ TEST_CASE("application invocation parser returns help and version text",
         QStringLiteral("Point Cloud Inspector"));
     QCoreApplication::setApplicationVersion(QStringLiteral("0.1.0-test"));
 
+    for (const QString &option :
+         {QStringLiteral("-h"), QStringLiteral("--help")}) {
+        const pci::ConfigEarlyExit help =
+            earlyExitFor({QStringLiteral("pcinspector"), option});
+        CAPTURE(option);
+        CHECK(help.exitCode == 0);
+        CHECK_FALSE(help.writeToStandardError);
+        CHECK(help.message.contains(QStringLiteral("Usage:")));
+        CHECK(help.message.contains(QStringLiteral("--help")));
+        CHECK(help.message.contains(QStringLiteral("--version")));
+        CHECK(help.message.contains(QStringLiteral("vector")));
+        CHECK(help.message.contains(QStringLiteral("raster")));
+    }
+
+    for (const QString &option :
+         {QStringLiteral("-v"), QStringLiteral("--version")}) {
+        const pci::ConfigEarlyExit version =
+            earlyExitFor({QStringLiteral("pcinspector"), option});
+        CAPTURE(option);
+        CHECK(version.exitCode == 0);
+        CHECK_FALSE(version.writeToStandardError);
+        CHECK(version.message ==
+              QStringLiteral("Point Cloud Inspector 0.1.0-test"));
+    }
+}
+
+TEST_CASE("removed application options are rejected and absent from help",
+          "[unit][app-config][cli]")
+{
     const pci::ConfigEarlyExit help =
         earlyExitFor({QStringLiteral("pcinspector"), QStringLiteral("--help")});
-    CHECK(help.exitCode == 0);
-    CHECK_FALSE(help.writeToStandardError);
-    CHECK(help.message.contains(QStringLiteral("Usage:")));
-    CHECK(help.message.contains(QStringLiteral("--max-points")));
-    CHECK(help.message.contains(QStringLiteral("non-paged")));
-    CHECK(help.message.contains(QStringLiteral("vector")));
-    CHECK(help.message.contains(QStringLiteral("raster")));
-
-    const pci::ConfigEarlyExit helpAll = earlyExitFor(
-        {QStringLiteral("pcinspector"), QStringLiteral("--help-all")});
-    CHECK(helpAll.exitCode == 0);
-    CHECK_FALSE(helpAll.writeToStandardError);
-    CHECK(helpAll.message.contains(QStringLiteral("Qt")));
-
-    const pci::ConfigEarlyExit version = earlyExitFor(
-        {QStringLiteral("pcinspector"), QStringLiteral("--version")});
-    CHECK(version.exitCode == 0);
-    CHECK_FALSE(version.writeToStandardError);
-    CHECK(version.message ==
-          QStringLiteral("Point Cloud Inspector 0.1.0-test"));
+    for (const QString &option : {QStringLiteral("--cpu-cache-mb"),
+                                  QStringLiteral("--gpu-cache-mb"),
+                                  QStringLiteral("--raster-cpu-cache-mb"),
+                                  QStringLiteral("--raster-gpu-cache-mb"),
+                                  QStringLiteral("--gdal-cache-mb"),
+                                  QStringLiteral("--raster-workers"),
+                                  QStringLiteral("--max-points"),
+                                  QStringLiteral("--help-all")}) {
+        CAPTURE(option);
+        CHECK_FALSE(help.message.contains(option));
+        const pci::ConfigEarlyExit removed =
+            earlyExitFor({QStringLiteral("pcinspector"), option});
+        CHECK(removed.exitCode == 1);
+        CHECK(removed.writeToStandardError);
+        CHECK(removed.message.contains(QStringLiteral("Unknown option")));
+        CHECK(removed.message.contains(option.mid(2)));
+    }
 }
 
 TEST_CASE("application invocation exposes the GDAL capability probe",
@@ -447,44 +458,17 @@ TEST_CASE("path arguments expand wildcards to sorted matches",
 
 } // namespace
 
-TEST_CASE("raster budgets parse and validate from the command line",
+TEST_CASE("application invocation retains default raster settings",
           "[unit][app-config][raster]")
 {
-    const auto parse = [](const QStringList &extra) {
-        QStringList arguments{QStringLiteral("pcinspector")};
-        arguments += extra;
-        return pci::parseApplicationInvocation(arguments);
-    };
-
-    const auto defaults = parse({});
-    REQUIRE(std::holds_alternative<pci::ApplicationConfig>(defaults));
-    const pci::RasterPerformanceSettings &standard =
-        std::get<pci::ApplicationConfig>(defaults).raster;
-    CHECK(standard.cpuCacheMebibytes == pci::defaultRasterCpuCacheMebibytes);
-    CHECK(standard.gpuCacheMebibytes == pci::defaultRasterGpuCacheMebibytes);
-    CHECK(standard.gdalCacheMebibytes == pci::defaultGdalCacheMebibytes);
-    CHECK(standard.readWorkers == pci::defaultRasterReadWorkers);
-
-    const auto explicitly = parse({QStringLiteral("--raster-cpu-cache-mb=64"),
-                                   QStringLiteral("--raster-gpu-cache-mb=32"),
-                                   QStringLiteral("--gdal-cache-mb=16"),
-                                   QStringLiteral("--raster-workers=4")});
-    REQUIRE(std::holds_alternative<pci::ApplicationConfig>(explicitly));
-    const pci::RasterPerformanceSettings &chosen =
-        std::get<pci::ApplicationConfig>(explicitly).raster;
-    CHECK(chosen.cpuCacheMebibytes == 64);
-    CHECK(chosen.gpuCacheMebibytes == 32);
-    CHECK(chosen.gdalCacheMebibytes == 16);
-    CHECK(chosen.readWorkers == 4);
-
-    // Below the working minima, and above the worker ceiling, are rejected
-    // rather than silently clamped: a command line is an explicit request.
-    for (const QString &bad : {QStringLiteral("--raster-cpu-cache-mb=1"),
-                               QStringLiteral("--raster-gpu-cache-mb=0"),
-                               QStringLiteral("--gdal-cache-mb=0"),
-                               QStringLiteral("--raster-workers=99")}) {
-        CHECK(std::holds_alternative<pci::ConfigEarlyExit>(parse({bad})));
-    }
+    const pci::ApplicationConfig config =
+        configFor({QStringLiteral("pcinspector")});
+    CHECK(config.raster.cpuCacheMebibytes ==
+          pci::defaultRasterCpuCacheMebibytes);
+    CHECK(config.raster.gpuCacheMebibytes ==
+          pci::defaultRasterGpuCacheMebibytes);
+    CHECK(config.raster.gdalCacheMebibytes == pci::defaultGdalCacheMebibytes);
+    CHECK(config.raster.readWorkers == pci::defaultRasterReadWorkers);
 }
 
 TEST_CASE("raster budget clamping keeps every value usable",

@@ -554,7 +554,6 @@ if(PCINSPECTOR_ENABLE_GPU_TESTS)
                         --smoke-test
                         --graphics-api ${PCINSPECTOR_GPU_TEST_GRAPHICS_API}
                         $<$<BOOL:${PCINSPECTOR_GPU_TEST_VALIDATION}>:--gpu-validation>
-                        --max-points 8
                         "${PCINSPECTOR_TEST_DATA_DIR}/${point_file}")
         set_tests_properties("renderer_smoke_${smoke_name}" PROPERTIES
                 FIXTURES_REQUIRED pdal_point_files

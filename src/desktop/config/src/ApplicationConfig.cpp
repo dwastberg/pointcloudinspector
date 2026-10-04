@@ -9,8 +9,6 @@
 #include <QCoreApplication>
 
 #include <algorithm>
-#include <array>
-#include <limits>
 #include <utility>
 
 namespace pci {
@@ -34,7 +32,10 @@ ApplicationInvocation parseApplicationInvocation(const QStringList &arguments)
     QCommandLineParser parser;
     parser.setApplicationDescription(
         QStringLiteral("Cross-platform point-cloud inspector"));
-    const QCommandLineOption helpOption = parser.addHelpOption();
+    const QCommandLineOption helpOption(
+        QStringList{QStringLiteral("h"), QStringLiteral("help")},
+        QStringLiteral("Show command-line help."));
+    parser.addOption(helpOption);
     const QCommandLineOption versionOption = parser.addVersionOption();
     parser.addPositionalArgument(
         QStringLiteral("files"),
@@ -49,48 +50,6 @@ ApplicationInvocation parseApplicationInvocation(const QStringList &arguments)
     const QCommandLineOption smokeOption(
         QStringLiteral("smoke-test"),
         QStringLiteral("Exit after three rendered frames."));
-    const QCommandLineOption maximumPointsOption(
-        QStringLiteral("max-points"),
-        QStringLiteral(
-            "Maximum points retained for a non-paged point-cloud source. "
-            "Paged and hierarchical sources retain all points."),
-        QStringLiteral("count"),
-        QStringLiteral("10000000"));
-    const QCommandLineOption cpuCacheOption(
-        QStringLiteral("cpu-cache-mb"),
-        QStringLiteral(
-            "Total resident point-payload budget shared by flat previews and "
-            "hierarchical decoded pages, in MiB, or 'auto'."),
-        QStringLiteral("MiB|auto"),
-        QStringLiteral("auto"));
-    const QCommandLineOption gpuCacheOption(
-        QStringLiteral("gpu-cache-mb"),
-        QStringLiteral("GPU point-buffer residency budget, in MiB."),
-        QStringLiteral("MiB"),
-        QStringLiteral("512"));
-    const QCommandLineOption rasterCpuCacheOption(
-        QStringLiteral("raster-cpu-cache-mb"),
-        QStringLiteral("Decoded raster tile budget, in MiB. Separate from the "
-                       "point caches."),
-        QStringLiteral("MiB"),
-        QString::number(defaultRasterCpuCacheMebibytes));
-    const QCommandLineOption rasterGpuCacheOption(
-        QStringLiteral("raster-gpu-cache-mb"),
-        QStringLiteral("Raster tile texture budget, in MiB. Separate from the "
-                       "point caches."),
-        QStringLiteral("MiB"),
-        QString::number(defaultRasterGpuCacheMebibytes));
-    const QCommandLineOption gdalCacheOption(
-        QStringLiteral("gdal-cache-mb"),
-        QStringLiteral("GDAL block cache, in MiB. Process-global and invisible "
-                       "to the application's own accounting."),
-        QStringLiteral("MiB"),
-        QString::number(defaultGdalCacheMebibytes));
-    const QCommandLineOption rasterWorkersOption(
-        QStringLiteral("raster-workers"),
-        QStringLiteral("Raster tile read workers. Applies after restart."),
-        QStringLiteral("count"),
-        QString::number(defaultRasterReadWorkers));
     const QCommandLineOption graphicsApiOption(
         QStringLiteral("graphics-api"),
         QStringLiteral(
@@ -119,13 +78,6 @@ ApplicationInvocation parseApplicationInvocation(const QStringList &arguments)
 #endif
     parser.addOption(pointsOption);
     parser.addOption(smokeOption);
-    parser.addOption(maximumPointsOption);
-    parser.addOption(cpuCacheOption);
-    parser.addOption(gpuCacheOption);
-    parser.addOption(rasterCpuCacheOption);
-    parser.addOption(rasterGpuCacheOption);
-    parser.addOption(gdalCacheOption);
-    parser.addOption(rasterWorkersOption);
     parser.addOption(graphicsApiOption);
     parser.addOption(gdalCapabilitiesOption);
 #ifdef PCINSPECTOR_ENABLE_DIAGNOSTIC_UI
@@ -144,7 +96,7 @@ ApplicationInvocation parseApplicationInvocation(const QStringList &arguments)
                 QCoreApplication::applicationVersion()),
         };
     }
-    if (parser.isSet(helpOption) || parser.isSet(QStringLiteral("help-all"))) {
+    if (parser.isSet(helpOption)) {
         return ConfigEarlyExit{.message = parser.helpText()};
     }
 
@@ -158,76 +110,6 @@ ApplicationInvocation parseApplicationInvocation(const QStringList &arguments)
         }
         config.syntheticPointCount = pointCount;
     }
-    const auto maximumPoints =
-        parsePointCount(parser.value(maximumPointsOption).toStdString());
-    if (!maximumPoints) {
-        return error(
-            QStringLiteral("--max-points must be a positive 64-bit integer"));
-    }
-    config.maximumLoadPoints = *maximumPoints;
-
-    const std::uint64_t maximumMiB =
-        std::numeric_limits<std::uint64_t>::max() / bytesPerMiB;
-    const auto cpuCache =
-        parseMemoryBudgetOption(parser.value(cpuCacheOption).toStdString());
-    if (!cpuCache ||
-        (!cpuCache->automatic && cpuCache->mebibytes > maximumMiB)) {
-        return error(
-            QStringLiteral("--cpu-cache-mb must be 'auto' or a positive "
-                           "byte-representable integer"));
-    }
-    config.cpuBudget = *cpuCache;
-    const auto gpuCache =
-        parsePointCount(parser.value(gpuCacheOption).toStdString());
-    if (!gpuCache || *gpuCache > maximumMiB) {
-        return error(QStringLiteral(
-            "--gpu-cache-mb must be a positive byte-representable integer"));
-    }
-    config.gpuByteBudget = *gpuCache * bytesPerMiB;
-
-    // Every raster budget is validated before any byte conversion, so a value
-    // that would overflow the multiplication is rejected rather than wrapped.
-    struct RasterOption {
-        const QCommandLineOption &option;
-        const char *name;
-        std::uint64_t minimum;
-        std::uint64_t *target;
-    };
-    std::uint64_t rasterWorkers = config.raster.readWorkers;
-    const std::array<RasterOption, 4> rasterOptions{
-        RasterOption{rasterCpuCacheOption,
-                     "--raster-cpu-cache-mb",
-                     minimumRasterCpuCacheMebibytes,
-                     &config.raster.cpuCacheMebibytes},
-        RasterOption{rasterGpuCacheOption,
-                     "--raster-gpu-cache-mb",
-                     minimumRasterGpuCacheMebibytes,
-                     &config.raster.gpuCacheMebibytes},
-        RasterOption{gdalCacheOption,
-                     "--gdal-cache-mb",
-                     minimumGdalCacheMebibytes,
-                     &config.raster.gdalCacheMebibytes},
-        RasterOption{rasterWorkersOption,
-                     "--raster-workers",
-                     minimumRasterReadWorkers,
-                     &rasterWorkers},
-    };
-    for (const RasterOption &entry : rasterOptions) {
-        const bool workers = entry.target == &rasterWorkers;
-        const std::uint64_t ceiling =
-            workers ? maximumRasterReadWorkers : maximumMiB;
-        const auto parsed =
-            parsePointCount(parser.value(entry.option).toStdString());
-        if (!parsed || *parsed < entry.minimum || *parsed > ceiling) {
-            return error(QStringLiteral("%1 must be between %2 and %3")
-                             .arg(QString::fromLatin1(entry.name))
-                             .arg(entry.minimum)
-                             .arg(ceiling));
-        }
-        *entry.target = *parsed;
-    }
-    config.raster.readWorkers = static_cast<std::uint32_t>(rasterWorkers);
-
     const auto graphicsApi =
         parseGraphicsApi(parser.value(graphicsApiOption).toStdString());
     if (!graphicsApi) {
