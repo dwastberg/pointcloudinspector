@@ -2,7 +2,13 @@
 
 #include <filesystem>
 
+class OGRLayer;
+class OGRGeometry;
+
 namespace pci::test {
+
+// Copies geometry into a feature and reports fixture setup failures.
+void writeOgrFixtureFeature(OGRLayer *layer, const OGRGeometry &geometry);
 
 struct OgrFixturePaths {
     std::filesystem::path geoJson;

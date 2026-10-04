@@ -15,11 +15,14 @@
 
 namespace {
 
-const std::filesystem::path fixtures{PCI_QUALIFICATION_FIXTURE_DIR};
+std::filesystem::path fixturePath(const char *name)
+{
+    return std::filesystem::path{PCI_QUALIFICATION_FIXTURE_DIR} / name;
+}
 
 QJsonObject nativeReport()
 {
-    QFile file(pci::pathToQString(fixtures / "native.json"));
+    QFile file(pci::pathToQString(fixturePath("native.json")));
     REQUIRE(file.open(QIODevice::ReadOnly));
     const auto document = QJsonDocument::fromJson(file.readAll());
     REQUIRE(document.isObject());
@@ -42,9 +45,9 @@ void checkCandidate(const QJsonObject &candidate,
     std::ostringstream output;
     std::ostringstream errors;
     const auto result =
-        pci::qualification::compareReports(fixtures / "native.json",
+        pci::qualification::compareReports(fixturePath("native.json"),
                                            pci::qStringToPath(path),
-                                           fixtures / "tolerances.json",
+                                           fixturePath("tolerances.json"),
                                            output,
                                            errors);
     INFO(output.str());
@@ -64,9 +67,9 @@ TEST_CASE("Qualification accepts identical supported reports",
     std::ostringstream output;
     std::ostringstream errors;
     const auto result =
-        pci::qualification::compareReports(fixtures / report,
-                                           fixtures / report,
-                                           fixtures / "tolerances.json",
+        pci::qualification::compareReports(fixturePath(report),
+                                           fixturePath(report),
+                                           fixturePath("tolerances.json"),
                                            output,
                                            errors);
     INFO(errors.str());

@@ -14,6 +14,25 @@ namespace {
 
 using namespace std::chrono_literals;
 
+// Declare after the scheduler (and after any joining thread). Captured state
+// must be declared before the scheduler so it survives worker shutdown.
+class ReleaseOnExit final {
+public:
+    explicit ReleaseOnExit(std::atomic_bool &release)
+        : release_(release)
+    {
+    }
+    ~ReleaseOnExit()
+    {
+        release_.store(true);
+    }
+    ReleaseOnExit(const ReleaseOnExit &) = delete;
+    ReleaseOnExit &operator=(const ReleaseOnExit &) = delete;
+
+private:
+    std::atomic_bool &release_;
+};
+
 bool waitUntil(const auto &predicate)
 {
     const auto deadline = std::chrono::steady_clock::now() + 1s;
@@ -26,10 +45,11 @@ bool waitUntil(const auto &predicate)
 TEST_CASE("task scheduler bounds workers and active byte permits",
           "[unit][scheduler][concurrency][residency]")
 {
-    pci::TaskScheduler scheduler(3, 100);
     std::atomic<int> active = 0;
     std::atomic<int> peakActive = 0;
     std::atomic<bool> release = false;
+    pci::TaskScheduler scheduler(3, 100);
+    const ReleaseOnExit releaseOnExit(release);
     const auto task = [&] {
         const int now = ++active;
         int peak = peakActive.load();
@@ -64,9 +84,16 @@ TEST_CASE("task scheduler bounds workers and active byte permits",
 TEST_CASE("task scheduler rotates equal-priority source groups",
           "[unit][scheduler][fairness][residency]")
 {
-    pci::TaskScheduler scheduler(1, 100);
     std::atomic<bool> blockerActive = false;
     std::atomic<bool> releaseBlocker = false;
+    std::mutex orderMutex;
+    std::vector<std::uint64_t> order;
+    const auto record = [&](const std::uint64_t group) {
+        const std::scoped_lock lock(orderMutex);
+        order.push_back(group);
+    };
+    pci::TaskScheduler scheduler(1, 100);
+    const ReleaseOnExit releaseOnExit(releaseBlocker);
     static_cast<void>(scheduler.submit(
         pci::TaskPriority::Inspection,
         1,
@@ -82,12 +109,6 @@ TEST_CASE("task scheduler rotates equal-priority source groups",
         return blockerActive.load();
     }));
 
-    std::mutex orderMutex;
-    std::vector<std::uint64_t> order;
-    const auto record = [&](const std::uint64_t group) {
-        const std::scoped_lock lock(orderMutex);
-        order.push_back(group);
-    };
     for (int request = 0; request < 3; ++request) {
         static_cast<void>(scheduler.submit(
             pci::TaskPriority::VisibleCoverage,
@@ -119,11 +140,12 @@ TEST_CASE("task scheduler rotates equal-priority source groups",
 TEST_CASE("queued tasks can be promoted without replacement",
           "[unit][scheduler][priority][recovery]")
 {
-    pci::TaskScheduler scheduler(1, 10);
     std::atomic_bool release = false;
     std::atomic_bool active = false;
     std::mutex orderMutex;
     std::vector<int> order;
+    pci::TaskScheduler scheduler(1, 10);
+    const ReleaseOnExit releaseOnExit(release);
     static_cast<void>(
         scheduler.submit(pci::TaskPriority::VisibleCoverage, 1, [&] {
             active = true;
@@ -155,12 +177,13 @@ TEST_CASE("queued tasks can be promoted without replacement",
 TEST_CASE("task scheduler prioritizes queued work and cancels by id",
           "[unit][scheduler][priority][cancellation]")
 {
-    pci::TaskScheduler scheduler(1, 10);
     std::atomic_bool blockerActive = false;
     std::atomic_bool releaseBlocker = false;
     std::atomic_int cancellationCallbacks = 0;
     std::mutex orderMutex;
     std::vector<int> order;
+    pci::TaskScheduler scheduler(1, 10);
+    const ReleaseOnExit releaseOnExit(releaseBlocker);
 
     static_cast<void>(scheduler.submit(pci::TaskPriority::Inspection, 1, [&] {
         blockerActive = true;
@@ -211,8 +234,8 @@ TEST_CASE("task scheduler prioritizes queued work and cancels by id",
 TEST_CASE("task scheduler contains task exceptions",
           "[unit][scheduler][exceptions]")
 {
-    pci::TaskScheduler scheduler(1, 10);
     std::atomic_int completedAfterFailure = 0;
+    pci::TaskScheduler scheduler(1, 10);
 
     static_cast<void>(scheduler.submit(pci::TaskPriority::Import, 1, [] {
         throw std::runtime_error("expected scheduler test failure");
@@ -231,11 +254,12 @@ TEST_CASE("task scheduler contains task exceptions",
 TEST_CASE("task scheduler shutdown cancels queued work and joins workers",
           "[unit][scheduler][shutdown][cancellation]")
 {
-    auto scheduler = std::make_unique<pci::TaskScheduler>(1, 10);
     std::atomic_bool blockerActive = false;
     std::atomic_bool releaseBlocker = false;
     std::atomic_bool shutdownComplete = false;
     std::atomic_int cancellationCallbacks = 0;
+    auto scheduler = std::make_unique<pci::TaskScheduler>(1, 10);
+    const ReleaseOnExit releaseOnExit(releaseBlocker);
 
     static_cast<void>(scheduler->submit(pci::TaskPriority::Inspection, 1, [&] {
         blockerActive = true;
@@ -261,6 +285,7 @@ TEST_CASE("task scheduler shutdown cancels queued work and joins workers",
         scheduler.reset();
         shutdownComplete = true;
     });
+    const ReleaseOnExit releaseBeforeJoin(releaseBlocker);
     REQUIRE(waitUntil([&] {
         return cancellationCallbacks.load() == 2;
     }));
@@ -269,6 +294,46 @@ TEST_CASE("task scheduler shutdown cancels queued work and joins workers",
     releaseBlocker = true;
     shutdown.join();
     CHECK(shutdownComplete.load());
+}
+
+TEST_CASE("scheduler test cleanup releases workers during unwinding",
+          "[unit][scheduler][exceptions]")
+{
+    std::atomic_bool active = false;
+    std::atomic_bool release = false;
+    std::atomic_bool completed = false;
+    bool shutdownStarted = false;
+    SECTION("scheduler destruction") {}
+    SECTION("shutdown thread destruction")
+    {
+        shutdownStarted = true;
+    }
+
+    const auto failWhileBlocked = [&] {
+        auto scheduler = std::make_unique<pci::TaskScheduler>(1, 10);
+        const ReleaseOnExit releaseOnExit(release);
+        static_cast<void>(
+            scheduler->submit(pci::TaskPriority::Inspection, 1, [&] {
+                active = true;
+                while (!release.load()) {
+                    std::this_thread::yield();
+                }
+                completed = true;
+            }));
+        REQUIRE(waitUntil([&] {
+            return active.load();
+        }));
+        if (shutdownStarted) {
+            std::jthread shutdown([&] {
+                scheduler.reset();
+            });
+            const ReleaseOnExit releaseBeforeJoin(release);
+            throw std::runtime_error("expected test failure");
+        }
+        throw std::runtime_error("expected test failure");
+    };
+    REQUIRE_THROWS_AS(failWhileBlocked(), std::runtime_error);
+    CHECK(completed.load());
 }
 
 } // namespace

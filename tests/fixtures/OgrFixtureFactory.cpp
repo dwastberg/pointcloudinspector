@@ -1,4 +1,5 @@
 #include "fixtures/OgrFixtureFactory.h"
+#include <pci/adapters/gdal/runtime/GdalRuntime.h>
 
 #include <gdal_priv.h>
 #include <ogrsf_frmts.h>
@@ -7,63 +8,69 @@
 #include <stdexcept>
 
 namespace pci::test {
-namespace {
-
-void addFeature(OGRLayer *layer, OGRGeometry *geometry)
+void writeOgrFixtureFeature(OGRLayer *layer, const OGRGeometry &geometry)
 {
     if (!layer)
         throw std::runtime_error("could not create OGR fixture layer");
-    OGRFeature *feature = OGRFeature::CreateFeature(layer->GetLayerDefn());
-    feature->SetGeometryDirectly(geometry);
-    if (layer->CreateFeature(feature) != OGRERR_NONE) {
-        OGRFeature::DestroyFeature(feature);
+    const std::unique_ptr<OGRFeature, decltype(&OGRFeature::DestroyFeature)>
+        feature{OGRFeature::CreateFeature(layer->GetLayerDefn()),
+                &OGRFeature::DestroyFeature};
+    if (!feature || feature->SetGeometry(&geometry) != OGRERR_NONE)
+        throw std::runtime_error(
+            "could not create OGR fixture feature geometry");
+    if (layer->CreateFeature(feature.get()) != OGRERR_NONE)
         throw std::runtime_error("could not write OGR fixture feature");
-    }
-    OGRFeature::DestroyFeature(feature);
 }
+
+namespace {
 
 void addGpkgLayers(GDALDataset *dataset, OGRSpatialReference &srs)
 {
     OGRLayer *controls =
         dataset->CreateLayer("controls", &srs, wkbPoint, nullptr);
-    addFeature(controls, new OGRPoint(674000.0, 6580000.0));
+    pci::test::writeOgrFixtureFeature(controls, OGRPoint(674000.0, 6580000.0));
 
     OGRLayer *roads =
         dataset->CreateLayer("roads", &srs, wkbCircularString, nullptr);
-    auto *road = new OGRCircularString();
-    road->addPoint(674000.0, 6580000.0);
-    road->addPoint(674050.0, 6580100.0);
-    road->addPoint(674100.0, 6580000.0);
-    addFeature(roads, road);
+    OGRCircularString road;
+    road.addPoint(674000.0, 6580000.0);
+    road.addPoint(674050.0, 6580100.0);
+    road.addPoint(674100.0, 6580000.0);
+    pci::test::writeOgrFixtureFeature(roads, road);
 
     OGRLayer *parcels =
         dataset->CreateLayer("parcels", &srs, wkbPolygon, nullptr);
-    auto *parcel = new OGRPolygon();
+    OGRPolygon parcel;
     OGRLinearRing exterior;
     exterior.addPoint(674000.0, 6580000.0);
     exterior.addPoint(674100.0, 6580000.0);
     exterior.addPoint(674100.0, 6580100.0);
     exterior.addPoint(674000.0, 6580100.0);
     exterior.addPoint(674000.0, 6580000.0);
-    parcel->addRing(&exterior);
+    if (parcel.addRing(&exterior) != OGRERR_NONE)
+        throw std::runtime_error("could not add OGR fixture ring");
     OGRLinearRing hole;
     hole.addPoint(674020.0, 6580020.0);
     hole.addPoint(674020.0, 6580080.0);
     hole.addPoint(674080.0, 6580080.0);
     hole.addPoint(674080.0, 6580020.0);
     hole.addPoint(674020.0, 6580020.0);
-    parcel->addRing(&hole);
-    addFeature(parcels, parcel);
+    if (parcel.addRing(&hole) != OGRERR_NONE)
+        throw std::runtime_error("could not add OGR fixture ring");
+    pci::test::writeOgrFixtureFeature(parcels, parcel);
 
     OGRLayer *survey =
         dataset->CreateLayer("survey", &srs, wkbGeometryCollection25D, nullptr);
-    auto *collection = new OGRGeometryCollection();
-    collection->addGeometryDirectly(new OGRPoint(674025.0, 6580025.0, 7.0));
-    auto *surveyLine = new OGRLineString();
-    surveyLine->addPoint(674010.0, 6580010.0);
-    surveyLine->addPoint(674090.0, 6580090.0);
-    collection->addGeometryDirectly(surveyLine);
-    addFeature(survey, collection);
+    OGRGeometryCollection collection;
+    const OGRPoint point(674025.0, 6580025.0, 7.0);
+    if (collection.addGeometry(&point) != OGRERR_NONE)
+        throw std::runtime_error("could not add OGR fixture point");
+    OGRLineString surveyLine;
+    surveyLine.addPoint(674010.0, 6580010.0);
+    surveyLine.addPoint(674090.0, 6580090.0);
+    if (collection.addGeometry(&surveyLine) != OGRERR_NONE)
+        throw std::runtime_error("could not add OGR fixture line");
+    pci::test::writeOgrFixtureFeature(survey, collection);
 }
 
 } // namespace
@@ -86,22 +93,16 @@ OgrFixturePaths writeOgrFixtures(const std::filesystem::path &directory)
     GDALDriver *driver = GetGDALDriverManager()->GetDriverByName("GPKG");
     if (!driver)
         throw std::runtime_error("GPKG GDAL driver is unavailable");
-    GDALDataset *dataset = driver->Create(
-        paths.geoPackage.string().c_str(), 0, 0, 0, GDT_Unknown, nullptr);
+    const GdalDatasetPtr dataset{driver->Create(
+        paths.geoPackage.string().c_str(), 0, 0, 0, GDT_Unknown, nullptr)};
     if (!dataset)
         throw std::runtime_error("could not create GPKG fixture");
-    try {
-        OGRSpatialReference srs;
-        if (srs.importFromEPSG(3006) != OGRERR_NONE) {
-            throw std::runtime_error("could not create EPSG:3006 fixture CRS");
-        }
-        srs.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
-        addGpkgLayers(dataset, srs);
-    } catch (...) {
-        GDALClose(dataset);
-        throw;
+    OGRSpatialReference srs;
+    if (srs.importFromEPSG(3006) != OGRERR_NONE) {
+        throw std::runtime_error("could not create EPSG:3006 fixture CRS");
     }
-    GDALClose(dataset);
+    srs.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+    addGpkgLayers(dataset.get(), srs);
     return paths;
 }
 

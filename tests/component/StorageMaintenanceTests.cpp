@@ -325,18 +325,47 @@ TEST_CASE("storage coordination waits are cancellable",
 {
     StorageFixture f;
     f.add(f.locations.pointCache, f.key() + ".pcipages", 16);
-    const pci::StorageDirectoryGuard gate(f.locations.pointCache);
     std::stop_source stop;
     stop.request_stop();
-    auto future = std::async(std::launch::async, [&] {
-        return f.provider->run(
-            pci::StorageMaintenanceAction::CleanUnused, stop.get_token(), {});
-    });
-    REQUIRE(future.wait_for(std::chrono::seconds(2)) ==
-            std::future_status::ready);
+    std::future<pci::StorageMaintenanceResult> future;
+    std::future_status status;
+    {
+        const pci::StorageDirectoryGuard gate(f.locations.pointCache);
+        future = std::async(std::launch::async, [&] {
+            return f.provider->run(pci::StorageMaintenanceAction::CleanUnused,
+                                   stop.get_token(),
+                                   {});
+        });
+        status = future.wait_for(std::chrono::seconds(2));
+    } // Release the gate before an assertion can unwind and join the future.
+    REQUIRE(status == std::future_status::ready);
     CHECK(future.get().cancelled);
     CHECK(std::filesystem::exists(f.locations.pointCache /
                                   (f.key() + ".pcipages")));
+}
+
+TEST_CASE("storage wait cleanup releases the gate before joining",
+          "[storage][maintenance]")
+{
+    StorageFixture f;
+    std::promise<void> started;
+    auto ready = started.get_future();
+    std::future<void> future;
+    std::future_status status;
+    {
+        const pci::StorageDirectoryGuard gate(f.locations.pointCache);
+        future = std::async(std::launch::async, [&] {
+            started.set_value();
+            const pci::StorageDirectoryGuard workerGate(f.locations.pointCache);
+        });
+        REQUIRE(ready.wait_for(std::chrono::seconds(2)) ==
+                std::future_status::ready);
+        status = future.wait_for(std::chrono::milliseconds(10));
+    }
+    CHECK(status == std::future_status::timeout);
+    REQUIRE(future.wait_for(std::chrono::seconds(2)) ==
+            std::future_status::ready);
+    future.get();
 }
 
 TEST_CASE("cleanup rechecks leases and build locks after an earlier scan",

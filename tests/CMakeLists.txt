@@ -142,7 +142,8 @@ pci_add_catch_test_target(pcinspector_render_telemetry_tests
 pci_add_catch_test_target(pcinspector_tasking_tests
         WITH_MAIN
         SOURCES unit/TaskSchedulerTests.cpp
-        LIBRARIES pcinspector::tasking)
+        LIBRARIES pcinspector::tasking
+        PROPERTIES TIMEOUT 60)
 
 pci_add_catch_test_target(pcinspector_runtime_resources_tests
         WITH_MAIN
@@ -170,7 +171,8 @@ pci_add_catch_test_target(pcinspector_storage_maintenance_tests
         LIBRARIES pcinspector::operation_local
         pcinspector::secure_storage
         pcinspector::platform
-        Qt6::Core)
+        Qt6::Core
+        PROPERTIES TIMEOUT 60)
 
 add_executable(pcinspector_storage_lease_probe support/StorageLeaseProbe.cpp)
 target_link_libraries(pcinspector_storage_lease_probe PRIVATE pcinspector::secure_storage pcinspector::platform Qt6::Core)
