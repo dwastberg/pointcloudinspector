@@ -1,9 +1,9 @@
-#include "app/DiagnosticsDock.h"
-#include "app/LayerInspectorDock.h"
-#include "app/SceneLayersDock.h"
-#include "app/TaskDock.h"
-#include "app/WorkspaceSettings.h"
 #include "support/TestPointColorMaps.h"
+#include <pci/desktop/ui/DiagnosticsDock.h>
+#include <pci/desktop/ui/LayerInspectorDock.h>
+#include <pci/desktop/ui/SceneLayersDock.h>
+#include <pci/desktop/ui/TaskDock.h>
+#include <pci/desktop/ui/WorkspaceSettings.h>
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -34,9 +34,9 @@
 
 namespace {
 
-pci::PointCloudLayer pointLayer(const std::uint64_t id,
-                                const char *path,
-                                const pci::PointColorMode colorMode)
+pci::PointCloudLayerSnapshot pointLayer(const std::uint64_t id,
+                                        const char *path,
+                                        const pci::PointColorMode colorMode)
 {
     pci::PointCloudMetadata metadata;
     metadata.sourcePath = path;
@@ -46,14 +46,21 @@ pci::PointCloudLayer pointLayer(const std::uint64_t id,
     metadata.hasIntensity = true;
     return {
         .id = pci::SceneLayerId{id},
-        .scene = std::make_shared<pci::PointCloudScene>(metadata),
         .colorMode = colorMode,
+        .descriptor =
+            {
+                .sourceId = pci::PointCloudSourceId{id},
+                .metadata = metadata,
+            },
+        .availableBounds = metadata.sourceBounds,
+        .availablePointCount = metadata.sourcePointCount,
+        .colorizeAvailability = pci::PointColorizeAvailability::Ready,
     };
 }
 
-pci::VectorLayer vectorLayer(const std::uint64_t id,
-                             const char *name,
-                             const bool disjoint = false)
+pci::VectorLayerSnapshot vectorLayer(const std::uint64_t id,
+                                     const char *name,
+                                     const bool disjoint = false)
 {
     auto data = std::make_shared<pci::VectorLayerData>();
     data->sublayerName = name;
@@ -67,34 +74,39 @@ pci::VectorLayer vectorLayer(const std::uint64_t id,
 }
 
 pci::SceneDocumentSnapshotPtr
-makeSnapshot(const std::vector<pci::PointCloudLayer> &points,
-             const std::vector<pci::VectorLayer> &vectors,
+makeSnapshot(const std::vector<pci::PointCloudLayerSnapshot> &points,
+             const std::vector<pci::VectorLayerSnapshot> &vectors,
              const std::vector<pci::SceneLayerId> &order)
 {
     auto snapshot = std::make_shared<pci::SceneDocumentSnapshot>();
     for (const pci::SceneLayerId id : order) {
         const auto point =
-            std::ranges::find(points, id, &pci::PointCloudLayer::id);
+            std::ranges::find(points, id, &pci::PointCloudLayerSnapshot::id);
         if (point != points.end()) {
             snapshot->layers.push_back({
                 .id = id,
                 .visible = point->visible,
                 .payload =
-                    pci::PointCloudLayerState{
-                        .scene = point->scene,
+                    pci::PointCloudLayerSnapshotState{
                         .colorMode = point->colorMode,
                         .classificationFilter = point->classificationFilter,
+                        .descriptor = point->descriptor,
+                        .availableBounds = point->availableBounds,
+                        .availablePointCount = point->availablePointCount,
+                        .colorizeAvailability = point->colorizeAvailability,
+                        .scalarRanges = point->scalarRanges,
+                        .presentClassifications = point->presentClassifications,
                     },
             });
         } else {
             const auto vector =
-                std::ranges::find(vectors, id, &pci::VectorLayer::id);
+                std::ranges::find(vectors, id, &pci::VectorLayerSnapshot::id);
             REQUIRE(vector != vectors.end());
             snapshot->layers.push_back({
                 .id = id,
                 .visible = vector->visible,
                 .payload =
-                    pci::VectorLayerState{
+                    pci::VectorLayerSnapshotState{
                         .data = vector->data,
                         .style = vector->style,
                     },
@@ -155,12 +167,12 @@ TEST_CASE("layer editor follows stable ids through reorder and removal",
     pci::SceneLayersDock panel;
     pci::LayerInspectorDock inspector(
         nullptr, pci::test::createTestPointColorMapCatalog());
-    const pci::PointCloudLayer rgb =
+    const pci::PointCloudLayerSnapshot rgb =
         pointLayer(11,
                    "rgb.las",
                    {.source = pci::PointColorSource::Rgb,
                     .colorMap = pci::PointColorMap::Rgb});
-    const pci::PointCloudLayer intensity =
+    const pci::PointCloudLayerSnapshot intensity =
         pointLayer(22,
                    "intensity.las",
                    {.source = pci::PointColorSource::Intensity,
@@ -207,12 +219,12 @@ TEST_CASE("layer and inspector edits route the selected id after reordering",
     pci::SceneLayersDock panel;
     pci::LayerInspectorDock inspector(
         nullptr, pci::test::createTestPointColorMapCatalog());
-    const pci::PointCloudLayer first =
+    const pci::PointCloudLayerSnapshot first =
         pointLayer(101,
                    "first.las",
                    {.source = pci::PointColorSource::Rgb,
                     .colorMap = pci::PointColorMap::Rgb});
-    const pci::PointCloudLayer second =
+    const pci::PointCloudLayerSnapshot second =
         pointLayer(202,
                    "second.las",
                    {.source = pci::PointColorSource::Intensity,
@@ -267,12 +279,12 @@ TEST_CASE("point and vector context menus retain kind-specific actions",
           "[ui][layers][context-menu][characterization]")
 {
     pci::SceneLayersDock panel;
-    const pci::PointCloudLayer points =
+    const pci::PointCloudLayerSnapshot points =
         pointLayer(3,
                    "points.las",
                    {.source = pci::PointColorSource::Rgb,
                     .colorMap = pci::PointColorMap::Rgb});
-    const pci::VectorLayer vector = vectorLayer(4, "Boundaries", true);
+    const pci::VectorLayerSnapshot vector = vectorLayer(4, "Boundaries", true);
     panel.setDocumentSnapshot(
         makeSnapshot({points}, {vector}, {points.id, vector.id}));
     panel.resize(360, 420);
@@ -355,29 +367,6 @@ TEST_CASE("layer panel sibling docks preserve names defaults and layout",
 
 namespace {
 
-class InspectorRasterSource final : public pci::RasterTileSource {
-public:
-    explicit InspectorRasterSource(pci::RasterLayerMetadata metadata)
-        : metadata_(std::move(metadata))
-    {
-    }
-
-    [[nodiscard]] const pci::RasterLayerMetadata &
-    metadata() const noexcept override
-    {
-        return metadata_;
-    }
-
-    [[nodiscard]] pci::RasterTileData readTile(const pci::RasterTileRequest &,
-                                               std::stop_token) const override
-    {
-        throw pci::RasterReadError("the inspector fixture holds no pixels");
-    }
-
-private:
-    pci::RasterLayerMetadata metadata_;
-};
-
 [[nodiscard]] pci::SceneDocumentSnapshotPtr
 rasterInspectorSnapshot(const pci::RasterSampleKind kind,
                         const bool visible = true)
@@ -403,17 +392,20 @@ rasterInspectorSnapshot(const pci::RasterSampleKind kind,
     base.channelCount = 1;
     metadata.levels.push_back(base);
 
-    auto data = std::make_shared<pci::RasterLayerData>(pci::RasterLayerData{
-        .sourceId = pci::nextRasterSourceId(),
-        .source = std::make_shared<InspectorRasterSource>(std::move(metadata)),
-    });
     auto snapshot = std::make_shared<pci::SceneDocumentSnapshot>();
-    snapshot->layers.push_back(
-        {.id = pci::SceneLayerId{1},
-         .visible = visible,
-         .payload = pci::RasterLayerState{
-             .data = std::move(data),
-             .style = pci::RasterLayerStyle{.opacity = 0.6F, .zOffset = 7.5}}});
+    snapshot->layers.push_back({
+        .id = pci::SceneLayerId{1},
+        .visible = visible,
+        .payload =
+            pci::RasterLayerSnapshotState{
+                .style = pci::RasterLayerStyle{.opacity = 0.6F, .zOffset = 7.5},
+                .descriptor =
+                    {
+                        .sourceId = pci::RasterSourceId{1},
+                        .metadata = std::move(metadata),
+                    },
+            },
+    });
     return snapshot;
 }
 
@@ -525,10 +517,9 @@ TEST_CASE("layer inspector exposes true-elevation Surface controls",
         pci::RasterSurfaceCapability::Supported);
     pci::SceneDocumentSnapshotPtr snapshot =
         rasterInspectorSnapshot(pci::RasterSampleKind::ContinuousScalar);
-    auto &state = const_cast<pci::RasterLayerState &>(
-        std::get<pci::RasterLayerState>(snapshot->layers[0].payload));
-    auto &metadata =
-        const_cast<pci::RasterLayerMetadata &>(state.data->metadata());
+    auto &state = const_cast<pci::RasterLayerSnapshotState &>(
+        std::get<pci::RasterLayerSnapshotState>(snapshot->layers[0].payload));
+    auto &metadata = state.descriptor.metadata;
     metadata.elevation.available = true;
     metadata.elevation.band = 1;
     metadata.elevation.unit = "m";
@@ -592,9 +583,9 @@ TEST_CASE("layer inspector warns when a raster needs tiled rendering",
         nullptr, pci::test::createTestPointColorMapCatalog());
     pci::SceneDocumentSnapshotPtr snapshot =
         rasterInspectorSnapshot(pci::RasterSampleKind::ContinuousColor);
-    auto &state = std::get<pci::RasterLayerState>(snapshot->layers[0].payload);
-    const_cast<pci::RasterLayerMetadata &>(state.data->metadata())
-        .insufficientOverviews = true;
+    auto &state = const_cast<pci::RasterLayerSnapshotState &>(
+        std::get<pci::RasterLayerSnapshotState>(snapshot->layers[0].payload));
+    state.descriptor.metadata.insufficientOverviews = true;
     inspector.setDocumentSnapshot(snapshot, pci::SceneLayerId{1});
 
     auto *warning = inspector.findChild<QWidget *>(

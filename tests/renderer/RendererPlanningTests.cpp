@@ -1,7 +1,7 @@
-#include "renderer/planning/AdaptivePointBudget.h"
-#include "renderer/planning/FrameCamera.h"
-#include "renderer/planning/Measurement.h"
-#include "renderer/planning/PointSizePolicy.h"
+#include <pci/rendering/planning/AdaptivePointBudget.h>
+#include <pci/rendering/planning/FrameCamera.h>
+#include <pci/rendering/planning/Measurement.h>
+#include <pci/rendering/planning/PointSizePolicy.h>
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>

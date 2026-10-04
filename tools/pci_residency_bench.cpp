@@ -1,11 +1,13 @@
 // pci_residency_bench — exercise local hierarchical sources beyond cache
 // capacity and report cache, decoder, cancellation, and process-memory peaks.
 
-#include "app/ApplicationOptions.h"
-#include "import/PointCloudImport.h"
-#include "import/pdal/PdalPointCloudLoader.h"
-#include "platform/ProcessMemory.h"
-#include "scene/SceneDocument.h"
+#include <pci/adapters/pdal/PdalPointCloudLoader.h>
+#include <pci/adapters/platform/ProcessMemory.h>
+#include <pci/desktop/config/ApplicationOptions.h>
+#include <pci/document/SceneDocument.h>
+#include <pci/operations/PointCloudImport.h>
+#include <pci/operations/PointDatasetInstallation.h>
+#include <pci/runtime/scene/SceneRuntime.h>
 
 #include <algorithm>
 #include <array>
@@ -241,7 +243,7 @@ parsePositiveOption(const std::vector<std::string> &arguments,
 }
 
 [[nodiscard]] pci::PointCloudNodePayloadPtr
-waitForNode(const pci::PointCloudScenePtr &scene,
+waitForNode(const pci::PointDatasetRuntimePtr &scene,
             const pci::PointCloudNodeId id,
             const std::chrono::seconds timeout)
 {
@@ -251,6 +253,7 @@ waitForNode(const pci::PointCloudScenePtr &scene,
     std::uint64_t observedRevision = scene->revision();
     const auto deadline = Clock::now() + timeout;
     while (Clock::now() < deadline) {
+        scene->drainDecodeCompletions();
         const std::uint64_t revision = scene->revision();
         if (revision != observedRevision) {
             observedRevision = revision;
@@ -267,12 +270,13 @@ waitForNode(const pci::PointCloudScenePtr &scene,
     throw std::runtime_error("timed out waiting for hierarchy node");
 }
 
-[[nodiscard]] bool waitForMetric(const pci::PointCloudScenePtr &scene,
+[[nodiscard]] bool waitForMetric(const pci::PointDatasetRuntimePtr &scene,
                                  const std::chrono::seconds timeout,
                                  const auto &ready)
 {
     const auto deadline = Clock::now() + timeout;
     while (Clock::now() < deadline) {
+        scene->drainDecodeCompletions();
         if (ready(scene->hierarchyMetrics())) {
             return true;
         }
@@ -282,7 +286,7 @@ waitForNode(const pci::PointCloudScenePtr &scene,
 }
 
 [[nodiscard]] std::vector<StressNode>
-discoverNodes(const pci::PointCloudScenePtr &scene,
+discoverNodes(const pci::PointDatasetRuntimePtr &scene,
               const std::uint64_t targetCount,
               const std::chrono::seconds timeout,
               std::uint64_t &queryCount)
@@ -323,7 +327,7 @@ discoverNodes(const pci::PointCloudScenePtr &scene,
     return result;
 }
 
-void exerciseRevisits(const pci::PointCloudScenePtr &scene,
+void exerciseRevisits(const pci::PointDatasetRuntimePtr &scene,
                       const std::span<const StressNode> nodes,
                       const std::uint64_t passes,
                       const std::chrono::seconds timeout)
@@ -348,7 +352,7 @@ void exerciseRevisits(const pci::PointCloudScenePtr &scene,
 }
 
 void measureCancellation(StressResult &result,
-                         const pci::PointCloudScenePtr &scene,
+                         const pci::PointDatasetRuntimePtr &scene,
                          const std::span<const StressNode> nodes,
                          const std::chrono::seconds timeout)
 {
@@ -377,10 +381,12 @@ void measureCancellation(StressResult &result,
         return;
     }
 
-    const pci::PointCloudSceneMetrics before = scene->hierarchyMetrics();
+    const pci::PointDatasetRuntimeMetrics before = scene->hierarchyMetrics();
     scene->requestNodes(std::array{*evicted});
     const bool started = waitForMetric(
-        scene, timeout, [&before](const pci::PointCloudSceneMetrics &metrics) {
+        scene,
+        timeout,
+        [&before](const pci::PointDatasetRuntimeMetrics &metrics) {
             return metrics.decodeRequestsStarted > before.decodeRequestsStarted;
         });
     if (!started) {
@@ -389,13 +395,13 @@ void measureCancellation(StressResult &result,
     const auto cancellationStarted = Clock::now();
     scene->requestNodes(std::array{replacement});
     const auto observationTimeout = std::min(timeout, std::chrono::seconds(2));
-    result.cancellationObserved =
-        waitForMetric(scene,
-                      observationTimeout,
-                      [&before](const pci::PointCloudSceneMetrics &metrics) {
-                          return metrics.decodeRequestsCancelled >
-                                 before.decodeRequestsCancelled;
-                      });
+    result.cancellationObserved = waitForMetric(
+        scene,
+        observationTimeout,
+        [&before](const pci::PointDatasetRuntimeMetrics &metrics) {
+            return metrics.decodeRequestsCancelled >
+                   before.decodeRequestsCancelled;
+        });
     result.cancellationMilliseconds = std::chrono::duration_cast<Milliseconds>(
                                           Clock::now() - cancellationStarted)
                                           .count();
@@ -412,7 +418,8 @@ void measureCancellation(StressResult &result,
     ResidentMemorySampler memory;
     result.processBaselineBytes = memory.baseline();
 
-    auto document = std::make_shared<pci::SceneDocument>(result.cacheBudget, 1);
+    pci::SceneRuntime runtime(result.cacheBudget, 1);
+    auto document = std::make_shared<pci::SceneDocument>();
     const auto loadStarted = Clock::now();
     const pci::PointCloudLoadOptions loadOptions{
         .sourcePath = path,
@@ -421,7 +428,7 @@ void measureCancellation(StressResult &result,
     };
     const pci::PointCloudLoadResources loadResources{
         .decodedByteBudget = result.cacheBudget,
-        .residency = document->residencyCoordinator(),
+        .residency = runtime.residencyCoordinator(),
         .memoryBudget = {},
         .flatReservation = {},
     };
@@ -429,12 +436,25 @@ void measureCancellation(StressResult &result,
     const pci::PdalPointCloudLoader loader;
     const pci::PointCloudImportPreflight preflight = loader.inspect(
         loadOptions, loadResources.decodedByteBudget, loadContext.stopToken);
-    pci::PointCloudScenePtr scene =
-        loader.load(loadOptions, loadResources, preflight, loadContext);
+    pci::PointDatasetRuntimePtr scene = pci::createPointDatasetRuntime(
+        loader.load(loadOptions, loadResources, preflight, loadContext),
+        loadResources.decodedByteBudget);
     result.loadMilliseconds =
         std::chrono::duration_cast<Milliseconds>(Clock::now() - loadStarted)
             .count();
-    static_cast<void>(document->addLayer(scene));
+    const pci::BindingGeneration binding =
+        pci::nextGeneration(document->lastBindingGeneration());
+    if (!runtime.attachPoint({.descriptor = scene->descriptor(),
+                              .runtime = scene,
+                              .generation = binding})) {
+        throw std::logic_error("point runtime attachment failed");
+    }
+    try {
+        static_cast<void>(document->addLayer(scene->datasetView(), binding));
+    } catch (...) {
+        static_cast<void>(runtime.detach(binding));
+        throw;
+    }
     if (!scene->hierarchical()) {
         result.status = "not_hierarchical";
         return result;
@@ -459,12 +479,14 @@ void measureCancellation(StressResult &result,
                 : result.workingSetBytes + node.bytes;
     }
 
-    const pci::PointCloudSceneMetrics beforeRevisit = scene->hierarchyMetrics();
+    const pci::PointDatasetRuntimeMetrics beforeRevisit =
+        scene->hierarchyMetrics();
     exerciseRevisits(scene,
                      nodes,
                      options.passes,
                      std::chrono::seconds(options.timeoutSeconds));
-    const pci::PointCloudSceneMetrics afterRevisit = scene->hierarchyMetrics();
+    const pci::PointDatasetRuntimeMetrics afterRevisit =
+        scene->hierarchyMetrics();
     result.revisitRequests =
         afterRevisit.source.requests - beforeRevisit.source.requests;
     measureCancellation(
@@ -474,9 +496,9 @@ void measureCancellation(StressResult &result,
             .count();
 
     scene->trimDecodedCache();
-    const pci::PointCloudSceneMetrics sceneMetrics = scene->hierarchyMetrics();
-    const pci::SceneDocumentMetrics documentMetrics =
-        document->hierarchyMetrics();
+    const pci::PointDatasetRuntimeMetrics sceneMetrics =
+        scene->hierarchyMetrics();
+    const pci::SceneRuntimeMetrics documentMetrics = runtime.metrics();
     result.cacheHits = sceneMetrics.cache.hits;
     result.cacheMisses = sceneMetrics.cache.misses;
     result.cacheEvictions = sceneMetrics.cache.evictions;

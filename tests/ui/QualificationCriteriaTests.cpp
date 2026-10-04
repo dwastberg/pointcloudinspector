@@ -1,4 +1,4 @@
-#include "app/QualificationCriteria.h"
+#include <pci/desktop/ui/QualificationCriteria.h>
 
 #include <catch2/catch_test_macros.hpp>
 

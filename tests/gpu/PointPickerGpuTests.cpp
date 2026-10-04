@@ -1,7 +1,9 @@
-#include "app/ApplicationOptions.h"
-#include "renderer/rhi/RenderViewportWidget_p.h"
-#include "scene/PointCloudScene.h"
 #include "support/RenderViewportTestAccess.h"
+#include "support/SceneRuntimeFixture.h"
+#include <pci/desktop/config/ApplicationOptions.h>
+#include <pci/desktop/viewport/RenderViewportWidget_p.h>
+#include <pci/document/SceneDocument.h>
+#include <pci/runtime/point/PointDatasetRuntime.h>
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -10,6 +12,7 @@
 #include <QImage>
 #include <QTest>
 #include <QWheelEvent>
+#include <rhi/qrhi.h>
 
 #include <algorithm>
 #include <atomic>
@@ -34,7 +37,7 @@ pci::GraphicsApi gpuTestGraphicsApi()
 
 constexpr bool gpuTestValidation = PCINSPECTOR_GPU_TEST_VALIDATION != 0;
 
-pci::PointCloudScenePtr
+pci::PointDatasetRuntimePtr
 sceneWithBlocksAt(const std::vector<pci::Vec3d> &positions,
                   const bool hasColor = false)
 {
@@ -45,7 +48,7 @@ sceneWithBlocksAt(const std::vector<pci::Vec3d> &positions,
         .maximum = {1.0, 1.0, 1.0},
     };
     metadata.hasColor = hasColor;
-    auto scene = std::make_shared<pci::PointCloudScene>(metadata);
+    auto scene = std::make_shared<pci::PointDatasetRuntime>(metadata);
     for (const pci::Vec3d &position : positions) {
         auto block = std::make_shared<pci::PointBlock>();
         block->origin = {-1.0, -1.0, -1.0};
@@ -76,7 +79,7 @@ sceneWithBlocksAt(const std::vector<pci::Vec3d> &positions,
 // A completed flat scene whose bounds sit entirely at `center`. Used to place a
 // source far outside the framed extent, the way adjacent survey tiles spread
 // across kilometres while the camera frames only the first one loaded.
-pci::PointCloudScenePtr completedSceneAtCenter(const pci::Vec3d center)
+pci::PointDatasetRuntimePtr completedSceneAtCenter(const pci::Vec3d center)
 {
     pci::PointCloudMetadata metadata;
     metadata.sourcePointCount = 1;
@@ -84,7 +87,7 @@ pci::PointCloudScenePtr completedSceneAtCenter(const pci::Vec3d center)
         .minimum = {center.x - 1.0, center.y - 1.0, center.z - 1.0},
         .maximum = {center.x + 1.0, center.y + 1.0, center.z + 1.0},
     };
-    auto scene = std::make_shared<pci::PointCloudScene>(metadata);
+    auto scene = std::make_shared<pci::PointDatasetRuntime>(metadata);
     auto block = std::make_shared<pci::PointBlock>();
     block->origin = {center.x - 1.0, center.y - 1.0, center.z - 1.0};
     block->scale = 2.0 / 65535.0;
@@ -106,7 +109,7 @@ pci::PointCloudScenePtr completedSceneAtCenter(const pci::Vec3d center)
     return scene;
 }
 
-pci::PointCloudScenePtr coincidentPointSizeScene()
+pci::PointDatasetRuntimePtr coincidentPointSizeScene()
 {
     // Enough coincident samples to keep the minimum bias at the 1 px clamp
     // while the maximum bias remains large enough to exercise largePoints.
@@ -118,7 +121,7 @@ pci::PointCloudScenePtr coincidentPointSizeScene()
         .maximum = {1.0, 1.0, 1.0},
     };
     metadata.hasColor = true;
-    auto scene = std::make_shared<pci::PointCloudScene>(metadata);
+    auto scene = std::make_shared<pci::PointDatasetRuntime>(metadata);
     auto block = std::make_shared<pci::PointBlock>();
     block->origin = {-1.0, -1.0, -1.0};
     block->scale = 2.0 / 65535.0;
@@ -138,21 +141,24 @@ pci::PointCloudScenePtr coincidentPointSizeScene()
     return scene;
 }
 
-pci::SceneDocumentSnapshotPtr documentWithScene(pci::PointCloudScenePtr scene)
+pci::test::SceneRuntimeFixture
+documentWithScene(const pci::PointDatasetRuntimePtr &scene)
 {
     auto document = std::make_shared<pci::SceneDocument>();
-    static_cast<void>(document->addLayer(std::move(scene)));
-    return document->snapshot();
+    pci::test::SceneRuntimeFixture runtime(document);
+    static_cast<void>(runtime.addPointLayer(scene));
+    return runtime;
 }
 
-pci::SceneDocumentSnapshotPtr
-documentWithScenes(std::vector<pci::PointCloudScenePtr> scenes)
+pci::test::SceneRuntimeFixture
+documentWithScenes(std::vector<pci::PointDatasetRuntimePtr> scenes)
 {
     auto document = std::make_shared<pci::SceneDocument>();
-    for (pci::PointCloudScenePtr &scene : scenes) {
-        static_cast<void>(document->addLayer(std::move(scene)));
+    pci::test::SceneRuntimeFixture runtime(document);
+    for (const pci::PointDatasetRuntimePtr &scene : scenes) {
+        static_cast<void>(runtime.addPointLayer(scene));
     }
-    return document->snapshot();
+    return runtime;
 }
 
 class GpuStressHierarchySource final : public pci::PointCloudDataSource {
@@ -285,7 +291,7 @@ private:
 struct GpuStressHierarchy {
     std::shared_ptr<GpuStressHierarchySource> source;
     pci::PointCloudNodePayloadPtr root;
-    pci::PointCloudScenePtr scene;
+    pci::PointDatasetRuntimePtr scene;
 };
 
 GpuStressHierarchy
@@ -298,7 +304,7 @@ makeGpuStressHierarchy(const std::uint32_t color,
     pci::PointCloudMetadata metadata;
     metadata.sourcePointCount = reportedSourcePointCount;
     metadata.sourceBounds = source->rootNode().bounds;
-    auto scene = std::make_shared<pci::PointCloudScene>(
+    auto scene = std::make_shared<pci::PointDatasetRuntime>(
         metadata, source, root, pci::defaultDecodedCacheByteBudget);
     scene->markLoadingComplete();
     return {
@@ -308,13 +314,14 @@ makeGpuStressHierarchy(const std::uint32_t color,
     };
 }
 
-pci::PointCloudScenePtr sceneWithRepeatedBlocksAt(const pci::Vec3d position,
-                                                  const std::size_t blockCount)
+pci::PointDatasetRuntimePtr
+sceneWithRepeatedBlocksAt(const pci::Vec3d position,
+                          const std::size_t blockCount)
 {
     return sceneWithBlocksAt(std::vector<pci::Vec3d>(blockCount, position));
 }
 
-pci::PointCloudScenePtr completedDenseScene(const std::uint64_t pointCount)
+pci::PointDatasetRuntimePtr completedDenseScene(const std::uint64_t pointCount)
 {
     pci::PointCloudMetadata metadata;
     metadata.sourcePointCount = pointCount;
@@ -322,7 +329,7 @@ pci::PointCloudScenePtr completedDenseScene(const std::uint64_t pointCount)
         .minimum = {-1.0, -1.0, -1.0},
         .maximum = {1.0, 1.0, 1.0},
     };
-    auto scene = std::make_shared<pci::PointCloudScene>(metadata);
+    auto scene = std::make_shared<pci::PointDatasetRuntime>(metadata);
     std::uint64_t remaining = pointCount;
     while (remaining > 0) {
         const std::size_t blockPoints = static_cast<std::size_t>(
@@ -351,7 +358,7 @@ pci::PointCloudScenePtr completedDenseScene(const std::uint64_t pointCount)
     return scene;
 }
 
-pci::PointCloudScenePtr eyeDomeDepthStepScene()
+pci::PointDatasetRuntimePtr eyeDomeDepthStepScene()
 {
     constexpr int pointColumns = 41;
     constexpr int pointRows = 41;
@@ -362,7 +369,7 @@ pci::PointCloudScenePtr eyeDomeDepthStepScene()
         .maximum = {0.06, 0.5, 0.06},
     };
     metadata.hasColor = true;
-    auto scene = std::make_shared<pci::PointCloudScene>(metadata);
+    auto scene = std::make_shared<pci::PointDatasetRuntime>(metadata);
     auto block = std::make_shared<pci::PointBlock>();
     block->origin = {-0.06, -0.5, -0.06};
     block->scale = 1.0 / 65535.0;
@@ -423,8 +430,10 @@ TEST_CASE("GPU qualification camera path advances on submitted frames",
     viewport.resize(640, 400);
     viewport.show();
     REQUIRE(QTest::qWaitForWindowExposed(&viewport, 2000));
-    viewport.setDocument(
-        documentWithScene(sceneWithBlocksAt({{0.0, 0.0, 0.0}})), true);
+    pci::test::setTestDocument(
+        viewport,
+        documentWithScene(sceneWithBlocksAt({{0.0, 0.0, 0.0}})),
+        true);
     REQUIRE(QTest::qWaitFor(
         [&] {
             return pci::testAccess(viewport).renderedFrameCountForTesting() > 0;
@@ -493,7 +502,8 @@ TEST_CASE("GPU eye-dome lighting toggles and rebuilds safely", "[gpu][edl]")
         gpuTestGraphicsApi(),
         gpuTestValidation);
     viewport.resize(320, 240);
-    viewport.setDocument(documentWithScene(eyeDomeDepthStepScene()), true);
+    pci::test::setTestDocument(
+        viewport, documentWithScene(eyeDomeDepthStepScene()), true);
     viewport.show();
 
     REQUIRE(QTest::qWaitForWindowExposed(&viewport, 2000));
@@ -564,7 +574,8 @@ TEST_CASE("GPU point size changes rasterized point coverage",
     viewport.resize(320, 240);
     viewport.setEyeDomeLightingEnabled(false);
     viewport.setPointSizePixels(pci::minimumPointSizePixels);
-    viewport.setDocument(documentWithScene(coincidentPointSizeScene()), true);
+    pci::test::setTestDocument(
+        viewport, documentWithScene(coincidentPointSizeScene()), true);
     viewport.show();
 
     REQUIRE(QTest::qWaitForWindowExposed(&viewport, 2000));
@@ -611,7 +622,7 @@ TEST_CASE("GPU classification masks hide and restore matching points",
     };
     metadata.hasColor = true;
     metadata.hasClassification = true;
-    auto scene = std::make_shared<pci::PointCloudScene>(metadata);
+    auto scene = std::make_shared<pci::PointDatasetRuntime>(metadata);
     auto block = std::make_shared<pci::PointBlock>();
     block->origin = {-1.0, -1.0, -1.0};
     block->scale = 2.0 / 65535.0;
@@ -633,7 +644,8 @@ TEST_CASE("GPU classification masks hide and restore matching points",
     scene->markLoadingComplete();
 
     auto document = std::make_shared<pci::SceneDocument>();
-    const pci::PointCloudLayerId layerId = document->addLayer(scene);
+    pci::test::SceneRuntimeFixture runtime(document);
+    const pci::PointCloudLayerId layerId = runtime.addPointLayer(scene);
     pci::RenderViewportWidget viewport(
         false,
         pci::UploadScheduler::defaultResidencyByteBudget,
@@ -642,7 +654,7 @@ TEST_CASE("GPU classification masks hide and restore matching points",
     viewport.resize(320, 240);
     viewport.setEyeDomeLightingEnabled(false);
     viewport.setPointSizePixels(pci::maximumPointSizePixels);
-    viewport.setDocument(document->snapshot(), true);
+    runtime.setDocument(viewport, true);
     QString failure;
     viewport.setFailureCallback([&failure](const QString &message) {
         failure = message;
@@ -664,7 +676,7 @@ TEST_CASE("GPU classification masks hide and restore matching points",
         pci::testAccess(viewport).renderedFrameCountForTesting();
     CHECK(document->setLayerClassificationFilter(
         layerId, pci::PointClassificationFilter::noneVisible()));
-    viewport.updateDocument(document->snapshot());
+    runtime.updateDocument(viewport);
     REQUIRE(QTest::qWaitFor(
         [&] {
             return pci::testAccess(viewport).renderedFrameCountForTesting() >
@@ -695,7 +707,7 @@ TEST_CASE("GPU classification masks hide and restore matching points",
     const std::uint64_t hiddenFrame =
         pci::testAccess(viewport).renderedFrameCountForTesting();
     CHECK(document->setLayerClassificationFilter(layerId, classTwoOnly));
-    viewport.updateDocument(document->snapshot());
+    runtime.updateDocument(viewport);
     REQUIRE(QTest::qWaitFor(
         [&] {
             return pci::testAccess(viewport).renderedFrameCountForTesting() >
@@ -729,9 +741,10 @@ TEST_CASE("GPU viewport sleeps when idle and wakes for worker blocks", "[gpu]")
         .minimum = {-1.0, -1.0, -1.0},
         .maximum = {1.0, 1.0, 1.0},
     };
-    auto scene = std::make_shared<pci::PointCloudScene>(metadata);
+    auto scene = std::make_shared<pci::PointDatasetRuntime>(metadata);
     auto document = std::make_shared<pci::SceneDocument>();
-    static_cast<void>(document->addLayer(scene));
+    pci::test::SceneRuntimeFixture runtime(document);
+    static_cast<void>(runtime.addPointLayer(scene));
 
     pci::RenderViewportWidget viewport(
         false,
@@ -744,7 +757,7 @@ TEST_CASE("GPU viewport sleeps when idle and wakes for worker blocks", "[gpu]")
         [&latestMetrics](const pci::RenderMetrics &metrics) {
             latestMetrics = metrics;
         });
-    viewport.setDocument(document->snapshot(), false);
+    runtime.setDocument(viewport, false);
     viewport.show();
     REQUIRE(QTest::qWaitForWindowExposed(&viewport, 2000));
     REQUIRE(QTest::qWaitFor(
@@ -872,8 +885,8 @@ TEST_CASE("GPU completed flat scenes settle above the bootstrap budget",
     viewport.setFailureCallback([&failure](const QString &message) {
         failure = message;
     });
-    viewport.setDocument(documentWithScene(completedDenseScene(pointCount)),
-                         false);
+    pci::test::setTestDocument(
+        viewport, documentWithScene(completedDenseScene(pointCount)), false);
     viewport.show();
     REQUIRE(QTest::qWaitForWindowExposed(&viewport, 2000));
     REQUIRE(QTest::qWaitFor(
@@ -899,10 +912,11 @@ TEST_CASE("GPU residency preserves coverage across 25 flat layers",
     constexpr std::size_t layerCount = 25;
     constexpr std::uint64_t gpuByteBudget = layerCount * sizeof(pci::GpuPoint);
     auto document = std::make_shared<pci::SceneDocument>();
+    pci::test::SceneRuntimeFixture runtime(document);
     std::vector<pci::PointCloudLayerId> layers;
     layers.reserve(layerCount);
     for (std::size_t index = 0; index < layerCount; ++index) {
-        layers.push_back(document->addLayer(sceneWithBlocksAt({
+        layers.push_back(runtime.addPointLayer(sceneWithBlocksAt({
             {0.0, 0.0, 0.0},
             {0.25, 0.0, 0.0},
         })));
@@ -920,7 +934,7 @@ TEST_CASE("GPU residency preserves coverage across 25 flat layers",
     viewport.setFailureCallback([&failure](const QString &message) {
         failure = message;
     });
-    viewport.setDocument(document->snapshot(), false);
+    runtime.setDocument(viewport, false);
     viewport.show();
     REQUIRE(QTest::qWaitForWindowExposed(&viewport, 2000));
     REQUIRE(QTest::qWaitFor(
@@ -948,8 +962,9 @@ TEST_CASE("GPU layers outside the frustum still reach display readiness",
     // never acquire GPU residency. Display readiness must not wait on residency
     // it cannot obtain, otherwise the load that owns it never finishes.
     auto document = std::make_shared<pci::SceneDocument>();
+    pci::test::SceneRuntimeFixture runtime(document);
     const pci::PointCloudLayerId nearLayer =
-        document->addLayer(completedSceneAtCenter({0.0, 0.0, 0.0}));
+        runtime.addPointLayer(completedSceneAtCenter({0.0, 0.0, 0.0}));
 
     pci::RenderViewportWidget viewport(
         false,
@@ -970,7 +985,7 @@ TEST_CASE("GPU layers outside the frustum still reach display readiness",
         });
     // Frame the near layer only; the far layer joins afterwards and the camera
     // is intentionally left where it is.
-    viewport.setDocument(document->snapshot(), true);
+    runtime.setDocument(viewport, true);
     viewport.show();
     REQUIRE(QTest::qWaitForWindowExposed(&viewport, 2000));
     REQUIRE(QTest::qWaitFor(
@@ -980,9 +995,9 @@ TEST_CASE("GPU layers outside the frustum still reach display readiness",
         5000));
     REQUIRE(failure.isEmpty());
 
-    const pci::PointCloudLayerId farLayer =
-        document->addLayer(completedSceneAtCenter({100'000.0, 100'000.0, 0.0}));
-    viewport.updateDocument(document->snapshot());
+    const pci::PointCloudLayerId farLayer = runtime.addPointLayer(
+        completedSceneAtCenter({100'000.0, 100'000.0, 0.0}));
+    runtime.updateDocument(viewport);
     REQUIRE(QTest::qWaitFor(
         [&] {
             return !failure.isEmpty() || displayReady.contains(farLayer);
@@ -1008,8 +1023,10 @@ TEST_CASE("GPU replaces root buffers after document root resampling",
         pci::pointCloudNodePayloadBytes(*first.root);
     const std::uint64_t gpuByteBudget =
         GpuStressHierarchySource::pointsPerNode * sizeof(pci::GpuPoint);
-    auto document = std::make_shared<pci::SceneDocument>(oneRootBytes, 1);
-    const pci::PointCloudLayerId firstLayer = document->addLayer(first.scene);
+    auto document = std::make_shared<pci::SceneDocument>();
+    pci::test::SceneRuntimeFixture runtime(document, oneRootBytes, 1);
+    const pci::PointCloudLayerId firstLayer =
+        runtime.addPointLayer(first.scene);
 
     pci::RenderViewportWidget viewport(
         false, gpuByteBudget, gpuTestGraphicsApi(), gpuTestValidation);
@@ -1018,7 +1035,7 @@ TEST_CASE("GPU replaces root buffers after document root resampling",
     viewport.setFailureCallback([&failure](const QString &message) {
         failure = message;
     });
-    viewport.setDocument(document->snapshot(), false);
+    runtime.setDocument(viewport, false);
     viewport.show();
     REQUIRE(QTest::qWaitForWindowExposed(&viewport, 2000));
     REQUIRE(QTest::qWaitFor(
@@ -1030,8 +1047,9 @@ TEST_CASE("GPU replaces root buffers after document root resampling",
         5000));
     REQUIRE(failure.isEmpty());
 
-    const pci::PointCloudLayerId secondLayer = document->addLayer(second.scene);
-    viewport.updateDocument(document->snapshot());
+    const pci::PointCloudLayerId secondLayer =
+        runtime.addPointLayer(second.scene);
+    runtime.updateDocument(viewport);
     REQUIRE(QTest::qWaitFor(
         [&] {
             return !failure.isEmpty() ||
@@ -1044,7 +1062,7 @@ TEST_CASE("GPU replaces root buffers after document root resampling",
     REQUIRE(failure.isEmpty());
     CHECK(first.scene->decodedResidentPoints() >= 32);
     CHECK(second.scene->decodedResidentPoints() >= 32);
-    CHECK(document->decodedResidentBytes() <= oneRootBytes);
+    CHECK(runtime.runtime().decodedResidentBytes() <= oneRootBytes);
     CHECK(waitForStableFrameCount(viewport));
 }
 
@@ -1057,8 +1075,9 @@ TEST_CASE("GPU finite hierarchies settle through screen-space LOD",
     const std::uint64_t decodedByteBudget = 12 * payloadBytes;
     const std::uint64_t gpuByteBudget =
         12 * GpuStressHierarchySource::pointsPerNode * sizeof(pci::GpuPoint);
-    auto document = std::make_shared<pci::SceneDocument>(decodedByteBudget, 1);
-    static_cast<void>(document->addLayer(hierarchy.scene));
+    auto document = std::make_shared<pci::SceneDocument>();
+    pci::test::SceneRuntimeFixture runtime(document, decodedByteBudget, 1);
+    static_cast<void>(runtime.addPointLayer(hierarchy.scene));
 
     pci::RenderViewportWidget viewport(
         false, gpuByteBudget, gpuTestGraphicsApi(), gpuTestValidation);
@@ -1077,7 +1096,7 @@ TEST_CASE("GPU finite hierarchies settle through screen-space LOD",
         [&loadProgress](const pci::RenderLoadProgress &progress) {
             loadProgress.push_back(progress);
         });
-    viewport.setDocument(document->snapshot(), true);
+    runtime.setDocument(viewport, true);
     viewport.show();
     REQUIRE(QTest::qWaitForWindowExposed(&viewport, 2000));
     REQUIRE(QTest::qWaitFor(
@@ -1103,7 +1122,7 @@ TEST_CASE("GPU finite hierarchies settle through screen-space LOD",
           GpuStressHierarchySource::leafPointCount);
     CHECK(latestMetrics->drawCalls == 8);
     CHECK(hierarchy.source->metrics().completed == 8);
-    CHECK(document->decodedResidentBytes() <= decodedByteBudget);
+    CHECK(runtime.runtime().decodedResidentBytes() <= decodedByteBudget);
     CHECK(latestMetrics->gpuPointBytes <= gpuByteBudget);
     const auto displayReady = std::ranges::find_if(
         loadProgress, [](const pci::RenderLoadProgress &progress) {
@@ -1184,6 +1203,7 @@ TEST_CASE("GPU asynchronously published hierarchies recover the bootstrap "
     GpuStressHierarchy hierarchy =
         makeGpuStressHierarchy(0xffffffffU, reportedSourcePoints);
     auto document = std::make_shared<pci::SceneDocument>();
+    pci::test::SceneRuntimeFixture runtime(document);
 
     pci::RenderViewportWidget viewport(
         false,
@@ -1204,7 +1224,7 @@ TEST_CASE("GPU asynchronously published hierarchies recover the bootstrap "
     // MainWindow attaches the initially empty document, then publishes the
     // asynchronously loaded scene through updateDocument(). Reproduce that
     // path instead of installing a populated document in one operation.
-    viewport.setDocument(document->snapshot(), false);
+    runtime.setDocument(viewport, false);
     viewport.show();
     REQUIRE(QTest::qWaitForWindowExposed(&viewport, 2000));
     REQUIRE(QTest::qWaitFor(
@@ -1215,8 +1235,8 @@ TEST_CASE("GPU asynchronously published hierarchies recover the bootstrap "
         2000));
     REQUIRE(failure.isEmpty());
 
-    static_cast<void>(document->addLayer(hierarchy.scene));
-    viewport.updateDocument(document->snapshot());
+    static_cast<void>(runtime.addPointLayer(hierarchy.scene));
+    runtime.updateDocument(viewport);
     REQUIRE(QTest::qWaitFor(
         [&] {
             return !failure.isEmpty() ||
@@ -1254,10 +1274,12 @@ TEST_CASE("GPU hierarchy churn remains bounded and reloads evicted nodes",
     const std::uint64_t gpuByteBudget =
         9 * GpuStressHierarchySource::pointsPerNode * sizeof(pci::GpuPoint);
 
-    auto document = std::make_shared<pci::SceneDocument>(decodedByteBudget, 1);
-    const pci::PointCloudLayerId firstLayer = document->addLayer(first.scene);
-    const pci::PointCloudLayerId secondLayer = document->addLayer(second.scene);
-    REQUIRE(document->setLayerVisible(secondLayer, false));
+    auto document = std::make_shared<pci::SceneDocument>();
+    pci::test::SceneRuntimeFixture runtime(document, decodedByteBudget, 1);
+    const pci::PointCloudLayerId firstLayer =
+        runtime.addPointLayer(first.scene);
+    const pci::PointCloudLayerId secondLayer =
+        runtime.addPointLayer(second.scene, false);
 
     pci::RenderViewportWidget viewport(
         false, gpuByteBudget, gpuTestGraphicsApi(), gpuTestValidation);
@@ -1271,7 +1293,7 @@ TEST_CASE("GPU hierarchy churn remains bounded and reloads evicted nodes",
     viewport.setFailureCallback([&failure](const QString &message) {
         failure = message;
     });
-    viewport.setDocument(document->snapshot(), true);
+    runtime.setDocument(viewport, true);
     viewport.show();
     REQUIRE(QTest::qWaitForWindowExposed(&viewport, 2000));
 
@@ -1303,7 +1325,8 @@ TEST_CASE("GPU hierarchy churn remains bounded and reloads evicted nodes",
             REQUIRE(latestMetrics);
             CHECK(latestMetrics->gpuPointBytes <= gpuByteBudget);
             CHECK(latestMetrics->peakGpuPointBytes <= gpuByteBudget);
-            CHECK(document->decodedResidentBytes() <= decodedByteBudget);
+            CHECK(runtime.runtime().decodedResidentBytes() <=
+                  decodedByteBudget);
             CHECK(waitForStableFrameCount(viewport));
         };
 
@@ -1319,9 +1342,9 @@ TEST_CASE("GPU hierarchy churn remains bounded and reloads evicted nodes",
             showFirst ? *first.source : *second.source;
         const std::uint64_t expectedCompleted =
             activeSource.metrics().completed + 8;
-        REQUIRE(document->setLayerVisible(hide, false));
-        REQUIRE(document->setLayerVisible(show, true));
-        viewport.updateDocument(document->snapshot());
+        REQUIRE(runtime.setPointLayerVisible(hide, false));
+        REQUIRE(runtime.setPointLayerVisible(show, true));
+        runtime.updateDocument(viewport);
         waitForRefinement(activeSource, expectedCompleted);
     }
 
@@ -1330,7 +1353,7 @@ TEST_CASE("GPU hierarchy churn remains bounded and reloads evicted nodes",
     CHECK(latestMetrics->peakGpuPointBytes <= gpuByteBudget);
     CHECK(latestMetrics->gpuCacheEvictions >= churnCycles * 8);
     CHECK(latestMetrics->decodedPointBytes <= decodedByteBudget);
-    const pci::SceneDocumentMetrics hierarchy = document->hierarchyMetrics();
+    const pci::SceneRuntimeMetrics hierarchy = runtime.runtime().metrics();
     // Cache insertion publishes one complete immutable page before choosing
     // an eviction victim. The global cache may therefore peak by one measured
     // page, but resident steady state remains within the configured budget.
@@ -1354,8 +1377,10 @@ TEST_CASE("GPU mouse dragging renders continuously and settles on release",
         gpuTestGraphicsApi(),
         gpuTestValidation);
     viewport.resize(320, 240);
-    viewport.setDocument(
-        documentWithScene(sceneWithBlocksAt({{0.0, 0.0, 0.0}})), false);
+    pci::test::setTestDocument(
+        viewport,
+        documentWithScene(sceneWithBlocksAt({{0.0, 0.0, 0.0}})),
+        false);
     viewport.show();
     REQUIRE(QTest::qWaitForWindowExposed(&viewport, 2000));
     REQUIRE(waitForStableFrameCount(viewport));
@@ -1388,8 +1413,10 @@ TEST_CASE("GPU point picking reports hits and misses", "[gpu]")
         gpuTestGraphicsApi(),
         gpuTestValidation);
     viewport.resize(320, 240);
-    viewport.setDocument(
-        documentWithScene(sceneWithBlocksAt({{0.0, 0.0, 0.0}})), false);
+    pci::test::setTestDocument(
+        viewport,
+        documentWithScene(sceneWithBlocksAt({{0.0, 0.0, 0.0}})),
+        false);
 
     QString failure;
     viewport.setFailureCallback([&failure](const QString &message) {
@@ -1415,8 +1442,10 @@ TEST_CASE("GPU point picking reports hits and misses", "[gpu]")
     REQUIRE(picked.has_value());
     CHECK(*picked == 0);
 
-    viewport.setDocument(
-        documentWithScene(sceneWithBlocksAt({{-1.0, -1.0, 0.0}})), false);
+    pci::test::setTestDocument(
+        viewport,
+        documentWithScene(sceneWithBlocksAt({{-1.0, -1.0, 0.0}})),
+        false);
     completed = false;
     picked.reset();
     pci::testAccess(viewport).requestRawPickForTesting(
@@ -1442,8 +1471,10 @@ TEST_CASE("GPU measurement commits snapped points", "[gpu][measurement]")
         gpuTestGraphicsApi(),
         gpuTestValidation);
     viewport.resize(320, 240);
-    viewport.setDocument(
-        documentWithScene(sceneWithBlocksAt({{0.0, 0.0, 0.0}})), false);
+    pci::test::setTestDocument(
+        viewport,
+        documentWithScene(sceneWithBlocksAt({{0.0, 0.0, 0.0}})),
+        false);
 
     QString failure;
     viewport.setFailureCallback([&failure](const QString &message) {
@@ -1483,11 +1514,12 @@ TEST_CASE("GPU picking maps ids across multiple blocks", "[gpu]")
     viewport.resize(320, 240);
     // Two single-point blocks: one centred (in front of the default
     // camera), one far off to the side.
-    viewport.setDocument(documentWithScene(sceneWithBlocksAt({
-                             {0.0, 0.0, 0.0},
-                             {0.9, 0.0, 0.9},
-                         })),
-                         false);
+    pci::test::setTestDocument(viewport,
+                               documentWithScene(sceneWithBlocksAt({
+                                   {0.0, 0.0, 0.0},
+                                   {0.9, 0.0, 0.9},
+                               })),
+                               false);
 
     QString failure;
     viewport.setFailureCallback([&failure](const QString &message) {
@@ -1523,11 +1555,12 @@ TEST_CASE("GPU picking uses global ids across point-cloud layers", "[gpu]")
     viewport.resize(320, 240);
     // The off-centre point is closer to the camera and receives id 0. The
     // centred point belongs to a second layer and must receive id 1.
-    viewport.setDocument(documentWithScenes({
-                             sceneWithBlocksAt({{0.9, -0.5, 0.9}}),
-                             sceneWithBlocksAt({{0.0, 0.0, 0.0}}),
-                         }),
-                         false);
+    pci::test::setTestDocument(viewport,
+                               documentWithScenes({
+                                   sceneWithBlocksAt({{0.9, -0.5, 0.9}}),
+                                   sceneWithBlocksAt({{0.0, 0.0, 0.0}}),
+                               }),
+                               false);
 
     QString failure;
     std::optional<pci::RenderMetrics> latestMetrics;
@@ -1576,8 +1609,10 @@ TEST_CASE("GPU stale pick readback cannot target a replacement document",
         gpuTestGraphicsApi(),
         gpuTestValidation);
     viewport.resize(320, 240);
-    viewport.setDocument(
-        documentWithScene(sceneWithBlocksAt({{0.0, 0.0, 0.0}})), false);
+    pci::test::setTestDocument(
+        viewport,
+        documentWithScene(sceneWithBlocksAt({{0.0, 0.0, 0.0}})),
+        false);
 
     QString failure;
     viewport.setFailureCallback([&failure](const QString &message) {
@@ -1596,8 +1631,10 @@ TEST_CASE("GPU stale pick readback cannot target a replacement document",
         &viewport,
         [&] {
             QObject::disconnect(replacementConnection);
-            viewport.setDocument(
-                documentWithScene(sceneWithBlocksAt({{0.0, 0.0, 0.0}})), false);
+            pci::test::setTestDocument(
+                viewport,
+                documentWithScene(sceneWithBlocksAt({{0.0, 0.0, 0.0}})),
+                false);
             pci::testAccess(viewport).requestRawPickForTesting(
                 QPoint(viewport.width() / 2, viewport.height() / 2),
                 [&](const std::optional<std::uint32_t> id) {
@@ -1628,7 +1665,8 @@ TEST_CASE("GPU picking survives renderer uniform capacity growth", "[gpu]")
         gpuTestGraphicsApi(),
         gpuTestValidation);
     viewport.resize(320, 240);
-    viewport.setDocument(
+    pci::test::setTestDocument(
+        viewport,
         documentWithScene(sceneWithRepeatedBlocksAt({0.0, 0.0, 0.0}, 257)),
         false);
 
@@ -1695,7 +1733,8 @@ TEST_CASE("GPU picking survives renderer uniform capacity growth", "[gpu]")
     maximumUploadOperations = 0;
     maximumUploadBatches = 0;
     maximumUniformUpdates = 0;
-    viewport.setDocument(
+    pci::test::setTestDocument(
+        viewport,
         documentWithScene(sceneWithRepeatedBlocksAt({0.0, 0.0, 0.0}, 513)),
         false);
 
@@ -1719,3 +1758,82 @@ TEST_CASE("GPU picking survives renderer uniform capacity growth", "[gpu]")
 }
 
 } // namespace
+
+TEST_CASE("GPU pending pick storage survives release and recreation",
+          "[gpu][pick][lifetime]")
+{
+    pci::RenderViewportWidget viewport(
+        false,
+        pci::UploadScheduler::defaultResidencyByteBudget,
+        gpuTestGraphicsApi(),
+        gpuTestValidation);
+    viewport.resize(320, 240);
+    pci::test::setTestDocument(
+        viewport,
+        documentWithScene(sceneWithBlocksAt({{0.0, 0.0, 0.0}})),
+        false);
+    viewport.show();
+    REQUIRE(QTest::qWaitForWindowExposed(&viewport, 2000));
+    REQUIRE(waitForStableFrameCount(viewport));
+    auto access = pci::testAccess(viewport);
+    auto *rhi = access.rhiForTesting();
+    const QSize pixelSize = viewport.size() * viewport.devicePixelRatioF();
+    pci::PointPicker picker;
+    bool oldDelivered = false;
+    QRhiCommandBuffer *commands = nullptr;
+    REQUIRE(rhi->beginOffscreenFrame(&commands) == QRhi::FrameOpSuccess);
+    access.recordSinglePointPickForTesting(
+        commands, picker, pixelSize, [&](auto) {
+            oldDelivered = true;
+        });
+    REQUIRE(picker.inFlight());
+    picker.releaseResources();
+    REQUIRE(rhi->endOffscreenFrame() == QRhi::FrameOpSuccess);
+    CHECK_FALSE(oldDelivered);
+    CHECK_FALSE(picker.inFlight());
+
+    bool newDelivered = false;
+    REQUIRE(rhi->beginOffscreenFrame(&commands) == QRhi::FrameOpSuccess);
+    access.recordSinglePointPickForTesting(
+        commands, picker, pixelSize, [&](auto) {
+            newDelivered = true;
+        });
+    REQUIRE(picker.inFlight());
+    REQUIRE(rhi->endOffscreenFrame() == QRhi::FrameOpSuccess);
+    CHECK(newDelivered);
+}
+
+TEST_CASE("GPU pending pick storage survives picker destruction",
+          "[gpu][pick][lifetime]")
+{
+    pci::RenderViewportWidget viewport(
+        false,
+        pci::UploadScheduler::defaultResidencyByteBudget,
+        gpuTestGraphicsApi(),
+        gpuTestValidation);
+    viewport.resize(320, 240);
+    pci::test::setTestDocument(
+        viewport,
+        documentWithScene(sceneWithBlocksAt({{0.0, 0.0, 0.0}})),
+        false);
+    viewport.show();
+    REQUIRE(QTest::qWaitForWindowExposed(&viewport, 2000));
+    REQUIRE(waitForStableFrameCount(viewport));
+    auto access = pci::testAccess(viewport);
+    auto *rhi = access.rhiForTesting();
+    auto picker = std::make_unique<pci::PointPicker>();
+    bool delivered = false;
+    QRhiCommandBuffer *commands = nullptr;
+    REQUIRE(rhi->beginOffscreenFrame(&commands) == QRhi::FrameOpSuccess);
+    access.recordSinglePointPickForTesting(commands,
+                                           *picker,
+                                           viewport.size() *
+                                               viewport.devicePixelRatioF(),
+                                           [&](auto) {
+                                               delivered = true;
+                                           });
+    REQUIRE(picker->inFlight());
+    picker.reset();
+    REQUIRE(rhi->endOffscreenFrame() == QRhi::FrameOpSuccess);
+    CHECK_FALSE(delivered);
+}

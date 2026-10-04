@@ -1,0 +1,34 @@
+{
+  "schema": "pcinspector.release-h.native.v1",
+  "timestamp_utc": "2000-01-03T00:00:00.000Z",
+  "status": "Loaded 2 point-cloud sources",
+  "selected_backend": "SyntheticRhi",
+  "gpu_validation": true,
+  "qualification_passed": true,
+  "source_count": 2,
+  "source_file_bytes": 3000,
+  "source_points": 300,
+  "first_any_preview_ms": 10.0,
+  "first_all_preview_ms": 20.0,
+  "display_ready_ms": 30.0,
+  "frame_ms_p95": 1.0,
+  "frame_ms_max": 2.0,
+  "cpu_budget_bytes": 1048576,
+  "cpu_peak_bytes": 16384,
+  "gpu_budget_bytes": 2097152,
+  "gpu_peak_bytes": 32768,
+  "draw_calls": 2,
+  "cache_evictions": 0,
+  "layers": [
+    {
+      "path": "synthetic/source-a.las",
+      "source_file_bytes": 1000,
+      "source_points": 100
+    },
+    {
+      "path": "synthetic/source-b.laz",
+      "source_file_bytes": 2000,
+      "source_points": 200
+    }
+  ]
+}

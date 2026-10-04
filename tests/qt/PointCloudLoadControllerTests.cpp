@@ -1,5 +1,12 @@
-#include "import/PointCloudLoadController.h"
-#include "scene/SceneDocument.h"
+#include "support/DeterministicCompletionExecutor.h"
+#include <pci/desktop/dispatch/QtCompletionExecutor.h>
+#include <pci/operations/OperationTarget.h>
+
+#include <pci/adapters/storage/SecureStorage.h>
+#include <pci/desktop/operations/PointCloudLoadController.h>
+#include <pci/document/SceneDocument.h>
+
+#include <pci/operations/PointDatasetInstallation.h>
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -18,6 +25,19 @@
 #include <type_traits>
 #include <unordered_set>
 #include <vector>
+
+namespace pci {
+class PointCloudLoadControllerTestAccess {
+public:
+    static void executor(PointCloudLoadController &controller,
+                         const std::shared_ptr<CompletionExecutor> &executor)
+    {
+        controller.callbackTarget_ =
+            std::make_shared<OperationTarget<PointImportOperation>>(&controller,
+                                                                    executor);
+    }
+};
+} // namespace pci
 
 namespace {
 
@@ -58,11 +78,12 @@ TEST_CASE("shared load-job mechanics allocate and project explicit states",
     CHECK_FALSE(pci::terminalLoadJobCapabilities(true).canCancel);
 }
 
-pci::PointCloudScenePtr makeScene(const std::uint64_t count)
+std::shared_ptr<pci::PointDatasetPreparation>
+makePreparation(const std::uint64_t count)
 {
     pci::PointCloudMetadata metadata;
     metadata.sourcePointCount = count;
-    auto scene = std::make_shared<pci::PointCloudScene>(metadata);
+    auto scene = std::make_shared<pci::PointDatasetPreparation>(metadata);
     auto block = std::make_shared<pci::PointBlock>();
     block->points.resize(static_cast<std::size_t>(count));
     block->attributes.resize(static_cast<std::size_t>(count));
@@ -75,7 +96,7 @@ public:
     mutable std::atomic<QThread *> workerThread = nullptr;
     mutable std::atomic<bool> slowStarted = false;
 
-    pci::PointCloudScenePtr
+    pci::PreparedPointDatasetPtr
     load(const pci::PointCloudLoadOptions &options,
          const pci::PointCloudLoadResources &,
          const pci::PointCloudImportPreflight &,
@@ -93,10 +114,8 @@ public:
             throw pci::PointCloudImportCancelled();
         }
 
-        auto scene = makeScene(2);
-        if (context.sceneReady) {
-            context.sceneReady(scene);
-        }
+        auto scene = makePreparation(2);
+        scene->publish(context);
         if (context.progress) {
             context.progress({
                 .stage = pci::PointCloudImportStage::Reading,
@@ -109,7 +128,7 @@ public:
                 .total = 2,
             });
         }
-        return scene;
+        return scene->finish();
     }
 };
 
@@ -139,7 +158,7 @@ public:
         };
     }
 
-    pci::PointCloudScenePtr
+    pci::PreparedPointDatasetPtr
     load(const pci::PointCloudLoadOptions &options,
          const pci::PointCloudLoadResources &resources,
          const pci::PointCloudImportPreflight &preflight,
@@ -157,7 +176,7 @@ public:
             spatialPreview.push_back(preflight.spatialPreview);
         }
         pci::PointCloudMetadata metadata = preflight.metadata;
-        auto scene = std::make_shared<pci::PointCloudScene>(metadata);
+        auto scene = std::make_shared<pci::PointDatasetPreparation>(metadata);
         if (resources.flatReservation) {
             scene->setResidentMemoryReservation(resources.flatReservation);
         }
@@ -165,10 +184,8 @@ public:
         block->points.resize(static_cast<std::size_t>(retained));
         block->attributes.resize(static_cast<std::size_t>(retained));
         scene->addBlock(std::move(block));
-        if (context.sceneReady) {
-            context.sceneReady(scene);
-        }
-        return scene;
+        scene->publish(context);
+        return scene->finish();
     }
 
     mutable std::atomic<int> inspections = 0;
@@ -207,7 +224,7 @@ public:
         };
     }
 
-    pci::PointCloudScenePtr
+    pci::PreparedPointDatasetPtr
     load(const pci::PointCloudLoadOptions &,
          const pci::PointCloudLoadResources &resources,
          const pci::PointCloudImportPreflight &preflight,
@@ -220,7 +237,7 @@ public:
             preflight.spatialPreview) {
             receivedFlatAdmission = true;
         }
-        return makeScene(1);
+        return makePreparation(1)->finish();
     }
 
     static constexpr std::uint64_t rootBytes = 1024;
@@ -251,7 +268,7 @@ public:
         };
     }
 
-    pci::PointCloudScenePtr
+    pci::PreparedPointDatasetPtr
     load(const pci::PointCloudLoadOptions &,
          const pci::PointCloudLoadResources &,
          const pci::PointCloudImportPreflight &,
@@ -264,7 +281,7 @@ public:
         if (context.stopToken.stop_requested()) {
             throw pci::PointCloudImportCancelled();
         }
-        return makeScene(1);
+        return makePreparation(1)->finish();
     }
 
     mutable std::atomic<int> started = 0;
@@ -294,7 +311,7 @@ public:
         };
     }
 
-    pci::PointCloudScenePtr
+    pci::PreparedPointDatasetPtr
     load(const pci::PointCloudLoadOptions &,
          const pci::PointCloudLoadResources &,
          const pci::PointCloudImportPreflight &,
@@ -304,7 +321,7 @@ public:
             loadedBeforePreflight = true;
         }
         ++loads;
-        return makeScene(1);
+        return makePreparation(1)->finish();
     }
 
     mutable std::atomic<int> inspections = 0;
@@ -350,7 +367,7 @@ TEST_CASE("load controller runs loaders off-thread and signals its owner",
     pci::TaskScheduler scheduler;
     pci::PointCloudLoadController controller(loader, scheduler);
     QSignalSpy sceneReady(&controller,
-                          &pci::PointCloudLoadController::sceneReady);
+                          &pci::PointCloudLoadController::dataReady);
     QSignalSpy loaded(&controller, &pci::PointCloudLoadController::loaded);
     QSignalSpy progress(&controller,
                         &pci::PointCloudLoadController::progressChanged);
@@ -371,22 +388,25 @@ TEST_CASE("load controller runs loaders off-thread and signals its owner",
     REQUIRE(loaded.wait(2000));
     REQUIRE(loaded.count() == 1);
     CHECK(sceneReady.count() == 1);
-    REQUIRE(progress.count() == 2);
+    REQUIRE(progress.count() >= 1);
+    REQUIRE(progress.count() <= 2);
     // Every signal carries the originating job id as its first argument.
     CHECK(qvariant_cast<pci::PointCloudImportStage>(progress.at(0).at(1)) ==
           pci::PointCloudImportStage::Reading);
-    CHECK(progress.at(1).at(2).toULongLong() == 2);
-    CHECK(progress.at(1).at(3).toULongLong() == 2);
+    CHECK(progress.last().at(2).toULongLong() == 2);
+    CHECK(progress.last().at(3).toULongLong() == 2);
     CHECK(loader->workerThread.load() != QThread::currentThread());
     CHECK(signalThread == QThread::currentThread());
 
     const auto scene =
-        qvariant_cast<pci::PointCloudScenePtr>(loaded.at(0).at(1));
+        qvariant_cast<pci::PreparedPointDatasetPtr>(loaded.at(0).at(1));
     REQUIRE(scene != nullptr);
-    CHECK(scene->totalPointCount() == 2);
-    const auto earlyScene =
-        qvariant_cast<pci::PointCloudScenePtr>(sceneReady.at(0).at(1));
-    CHECK(earlyScene.get() == scene.get());
+    CHECK(scene->pointCount() == 2);
+    const auto event =
+        qvariant_cast<pci::PointDatasetEvent>(sceneReady.at(0).at(1));
+    const auto earlyScene = std::get<pci::PreparedPointDatasetPtr>(event.data);
+    CHECK(earlyScene->descriptor.sourceId == scene->descriptor.sourceId);
+    CHECK(earlyScene->blocks == scene->blocks);
 }
 
 TEST_CASE("load controller reports loader failures", "[qt][async]")
@@ -686,4 +706,169 @@ TEST_CASE("load job states retain recovery details and weighted progress",
     CHECK_FALSE(controller.jobState(jobId));
 }
 
+class StreamingLoader final : public pci::PointCloudLoader {
+public:
+    mutable std::atomic<int> fullQueues = 0;
+    mutable std::atomic<int> stopped = 0;
+
+    pci::PreparedPointDatasetPtr
+    load(const pci::PointCloudLoadOptions &options,
+         const pci::PointCloudLoadResources &,
+         const pci::PointCloudImportPreflight &,
+         const pci::PointCloudLoadContext &context) const override
+    {
+        auto forwarded = context;
+        if (options.sourcePath == "stale" || options.sourcePath == "sequence") {
+            forwarded.dataReady = [&](pci::PointDatasetEvent event) {
+                if (options.sourcePath == "stale") {
+                    ++event.token.attempt;
+                } else {
+                    ++event.sequence;
+                }
+                context.dataReady(std::move(event));
+            };
+        }
+        pci::PointDatasetPreparation dataset({});
+        dataset.publish(forwarded);
+        if (options.sourcePath == "missing") {
+            auto result =
+                std::make_shared<pci::PreparedPointDataset>(*dataset.finish());
+            ++result->eventCount;
+            return result;
+        }
+        try {
+            for (std::size_t i = 0; i < 160; ++i) {
+                if (i == 63) {
+                    ++fullQueues;
+                }
+                auto block = std::make_shared<pci::PointBlock>();
+                block->points.resize(1);
+                dataset.addBlock(std::move(block));
+            }
+            return dataset.finish();
+        } catch (const pci::PointCloudImportCancelled &) {
+            ++stopped;
+            throw;
+        }
+    }
+};
+
+TEST_CASE("controller wakes drain at most eight events fairly and shutdown "
+          "releases full queues",
+          "[qt][async][point-import][queue][shutdown]")
+{
+    auto loader = std::make_shared<StreamingLoader>();
+    auto executor =
+        std::make_shared<pci::test::DeterministicCompletionExecutor>();
+    pci::TaskScheduler scheduler(2);
+    auto controller =
+        std::make_unique<pci::PointCloudLoadController>(loader, scheduler);
+    pci::PointCloudLoadControllerTestAccess::executor(*controller, executor);
+    QSignalSpy events(controller.get(),
+                      &pci::PointCloudLoadController::dataReady);
+    QSignalSpy loaded(controller.get(), &pci::PointCloudLoadController::loaded);
+    const auto ids = controller->loadBatch({
+        {.options = {.sourcePath = "first", .maximumPoints = 160}},
+        {.options = {.sourcePath = "second", .maximumPoints = 160}},
+    });
+    scheduler
+        .waitForIdle(); // Inspections only; loading starts on owner delivery.
+    REQUIRE(executor->runNext());
+    REQUIRE(QTest::qWaitFor(
+        [&] {
+            return loader->fullQueues.load() == 2;
+        },
+        2000));
+    // Recovery ticks must not steal work from an accepted executor wake.
+    QTest::qWait(25);
+    REQUIRE(events.isEmpty());
+    CHECK(executor->pendingWakeCount() == 1);
+    REQUIRE(executor->runNext());
+    REQUIRE(events.count() == 8);
+    std::array<int, 2> counts{};
+    for (const auto &delivery : events) {
+        const auto id = delivery.front().value<pci::LoadJobId>();
+        ++counts[id == ids.front() ? 0 : 1];
+    }
+    CHECK(counts[0] == 4);
+    CHECK(counts[1] == 4);
+    // A producer may claim the next wake while its executor post is in flight.
+    REQUIRE(QTest::qWaitFor(
+        [&] {
+            return executor->pendingWakeCount() == 1;
+        },
+        2000));
+    CHECK(events.count() == 8);
+    controller.reset();
+    scheduler.waitForIdle(); // No owner drain is required to unblock producers.
+    CHECK(loader->stopped == 2);
+    while (executor->runNext()) {
+    }
+    CHECK(events.count() == 8);
+    CHECK(loaded.empty());
+}
+
+TEST_CASE("controller rejects stale identities sequences and incomplete "
+          "terminal streams",
+          "[qt][async][point-import][sequence]")
+{
+    for (const auto path : {"stale", "sequence", "missing"}) {
+        CAPTURE(path);
+        auto loader = std::make_shared<StreamingLoader>();
+        pci::TaskScheduler scheduler;
+        pci::PointCloudLoadController controller(loader, scheduler);
+        QSignalSpy failed(&controller, &pci::PointCloudLoadController::failed);
+        QSignalSpy loaded(&controller, &pci::PointCloudLoadController::loaded);
+        const auto id =
+            controller.load({.sourcePath = path, .maximumPoints = 160});
+        REQUIRE(failed.wait(2000));
+        CHECK(failed.count() == 1);
+        CHECK(loaded.empty());
+        REQUIRE(controller.jobState(id));
+        CHECK(controller.jobState(id)->phase ==
+              pci::PointCloudLoadJobPhase::Failed);
+    }
+}
+
+TEST_CASE("owner installation rejection never publishes Ready",
+          "[qt][async][point-import][transaction]")
+{
+    auto loader = std::make_shared<FakeLoader>();
+    pci::TaskScheduler scheduler;
+    pci::PointCloudLoadController controller(loader, scheduler);
+    QObject::connect(&controller,
+                     &pci::PointCloudLoadController::prepared,
+                     &controller,
+                     [](pci::LoadJobId, pci::PreparedPointDatasetPtr) {
+                         throw std::bad_alloc();
+                     });
+    QSignalSpy failed(&controller, &pci::PointCloudLoadController::failed);
+    QSignalSpy loaded(&controller, &pci::PointCloudLoadController::loaded);
+    const auto id = controller.load({.sourcePath = "success"});
+    REQUIRE(failed.wait(2000));
+    CHECK(loaded.empty());
+    CHECK(controller.jobState(id)->phase ==
+          pci::PointCloudLoadJobPhase::Failed);
+}
+
 } // namespace
+
+TEST_CASE("a rejected ingestion wake still reaches its terminal state",
+          "[qt][async][point-import][terminal]")
+{
+    auto loader = std::make_shared<FakeLoader>();
+    auto executor =
+        std::make_shared<pci::test::DeterministicCompletionExecutor>();
+    pci::TaskScheduler scheduler;
+    pci::PointCloudLoadController controller(loader, scheduler);
+    pci::PointCloudLoadControllerTestAccess::executor(controller, executor);
+    QSignalSpy loaded(&controller, &pci::PointCloudLoadController::loaded);
+    const auto id = controller.load({.sourcePath = "success"});
+    scheduler.waitForIdle();
+    executor->rejectWakeRequests();
+    REQUIRE(executor->runNext()); // Starts the worker; all ingestion wakes are
+                                  // rejected.
+    REQUIRE(loaded.wait(2000));
+    CHECK(loaded.count() == 1);
+    CHECK(controller.jobState(id)->phase == pci::PointCloudLoadJobPhase::Ready);
+}

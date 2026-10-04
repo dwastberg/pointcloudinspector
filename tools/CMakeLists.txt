@@ -2,7 +2,7 @@
 add_executable(pci_load_bench pci_load_bench.cpp)
 target_link_libraries(pci_load_bench PRIVATE
         pcinspector::app_config
-        pcinspector::import_pdal
+        pcinspector::import_pdal pcinspector::operations
         pcinspector::platform)
 set_target_properties(pci_load_bench PROPERTIES FOLDER Tools)
 pci_configure_target(pci_load_bench)
@@ -12,8 +12,10 @@ pci_configure_target(pci_load_bench)
 add_executable(pci_residency_bench pci_residency_bench.cpp)
 target_link_libraries(pci_residency_bench PRIVATE
         pcinspector::app_config
-        pcinspector::import_pdal
-        pcinspector::platform)
+        pcinspector::document
+        pcinspector::import_pdal pcinspector::operations
+        pcinspector::platform
+        pcinspector::scene_runtime)
 set_target_properties(pci_residency_bench PROPERTIES FOLDER Tools)
 pci_configure_target(pci_residency_bench)
 
@@ -22,9 +24,11 @@ pci_configure_target(pci_residency_bench)
 add_executable(pci_multifile_bench pci_multifile_bench.cpp)
 target_link_libraries(pci_multifile_bench PRIVATE
         pcinspector::app_config
-        pcinspector::import_async
-        pcinspector::import_pdal
-        pcinspector::platform)
+        pcinspector::document
+        pcinspector::desktop_operations
+        pcinspector::import_pdal pcinspector::operations
+        pcinspector::platform
+        pcinspector::scene_runtime)
 set_target_properties(pci_multifile_bench PROPERTIES FOLDER Tools)
 pci_configure_target(pci_multifile_bench)
 
@@ -32,7 +36,8 @@ pci_configure_target(pci_multifile_bench)
 # default invocation processes 22.9M stored hierarchy samples.
 add_executable(pci_raster_colorize_bench pci_raster_colorize_bench.cpp)
 target_link_libraries(pci_raster_colorize_bench PRIVATE
-        pcinspector::scene)
+        pcinspector::operation_local
+        pcinspector::operations)
 set_target_properties(pci_raster_colorize_bench PROPERTIES FOLDER Tools)
 pci_configure_target(pci_raster_colorize_bench)
 
@@ -43,7 +48,7 @@ add_executable(pci_qualification_diff
         qualification/QualificationDiff.cpp)
 target_include_directories(pci_qualification_diff PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}"
-        "${PROJECT_SOURCE_DIR}/src")
-target_link_libraries(pci_qualification_diff PRIVATE Qt6::Core)
+)
+target_link_libraries(pci_qualification_diff PRIVATE pcinspector::platform Qt6::Core)
 set_target_properties(pci_qualification_diff PROPERTIES FOLDER Tools)
 pci_configure_target(pci_qualification_diff)

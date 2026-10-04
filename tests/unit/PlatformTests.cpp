@@ -1,5 +1,5 @@
-#include "platform/ProcessMemory.h"
-#include "platform/SystemMemoryInfo.h"
+#include <pci/adapters/platform/ProcessMemory.h>
+#include <pci/adapters/platform/SystemMemoryInfo.h>
 
 #include <catch2/catch_test_macros.hpp>
 

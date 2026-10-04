@@ -1,7 +1,10 @@
-#include "renderer/rhi/VectorLayerRenderer.h"
+#include <pci/rendering/rhi/VectorLayerRenderer.h>
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+
+#include <algorithm>
+#include <cstddef>
 
 namespace {
 
@@ -54,6 +57,16 @@ TEST_CASE("vector uniform staging preserves aligned records",
     const auto bytes = pci::stageVectorLayerUniforms(
         {&draw, 1}, sizeof(pci::VectorLayerUniform) + 16);
     CHECK(bytes.size() == sizeof(pci::VectorLayerUniform) + 16);
+    CHECK(std::ranges::all_of(
+        bytes.begin() +
+            static_cast<std::ptrdiff_t>(sizeof(pci::VectorLayerUniform)),
+        bytes.end(),
+        [](const std::byte value) {
+            return value == std::byte{};
+        }));
+    CHECK_THROWS_AS(
+        pci::stageVectorLayerUniforms({}, sizeof(pci::VectorLayerUniform) - 1),
+        std::invalid_argument);
 }
 
 TEST_CASE("vector culling rejects layers wholly before the near plane",

@@ -1,8 +1,9 @@
-#include "import/gdal/GdalRuntime.h"
+#include <pci/adapters/gdal/runtime/GdalRuntime.h>
 
 #include <catch2/catch_test_macros.hpp>
 
 #include <cstdint>
+#include <filesystem>
 
 namespace {
 
@@ -94,6 +95,29 @@ TEST_CASE("GDAL error scope starts empty and nests", "[component][gdal]")
         CHECK(inner.message().empty());
     }
     CHECK(outer.message().empty());
+}
+
+TEST_CASE("GDAL shared open helper owns errors and path formatting",
+          "[component][gdal][ownership]")
+{
+    const std::filesystem::path missing =
+        "path-that-does-not-exist/source.gpkg";
+    const pci::GdalDatasetOpenResult raster =
+        pci::tryOpenGdalDataset(missing, pci::GdalDatasetKind::Raster);
+    CHECK_FALSE(raster.dataset);
+    CHECK_FALSE(raster.error.empty());
+
+    const pci::GdalDatasetOpenResult vector =
+        pci::tryOpenGdalDataset(missing, pci::GdalDatasetKind::Vector);
+    CHECK_FALSE(vector.dataset);
+    CHECK_FALSE(vector.error.empty());
+
+    CHECK(pci::gdalOpenFailureMessage("vector", missing, "driver detail") ==
+          "Could not open vector source 'path-that-does-not-exist/"
+          "source.gpkg': driver detail");
+    CHECK(pci::gdalOpenFailureMessage("raster", missing) ==
+          "Could not open raster source 'path-that-does-not-exist/"
+          "source.gpkg'");
 }
 
 } // namespace

@@ -1,6 +1,6 @@
-#include "app/ClassificationFilterDialog.h"
+#include <pci/desktop/ui/ClassificationFilterDialog.h>
 
-#include "pointcloud/PointColorMapCatalog.h"
+#include <pci/color/PointColorMapCatalog.h>
 
 #include <catch2/catch_test_macros.hpp>
 

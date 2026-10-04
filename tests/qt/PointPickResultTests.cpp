@@ -1,4 +1,4 @@
-#include "renderer/rhi/PointPicker.h"
+#include <pci/rendering/rhi/PointPicker.h>
 
 #include <catch2/catch_test_macros.hpp>
 

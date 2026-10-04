@@ -1,8 +1,8 @@
-#include "pointcloud/PointColorMapCatalog.h"
-#include "renderer/PointColorMapAtlas.h"
-#include "renderer/rhi/EyeDomeLightingPass.h"
-#include "renderer/rhi/PointCloudRenderer.h"
 #include "support/TestPointColorMaps.h"
+#include <pci/color/PointColorMapCatalog.h>
+#include <pci/rendering/rhi/EyeDomeLightingPass.h>
+#include <pci/rendering/rhi/PointCloudRenderer.h>
+#include <pci/rendering/rhi/PointColorMapAtlas.h>
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -144,6 +144,7 @@ TEST_CASE("uniform staging packs draws and zeroes alignment gaps",
     std::memcpy(&second, staged.data() + stride, sizeof(second));
     CHECK(first.pointSize == 2.5F);
     CHECK(first.idBase == 17);
+    CHECK(first.reservedColorMap == 0);
     CHECK(first.classificationMask[0] == 0x00000004U);
     CHECK(second.pointSize == 7.0F);
     CHECK(second.idBase == 42);
@@ -169,6 +170,42 @@ TEST_CASE("uniform staging rejects an undersized stride",
     CHECK_THROWS_AS(
         pci::stageBlockUniforms(draws, sizeof(pci::BlockUniform) - 1),
         std::invalid_argument);
+    CHECK_THROWS_AS(pci::stageBlockUniforms({}, sizeof(pci::BlockUniform) - 1),
+                    std::invalid_argument);
+}
+
+TEST_CASE("uniform staging clears reused caller-owned storage",
+          "[qt][renderer][batching]")
+{
+    constexpr std::size_t stride = sizeof(pci::BlockUniform) + 32;
+    std::vector<pci::BlockDraw> draws(2);
+    draws[0].uniform.idBase = 23;
+    draws[1].uniform.idBase = 42;
+    std::vector<std::byte> staging;
+    pci::stageUniformRecords(std::span<const pci::BlockDraw>(draws),
+                             stride,
+                             &pci::BlockDraw::uniform,
+                             staging,
+                             "stride",
+                             "size");
+    std::ranges::fill(staging, std::byte{0x7f});
+
+    pci::stageUniformRecords(std::span<const pci::BlockDraw>(draws).first(1),
+                             stride,
+                             &pci::BlockDraw::uniform,
+                             staging,
+                             "stride",
+                             "size");
+    REQUIRE(staging.size() == stride);
+    pci::BlockUniform copy;
+    std::memcpy(&copy, staging.data(), sizeof(copy));
+    CHECK(copy.idBase == 23);
+    CHECK(std::ranges::all_of(staging.begin() +
+                                  static_cast<std::ptrdiff_t>(sizeof(copy)),
+                              staging.end(),
+                              [](const std::byte value) {
+                                  return value == std::byte{};
+                              }));
 }
 
 TEST_CASE("color map atlas provides padded portable lookup rows",

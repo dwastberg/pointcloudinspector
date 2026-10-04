@@ -1,4 +1,4 @@
-#include "app/SettingsDialog.h"
+#include <pci/desktop/ui/SettingsDialog.h>
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>

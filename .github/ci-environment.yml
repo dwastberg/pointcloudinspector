@@ -4,7 +4,7 @@ channels:
   - conda-forge
 
 dependencies:
-  - clang-format
+  - clang-format=22.1.8
   - cmake>=3.24
   - cxx-compiler
   - libgdal-core>=3.9

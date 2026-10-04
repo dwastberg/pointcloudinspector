@@ -21,11 +21,33 @@ It is built with C++23, Qt 6, PDAL, and GDAL.
   not draped, not lit by eye-dome lighting, and not pickable. Display quality
   depends on the overviews the dataset provides; add them with `gdaladdo`.
 
+## Disk storage cleanup
+
+Open **Settings → Disk Storage** to see estimated file sizes for point-cloud
+caches, temporary working files, and legacy storage. **Refresh** rescans usage;
+**Open Folder** shows each storage location.
+
+**Clean unused files** runs in the background and keeps files used by open
+datasets, imports, colorization, or another app instance. Source datasets and
+settings are preserved. Cleanup takes effect immediately; cancelling Settings
+does not restore deleted files. Clearing a reusable cache makes the next import
+rebuild it.
+
+**Clean legacy files…** handles older storage that cannot always identify its
+owner. Close other app instances and check the confirmation before cleaning it.
+Known active files are still protected. Errors and incomplete scans are shown
+in the dialog; reported sizes estimate file contents, not physical disk blocks.
+
+New point caches use `point-pages-v3` so older app versions cannot bypass the
+cleanup ownership protocol. Existing `point-pages-v2` caches remain visible as
+legacy storage; the first import in the new version rebuilds its cache.
+
 ## Building
 
 ### Requirements
 
 - CMake 3.24 or newer
+- clang-format 22.1.8 for formatting checks (CMake rejects a different detected version)
 - A C++23 compiler: GCC 12+, Clang 16+, AppleClang 15+, or MSVC 19.33+
 - Qt 6.7 or newer, including its private GUI headers and ShaderTools
 - PDAL 2.10 or newer
@@ -75,6 +97,42 @@ cmake --install build/release --config Release --prefix dist
 
 If CMake cannot find a dependency, provide its installation prefix through
 `CMAKE_PREFIX_PATH`, `Qt6_ROOT`, or `PDAL_ROOT`.
+
+## Architecture and validation
+
+See the [ownership and extension guide](docs/refactor-architecture.md) for module
+boundaries, operation lifetimes, cache eviction and admitted colorization scratch.
+The [refactor progress ledger](PCI_REFACTOR_PROGRESS.md) records executed checks
+and remaining qualification limitations.
+
+```sh
+cmake --build --preset development --target header-self-containment format-check
+cmake -DBUILD_DIR=build/development -DCTEST_CONFIGURATION=Debug -P tests/cmake/CheckQualificationTestRegistration.cmake
+ctest --preset development -L architecture --output-on-failure --no-tests=error
+ctest --preset development -R '^qualification_diff_' --output-on-failure --no-tests=error
+cmake -DPCINSPECTOR_LOCAL_CHECK_JOBS=4 -P cmake/RunFullChecks.cmake
+```
+
+Native GPU tests use the `native-gpu` preset on a host with a working native
+graphics/display environment. Remote Linux/Windows/macOS CI execution is separate
+from locally passing checks.
+
+### CLion formatting
+
+Use external **clang-format 22.1.8** and the repository `.clang-format`. That version
+is pinned in CI dependency environments and is available for Linux, Windows and
+macOS in the [conda-forge package files](https://anaconda.org/channels/conda-forge/packages/clang-format/files).
+Set `PCINSPECTOR_CLANG_FORMAT_EXECUTABLE` when the pinned executable is not first
+on PATH; on the current macOS development host it is
+`/opt/homebrew/bin/clang-format`.
+
+In CLion Settings, enable ClangFormat under Editor → Code Style → C/C++, select
+the external executable under the ClangFormat tool settings, and use the project
+configuration file. Under Tools → Actions on Save, enable Reformat code for C/C++
+and select the whole file rather than changed lines. Verify the selected binary
+with `clang-format --version`; the bundled IDE formatter may be a different
+version. Reload the CMake project after module moves. Run `format-check` to verify
+that IDE formatting agrees with CI.
 
 ## Command line
 

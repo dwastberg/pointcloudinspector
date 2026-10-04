@@ -1,5 +1,5 @@
-#include "app/VectorColorButton.h"
 #include <catch2/catch_test_macros.hpp>
+#include <pci/desktop/ui/VectorColorButton.h>
 TEST_CASE("vector color button normalizes RGBA values", "[ui][vector]")
 {
     pci::VectorColorButton button;

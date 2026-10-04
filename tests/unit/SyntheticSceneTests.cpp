@@ -1,5 +1,5 @@
-#include "development/SyntheticPointCloud.h"
-#include "development/SyntheticScene.h"
+#include <pci/development/SyntheticPointCloud.h>
+#include <pci/development/SyntheticScene.h>
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>

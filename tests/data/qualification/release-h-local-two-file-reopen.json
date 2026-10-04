@@ -1,0 +1,29 @@
+{
+  "schema": "pcinspector.release-h.v1",
+  "timestamp_utc": "2000-01-02T00:00:00.000Z",
+  "status": "ok",
+  "source_count": 2,
+  "source_file_bytes": 3000,
+  "first_any_preview_ms": 8.0,
+  "first_all_preview_ms": 12.0,
+  "import_ms": 18.0,
+  "persistent_index_bytes": 400,
+  "persistent_sources": 2,
+  "reused_persistent_sources": 2,
+  "cpu_budget_bytes": 1048576,
+  "decoded_resident_bytes": 8192,
+  "decoded_peak_bytes": 12288,
+  "bounded": true,
+  "sources": [
+    {
+      "path": "synthetic/source-a.las",
+      "source_file_bytes": 1000,
+      "source_points": 100
+    },
+    {
+      "path": "synthetic/source-b.laz",
+      "source_file_bytes": 2000,
+      "source_points": 200
+    }
+  ]
+}

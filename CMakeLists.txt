@@ -116,11 +116,19 @@ include(cmake/PciProjectOptions.cmake)
 include(cmake/PciColorMaps.cmake)
 include(cmake/PciShaders.cmake)
 include(cmake/PciArchitecture.cmake)
+include(cmake/PciHeaderSelfContainment.cmake)
 
 find_program(PCINSPECTOR_CLANG_FORMAT_EXECUTABLE
              NAMES clang-format
              DOC "clang-format executable used by format targets")
 if(PCINSPECTOR_CLANG_FORMAT_EXECUTABLE)
+    execute_process(COMMAND "${PCINSPECTOR_CLANG_FORMAT_EXECUTABLE}" --version
+        OUTPUT_VARIABLE pcinspector_formatter_version OUTPUT_STRIP_TRAILING_WHITESPACE
+        RESULT_VARIABLE pcinspector_formatter_result)
+    if(NOT pcinspector_formatter_result EQUAL 0 OR
+       NOT pcinspector_formatter_version MATCHES "version 22\\.1\\.8($|[ \t])")
+        message(FATAL_ERROR "clang-format 22.1.8 is required; found: ${pcinspector_formatter_version}. Set PCINSPECTOR_CLANG_FORMAT_EXECUTABLE to the pinned formatter.")
+    endif()
     file(GLOB_RECURSE pcinspector_format_sources
          CONFIGURE_DEPENDS
          "${PROJECT_SOURCE_DIR}/src/*.cpp"

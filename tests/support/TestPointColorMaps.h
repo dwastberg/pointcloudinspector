@@ -1,6 +1,6 @@
 #pragma once
 
-#include "pointcloud/PointColorMapCatalog.h"
+#include <pci/color/PointColorMapCatalog.h>
 
 #include <stdexcept>
 #include <utility>

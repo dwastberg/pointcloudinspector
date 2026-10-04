@@ -1,7 +1,8 @@
-#include "scene/RasterPointColorizer.h"
+#include <pci/operations/RasterPointColorizer.h>
 
-#include "scene/PointCloudScene.h"
-#include "scene/RasterColorizedPointSource.h"
+#include "support/InMemoryRasterColorizeRunStore.h"
+#include <pci/runtime/point/PointDatasetRuntime.h>
+#include <pci/runtime/point/RasterColorizedPointSource.h>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -246,7 +247,7 @@ reserve(const pci::PointMemoryBudgetPtr &budget, const std::uint64_t bytes)
 }
 
 [[nodiscard]] std::optional<pci::RasterColorizePreparedPtr>
-colorize(const std::shared_ptr<pci::PointCloudScene> &scene,
+colorize(const std::shared_ptr<pci::PointDatasetRuntime> &scene,
          const pci::RasterTileSourcePtr &raster,
          const pci::PointMemoryBudgetPtr &budget,
          const std::filesystem::path &temporaryDirectory,
@@ -282,6 +283,7 @@ colorize(const std::shared_ptr<pci::PointCloudScene> &scene,
         std::move(workingReservation),
         std::move(rootReservation),
         std::move(flatReservation),
+        pci::test::inMemoryRasterColorizeRunStoreFactory(),
         {},
         [progress](const pci::RasterColorizeProgress value) {
             if (progress) {
@@ -307,7 +309,7 @@ TEST_CASE("flat raster colorization applies rebakes and reverts atomically",
         {.x = 2, .y = 2, .z = 0, .rgba = source2},
     };
 
-    auto scene = std::make_shared<pci::PointCloudScene>(
+    auto scene = std::make_shared<pci::PointDatasetRuntime>(
         pci::PointCloudMetadata{.sourcePointCount = 3});
     scene->addBlock(block);
     scene->markLoadingComplete();
@@ -332,10 +334,10 @@ TEST_CASE("flat raster colorization applies rebakes and reverts atomically",
     CHECK(progress.back().phase == pci::RasterColorizePhase::SamplingRaster);
     CHECK(progress.back().completed == progress.back().total);
 
-    CHECK(scene->applyRasterPointColors(*first) ==
-          pci::RasterPointColorApplyOutcome::Applied);
+    CHECK(scene->applyRasterPointColors(pci::preparePointColorInstallation(
+              *first)) == pci::RasterPointColorApplyOutcome::Applied);
     CHECK(scene->hasRasterPointColors());
-    const auto bakedEntry = scene->blockEntries().front();
+    auto bakedEntry = scene->blockEntries().front();
     CHECK(bakedEntry.id == originalEntry.id);
     CHECK(bakedEntry.block != originalEntry.block);
     REQUIRE(bakedEntry.block->points.size() == 3);
@@ -350,24 +352,45 @@ TEST_CASE("flat raster colorization applies rebakes and reverts atomically",
     REQUIRE(*second);
     CHECK((*second)->statistics.pointsColored == 2);
     CHECK((*second)->statistics.pointsUnchanged == 1);
-    CHECK(scene->applyRasterPointColors(*second) ==
-          pci::RasterPointColorApplyOutcome::Applied);
-    const auto rebakedEntry = scene->blockEntries().front();
+    CHECK(scene->applyRasterPointColors(pci::preparePointColorInstallation(
+              *second)) == pci::RasterPointColorApplyOutcome::Applied);
+    auto rebakedEntry = scene->blockEntries().front();
     CHECK(rebakedEntry.id == originalEntry.id);
     CHECK(rebakedEntry.block->points[0].rgba == expectedColor(20, 0, 0));
     // Transparency restores source color, not the prior raster bake.
     CHECK(rebakedEntry.block->points[1].rgba == source1);
     CHECK(rebakedEntry.block->points[2].rgba == expectedColor(20, 2, 2));
 
+    auto capturedTarget = scene->rasterPointColorizeTarget();
+    REQUIRE(capturedTarget);
+    auto sourceColors =
+        std::get<pci::RasterColorizeFlatTarget>(capturedTarget->data)
+            .sourceColors;
+    REQUIRE(sourceColors);
+    capturedTarget.reset();
+
     CHECK(scene->revertPointColors() ==
           pci::RasterPointColorApplyOutcome::Applied);
     CHECK_FALSE(scene->hasRasterPointColors());
-    const auto revertedEntry = scene->blockEntries().front();
+    auto revertedEntry = scene->blockEntries().front();
     CHECK(revertedEntry.id == originalEntry.id);
     REQUIRE(revertedEntry.block->points.size() == 3);
     CHECK(revertedEntry.block->points[0].rgba == source0);
     CHECK(revertedEntry.block->points[1].rgba == source1);
     CHECK(revertedEntry.block->points[2].rgba == source2);
+    // Retained frame/upload blocks must keep their allocation charges after
+    // rebake, revert, and destruction of the dataset itself.
+    const auto blockBytes = 3 * sizeof(pci::GpuPoint);
+    CHECK(budget->reservedBytes() >= 3 * blockBytes);
+    scene.reset();
+    CHECK(budget->reservedBytes() >= 3 * blockBytes);
+    bakedEntry.block.reset();
+    rebakedEntry.block.reset();
+    CHECK(budget->reservedBytes() >= blockBytes);
+    revertedEntry.block.reset();
+    CHECK(budget->reservedBytes() >=
+          sourceColors->capacity() * sizeof(std::uint32_t));
+    sourceColors.reset();
     CHECK(budget->reservedBytes() == 0);
 }
 
@@ -380,7 +403,7 @@ TEST_CASE("cancelled raster colorization produces no prepared transaction",
     block->bounds.minimum = {0.0, 0.0, 0.0};
     block->bounds.maximum = {0.0, 0.0, 0.0};
     block->points = {{.x = 0, .y = 0, .z = 0, .rgba = 0xff123456U}};
-    auto scene = std::make_shared<pci::PointCloudScene>(
+    auto scene = std::make_shared<pci::PointDatasetRuntime>(
         pci::PointCloudMetadata{.sourcePointCount = 1});
     scene->addBlock(block);
     scene->markLoadingComplete();
@@ -408,6 +431,7 @@ TEST_CASE("cancelled raster colorization produces no prepared transaction",
         reserve(budget, preflight.workingReservationBytes),
         reserve(budget, preflight.rootStagingReservationBytes),
         reserve(budget, preflight.flatStagingReservationBytes),
+        pci::test::inMemoryRasterColorizeRunStoreFactory(),
         stop.get_token(),
         {});
     CHECK_FALSE(result.has_value());
@@ -426,7 +450,7 @@ TEST_CASE("raster colorization rejects unbounded run fan-in before writing",
     block->bounds.minimum = {0.0, 0.0, 0.0};
     block->bounds.maximum = {0.0, 0.0, 0.0};
     block->points.resize(257, {.x = 0, .y = 0, .z = 0, .rgba = 0xff123456U});
-    auto scene = std::make_shared<pci::PointCloudScene>(
+    auto scene = std::make_shared<pci::PointDatasetRuntime>(
         pci::PointCloudMetadata{.sourcePointCount = block->points.size()});
     scene->addBlock(std::move(block));
     scene->markLoadingComplete();
@@ -456,6 +480,7 @@ TEST_CASE("raster colorization rejects unbounded run fan-in before writing",
             reserve(budget, preflight.workingReservationBytes),
             reserve(budget, preflight.rootStagingReservationBytes),
             reserve(budget, preflight.flatStagingReservationBytes),
+            pci::test::inMemoryRasterColorizeRunStoreFactory(),
             {},
             {}));
     } catch (const pci::RasterColorizeError &error) {
@@ -487,7 +512,7 @@ TEST_CASE("parallel raster sampling reads each addressed tile once",
                      .rgba = 0xff010203U});
             }
         }
-        auto scene = std::make_shared<pci::PointCloudScene>(
+        auto scene = std::make_shared<pci::PointDatasetRuntime>(
             pci::PointCloudMetadata{.sourcePointCount = 64});
         scene->addBlock(std::move(block));
         scene->markLoadingComplete();
@@ -543,7 +568,7 @@ TEST_CASE(
     pci::PointCloudMetadata metadata;
     metadata.sourcePointCount = sourceColors.size();
     metadata.sourceBounds = root->blocks.front()->bounds;
-    auto scene = std::make_shared<pci::PointCloudScene>(
+    auto scene = std::make_shared<pci::PointDatasetRuntime>(
         metadata, source, root, 1024 * 1024);
     auto raster = std::make_shared<GridRasterSource>(std::uint8_t{10});
     auto budget = std::make_shared<pci::PointMemoryBudget>(64ULL * 1024 * 1024);
@@ -557,8 +582,9 @@ TEST_CASE(
     CHECK((*result)->statistics.pointsColored == 4);
     CHECK((*result)->statistics.tileReads == 1);
     CHECK(source->loads() == 1);
+    auto installation = pci::preparePointColorInstallation(*result);
     auto &prepared =
-        std::get<pci::RasterColorizePreparedHierarchy>((*result)->data);
+        std::get<pci::PointColorHierarchyInstallation>(installation->data);
     auto decorated = std::dynamic_pointer_cast<pci::RasterColorizedPointSource>(
         prepared.colorizedSource);
     REQUIRE(decorated != nullptr);
@@ -568,7 +594,7 @@ TEST_CASE(
           expectedColor(10, 0, 0));
     decorated.reset();
 
-    CHECK(scene->applyRasterPointColors(*result) ==
+    CHECK(scene->applyRasterPointColors(std::move(installation)) ==
           pci::RasterPointColorApplyOutcome::Applied);
     CHECK(scene->hasRasterPointColors());
     const pci::RasterPointColorMetrics before =
@@ -612,7 +638,7 @@ TEST_CASE(
     REQUIRE(reverted);
     CHECK(reverted->blocks.front()->points[0].rgba == sourceColors[0]);
     CHECK(reverted->blocks.front()->points[1].rgba == sourceColors[2]);
-    CHECK(budget->reservedBytes() == 0);
+    CHECK(budget->reservedBytes() >= 4 * sizeof(pci::GpuPoint));
 }
 
 TEST_CASE(
@@ -639,4 +665,128 @@ TEST_CASE(
     CHECK(mismatch.countMismatchCount() == 1);
 }
 
+TEST_CASE(
+    "prepared color commits ignore residency churn and reject obsolete content",
+    "[unit][colorize][transaction]")
+{
+    const auto root = hierarchyRoot({0xff000001U, 0xff000002U});
+    auto source = std::make_shared<HierarchySource>(root);
+    auto runtime = std::make_shared<pci::PointDatasetRuntime>(
+        pci::PointCloudMetadata{.sourcePointCount = 2},
+        source,
+        root,
+        1024 * 1024);
+    auto budget = std::make_shared<pci::PointMemoryBudget>(64ULL * 1024 * 1024);
+    TemporaryDirectory directory;
+    auto result = colorize(runtime,
+                           std::make_shared<GridRasterSource>(std::uint8_t{10}),
+                           budget,
+                           directory.path());
+    REQUIRE(result);
+    auto installation = pci::preparePointColorInstallation(*result);
+    auto first = runtime->preparePointColors(installation);
+    auto duplicate = runtime->preparePointColors(installation);
+    REQUIRE(first);
+    REQUIRE(duplicate);
+    const auto revision = runtime->revision();
+    runtime->useStandaloneHierarchyResidency();
+    REQUIRE(runtime->revision() != revision);
+    CHECK_FALSE(runtime->hasRasterPointColors());
+    REQUIRE(runtime->prepareColorCommit(*first));
+    runtime->commitPointColors(*first);
+    first.reset();
+    CHECK(runtime->hasRasterPointColors());
+    CHECK_FALSE(runtime->prepareColorCommit(*duplicate));
+    duplicate.reset();
+    const auto colored = runtime->peekNodePayload(pci::rootPointCloudNode);
+    REQUIRE(colored);
+    CHECK(colored->blocks.front()->points.front().rgba ==
+          expectedColor(10, 0, 0));
+    auto abandonedRevert = runtime->preparePointColors();
+    REQUIRE(abandonedRevert);
+    abandonedRevert.reset();
+    CHECK(runtime->peekNodePayload(pci::rootPointCloudNode) == colored);
+    CHECK(runtime->hasRasterPointColors());
+}
+
 } // namespace
+
+TEST_CASE("colorization admits one writer buffer shared by all workers and "
+          "releases it on failure",
+          "[unit][colorize][scratch][admission]")
+{
+    for (bool fail : {false, true}) {
+        TemporaryDirectory directory;
+        auto budget =
+            std::make_shared<pci::PointMemoryBudget>(64 * 1024 * 1024);
+        auto root = hierarchyRoot({1, 2, 3});
+        auto scene = std::make_shared<pci::PointDatasetRuntime>(
+            pci::PointCloudMetadata{},
+            std::make_shared<HierarchySource>(root),
+            root);
+        auto raster = std::make_shared<GridRasterSource>(0);
+        pci::RasterColorizeOptions options{.workerCount = 2,
+                                           .maximumScatterRecords = 2,
+                                           .temporaryDirectory =
+                                               directory.path(),
+                                           .maximumWriterScratchBytes = 12};
+        auto target = scene->rasterPointColorizeTarget();
+        REQUIRE(target);
+        auto preflight = pci::preflightRasterPointColorize(
+            *target, raster->metadata(), options);
+        CHECK(preflight.writerScratchBytes == 12);
+        options.maximumWriterScratchBytes = 65536;
+        auto full = pci::preflightRasterPointColorize(
+            *target, raster->metadata(), options);
+        CHECK(full.workingReservationBytes -
+                  preflight.workingReservationBytes ==
+              65536 - 12);
+        options.maximumWriterScratchBytes = 11;
+        CHECK_THROWS_AS(pci::preflightRasterPointColorize(
+                            *target, raster->metadata(), options),
+                        pci::RasterColorizeError);
+        options.maximumWriterScratchBytes = 12;
+        std::vector<std::pair<const std::byte *, std::size_t>> observations;
+        std::vector<std::uint64_t> admitted;
+        const auto factory = [&](const std::filesystem::path &) {
+            return std::make_unique<pci::test::InMemoryRasterColorizeRunStore>(
+                [&](std::span<std::byte> scratch) {
+                    observations.emplace_back(scratch.data(), scratch.size());
+                    admitted.push_back(budget->reservedBytes());
+                    if (fail)
+                        throw pci::RasterColorizeRunStoreError(
+                            "injected run failure");
+                });
+        };
+        const auto run = [&] {
+            return pci::colorizePointCloudFromRaster(
+                preflight,
+                raster,
+                std::make_shared<pci::RasterDecodeParameters>(),
+                1,
+                options,
+                reserve(budget, preflight.tableEntries * sizeof(std::uint32_t)),
+                reserve(budget, preflight.workingReservationBytes),
+                reserve(budget, preflight.rootStagingReservationBytes),
+                reserve(budget, preflight.flatStagingReservationBytes),
+                factory,
+                {},
+                {});
+        };
+        if (fail)
+            CHECK_THROWS(run());
+        else {
+            auto result = run();
+            REQUIRE(result);
+        }
+        REQUIRE_FALSE(observations.empty());
+        if (!fail)
+            CHECK(observations.size() > 1);
+        for (std::size_t i = 0; i < observations.size(); ++i) {
+            CHECK(observations[i] == observations.front());
+            CHECK(observations[i].second == 12);
+            CHECK(admitted[i] >= preflight.workingReservationBytes);
+        }
+        CHECK(budget->reservedBytes() == 0);
+    }
+}

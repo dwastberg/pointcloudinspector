@@ -1,10 +1,12 @@
-#include "app/ApplicationOptions.h"
 #include "fixtures/GdalRasterFixtureFactory.h"
-#include "import/gdal/GdalRasterLoader.h"
-#include "renderer/rhi/RenderViewportWidget_p.h"
-#include "scene/PointCloudScene.h"
-#include "storage/SecureStorage.h"
 #include "support/RenderViewportTestAccess.h"
+#include "support/SceneRuntimeFixture.h"
+#include <pci/adapters/gdal/GdalRasterLoader.h>
+#include <pci/adapters/storage/SecureStorage.h>
+#include <pci/desktop/config/ApplicationOptions.h>
+#include <pci/desktop/viewport/RenderViewportWidget_p.h>
+#include <pci/document/SceneDocument.h>
+#include <pci/runtime/point/PointDatasetRuntime.h>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -322,7 +324,7 @@ patternLayer(pci::RasterLayerMetadata metadata, LevelPainter painter)
     });
 }
 
-[[nodiscard]] pci::PointCloudScenePtr coplanarPointGrid()
+[[nodiscard]] pci::PointDatasetRuntimePtr coplanarPointGrid()
 {
     constexpr int cells = 21;
     pci::PointCloudMetadata metadata;
@@ -332,7 +334,7 @@ patternLayer(pci::RasterLayerMetadata metadata, LevelPainter painter)
         .maximum = {90.0, 90.0, 0.01},
     };
     metadata.hasColor = true;
-    auto scene = std::make_shared<pci::PointCloudScene>(metadata);
+    auto scene = std::make_shared<pci::PointDatasetRuntime>(metadata);
     auto block = std::make_shared<pci::PointBlock>();
     block->origin = {-100.0, -100.0, -1.0};
     block->scale = 200.0 / 65535.0;
@@ -570,7 +572,8 @@ TEST_CASE("GPU raster streaming wakes an otherwise idle viewport",
 {
     std::shared_ptr<PatternSource> source;
     auto document = std::make_shared<pci::SceneDocument>();
-    static_cast<void>(document->addRasterLayer(patternLayer(
+    pci::test::SceneRuntimeFixture runtime(document);
+    static_cast<void>(runtime.addRasterLayer(patternLayer(
         {256},
         [](std::uint32_t, double, double) {
             return Rgba{0, 0, 255};
@@ -579,7 +582,7 @@ TEST_CASE("GPU raster streaming wakes an otherwise idle viewport",
         std::chrono::milliseconds{300})));
 
     auto viewport = makeViewport();
-    viewport->setDocument(document->snapshot(), true);
+    runtime.setDocument(*viewport, true);
     viewport->setEyeDomeLightingEnabled(false);
     frameWholeScene(*viewport);
     viewport->show();
@@ -628,7 +631,8 @@ TEST_CASE("GPU Surface uploads and draws an R32F height field",
     };
 
     auto document = std::make_shared<pci::SceneDocument>();
-    const pci::SceneLayerId layer = document->addRasterLayer(patternLayer(
+    pci::test::SceneRuntimeFixture runtime(document);
+    const pci::SceneLayerId layer = runtime.addRasterLayer(patternLayer(
         std::move(metadata), [](std::uint32_t, double, double) -> Rgba {
             return {220, 160, 40};
         }));
@@ -638,7 +642,7 @@ TEST_CASE("GPU Surface uploads and draws an R32F height field",
     REQUIRE(document->setRasterLayerStyle(layer, style));
 
     auto viewport = makeViewport();
-    viewport->setDocument(document->snapshot(), true);
+    runtime.setDocument(*viewport, true);
     viewport->setEyeDomeLightingEnabled(false);
     frameWholeScene(*viewport);
 
@@ -670,7 +674,8 @@ TEST_CASE("GPU Surface 4K grid characterization",
     };
 
     auto document = std::make_shared<pci::SceneDocument>();
-    const pci::SceneLayerId layer = document->addRasterLayer(patternLayer(
+    pci::test::SceneRuntimeFixture runtime(document);
+    const pci::SceneLayerId layer = runtime.addRasterLayer(patternLayer(
         std::move(metadata), [](std::uint32_t, double, double) -> Rgba {
             return {220, 160, 40};
         }));
@@ -690,7 +695,7 @@ TEST_CASE("GPU Surface 4K grid characterization",
     // Top-level widgets are otherwise capped to a fraction of the desktop on
     // first show, which would silently turn this into a sub-4K workload.
     viewport->setFixedSize(logicalSize);
-    viewport->setDocument(document->snapshot(), true);
+    runtime.setDocument(*viewport, true);
     viewport->setEyeDomeLightingEnabled(false);
     frameWholeScene(*viewport);
 
@@ -736,7 +741,8 @@ TEST_CASE("GPU raster resources recreate from decoded tiles without rereading",
 {
     std::shared_ptr<PatternSource> source;
     auto document = std::make_shared<pci::SceneDocument>();
-    static_cast<void>(document->addRasterLayer(patternLayer(
+    pci::test::SceneRuntimeFixture runtime(document);
+    static_cast<void>(runtime.addRasterLayer(patternLayer(
         {256},
         [](std::uint32_t, double, double) {
             return Rgba{255, 0, 0};
@@ -744,7 +750,7 @@ TEST_CASE("GPU raster resources recreate from decoded tiles without rereading",
         &source)));
 
     auto viewport = makeViewport();
-    viewport->setDocument(document->snapshot(), true);
+    runtime.setDocument(*viewport, true);
     viewport->setEyeDomeLightingEnabled(false);
     frameWholeScene(*viewport);
     REQUIRE(renderUntil(*viewport, [](const QImage &image) {
@@ -792,12 +798,13 @@ TEST_CASE("GPU GTI catalog covers from an overview then reaches native pixels",
     });
     const pci::RasterLayerMetadata &metadata = data->metadata();
     auto document = std::make_shared<pci::SceneDocument>();
-    static_cast<void>(document->addRasterLayer(std::move(data)));
+    pci::test::SceneRuntimeFixture runtime(document);
+    static_cast<void>(runtime.addRasterLayer(std::move(data)));
 
     constexpr std::uint64_t cpuBudget = 32ULL * 1024 * 1024;
     constexpr std::uint64_t gpuBudget = 5ULL * 1024 * 1024;
     auto viewport = makeViewport();
-    viewport->setDocument(document->snapshot(), false);
+    runtime.setDocument(*viewport, false);
     viewport->setEyeDomeLightingEnabled(false);
     viewport->setRasterByteBudgets(cpuBudget, gpuBudget);
 
@@ -879,7 +886,8 @@ TEST_CASE("GPU raster pixels land at their affine georeferenced coordinates",
     };
 
     auto document = std::make_shared<pci::SceneDocument>();
-    static_cast<void>(document->addRasterLayer(patternLayer(
+    pci::test::SceneRuntimeFixture runtime(document);
+    static_cast<void>(runtime.addRasterLayer(patternLayer(
         metadata,
         [width = metadata.width, height = metadata.height](
             std::uint32_t, const double pixel, const double line) -> Rgba {
@@ -893,7 +901,7 @@ TEST_CASE("GPU raster pixels land at their affine georeferenced coordinates",
         })));
 
     auto viewport = makeViewport();
-    viewport->setDocument(document->snapshot(), true);
+    runtime.setDocument(*viewport, true);
     viewport->setEyeDomeLightingEnabled(false);
     viewport->setOrthographic(true);
     frameWholeScene(*viewport);
@@ -963,7 +971,8 @@ TEST_CASE("GPU raster shows coarse coverage before native detail",
     // red/green pattern. What is on screen therefore names the level in use.
     std::shared_ptr<PatternSource> source;
     auto document = std::make_shared<pci::SceneDocument>();
-    static_cast<void>(document->addRasterLayer(patternLayer(
+    pci::test::SceneRuntimeFixture runtime(document);
+    static_cast<void>(runtime.addRasterLayer(patternLayer(
         {2048, 256},
         [](const std::uint32_t levelIndex,
            const double basePixelX,
@@ -980,7 +989,7 @@ TEST_CASE("GPU raster shows coarse coverage before native detail",
         &source)));
 
     auto viewport = makeViewport();
-    viewport->setDocument(document->snapshot(), true);
+    runtime.setDocument(*viewport, true);
     viewport->setEyeDomeLightingEnabled(false);
     frameWholeScene(*viewport);
 
@@ -1005,8 +1014,9 @@ TEST_CASE("GPU four 10k rasters show complete automatic previews",
           "[gpu][raster][lod][coverage]")
 {
     auto document = std::make_shared<pci::SceneDocument>();
+    pci::test::SceneRuntimeFixture runtime(document);
     const auto addQuadrant =
-        [&document](const double west, const double north, const Rgba color) {
+        [&runtime](const double west, const double north, const Rgba color) {
             pci::RasterLayerMetadata metadata = patternMetadata({10000});
             metadata.geoTransform = {
                 west,
@@ -1021,7 +1031,7 @@ TEST_CASE("GPU four 10k rasters show complete automatic previews",
             pci::appendGeneratedRasterCoverageLevels(
                 metadata.levels, metadata.width, metadata.height);
             REQUIRE(metadata.levels.back().width <= pci::rasterTilePixels);
-            static_cast<void>(document->addRasterLayer(patternLayer(
+            static_cast<void>(runtime.addRasterLayer(patternLayer(
                 std::move(metadata), [color](std::uint32_t, double, double) {
                     return color;
                 })));
@@ -1032,7 +1042,7 @@ TEST_CASE("GPU four 10k rasters show complete automatic previews",
     addQuadrant(0.0, 0.0, {255, 255, 0});
 
     auto viewport = makeViewport();
-    viewport->setDocument(document->snapshot(), true);
+    runtime.setDocument(*viewport, true);
     viewport->setEyeDomeLightingEnabled(false);
     viewport->setRasterByteBudgets(16ULL * 1024 * 1024, 8ULL * 1024 * 1024);
     frameWholeScene(*viewport);
@@ -1052,17 +1062,18 @@ TEST_CASE("GPU raster layers obey painter order and opacity",
           "[gpu][raster][order]")
 {
     auto document = std::make_shared<pci::SceneDocument>();
-    static_cast<void>(document->addRasterLayer(
+    pci::test::SceneRuntimeFixture runtime(document);
+    static_cast<void>(runtime.addRasterLayer(
         patternLayer({256}, [](std::uint32_t, double, double) {
             return Rgba{255, 0, 0};
         })));
-    const pci::SceneLayerId top = document->addRasterLayer(
+    const pci::SceneLayerId top = runtime.addRasterLayer(
         patternLayer({1024, 256}, [](std::uint32_t, double, double) {
             return Rgba{0, 255, 0};
         }));
 
     auto viewport = makeViewport();
-    viewport->setDocument(document->snapshot(), true);
+    runtime.setDocument(*viewport, true);
     viewport->setEyeDomeLightingEnabled(false);
     frameWholeScene(*viewport);
 
@@ -1078,7 +1089,7 @@ TEST_CASE("GPU raster layers obey painter order and opacity",
     pci::RasterLayerStyle style;
     style.opacity = 0.5F;
     static_cast<void>(document->setRasterLayerStyle(top, style));
-    viewport->updateDocument(document->snapshot());
+    runtime.updateDocument(*viewport);
     REQUIRE(renderUntil(*viewport, [](const QImage &image) {
         const Footprint footprint = renderedFootprint(image);
         if (!footprint.valid()) {
@@ -1094,14 +1105,15 @@ TEST_CASE("GPU coplanar points remain visible over rasters through an EDL "
           "[gpu][raster][edl][depth]")
 {
     auto document = std::make_shared<pci::SceneDocument>();
-    static_cast<void>(document->addLayer(coplanarPointGrid()));
-    static_cast<void>(document->addRasterLayer(
+    pci::test::SceneRuntimeFixture runtime(document);
+    static_cast<void>(runtime.addPointLayer(coplanarPointGrid()));
+    static_cast<void>(runtime.addRasterLayer(
         patternLayer({256}, [](std::uint32_t, double, double) {
             return Rgba{0, 0, 180};
         })));
 
     auto viewport = makeViewport();
-    viewport->setDocument(document->snapshot(), true);
+    runtime.setDocument(*viewport, true);
     viewport->setPointSizePixels(5);
 
     for (const bool edl : {false, true}) {
@@ -1129,8 +1141,9 @@ TEST_CASE("GPU mixed scenes preserve point raster vector painter order",
           "[gpu][raster][vector][order]")
 {
     auto document = std::make_shared<pci::SceneDocument>();
-    static_cast<void>(document->addLayer(coplanarPointGrid()));
-    static_cast<void>(document->addRasterLayer(
+    pci::test::SceneRuntimeFixture runtime(document);
+    static_cast<void>(runtime.addPointLayer(coplanarPointGrid()));
+    static_cast<void>(runtime.addRasterLayer(
         patternLayer({256}, [](std::uint32_t, double, double) {
             return Rgba{0, 0, 200};
         })));
@@ -1139,7 +1152,7 @@ TEST_CASE("GPU mixed scenes preserve point raster vector painter order",
     REQUIRE(document->setVectorLayerStyle(vectorId, greenVectorFill()));
 
     auto viewport = makeViewport();
-    viewport->setDocument(document->snapshot(), true);
+    runtime.setDocument(*viewport, true);
     viewport->setPointSizePixels(5);
 
     for (const bool edl : {false, true}) {
@@ -1161,13 +1174,14 @@ TEST_CASE("GPU raster pixels are excluded from picking and measurement",
           "[gpu][raster][picking][measurement]")
 {
     auto document = std::make_shared<pci::SceneDocument>();
-    static_cast<void>(document->addRasterLayer(
+    pci::test::SceneRuntimeFixture runtime(document);
+    static_cast<void>(runtime.addRasterLayer(
         patternLayer({256}, [](std::uint32_t, double, double) {
             return Rgba{0, 0, 255};
         })));
 
     auto viewport = makeViewport();
-    viewport->setDocument(document->snapshot(), true);
+    runtime.setDocument(*viewport, true);
     viewport->setEyeDomeLightingEnabled(false);
     frameWholeScene(*viewport);
     QString failure;
@@ -1220,7 +1234,8 @@ TEST_CASE("GPU raster textures stay inside the configured budget",
 {
     std::shared_ptr<PatternSource> source;
     auto document = std::make_shared<pci::SceneDocument>();
-    static_cast<void>(document->addRasterLayer(patternLayer(
+    pci::test::SceneRuntimeFixture runtime(document);
+    static_cast<void>(runtime.addRasterLayer(patternLayer(
         {4096, 1024, 256},
         [](const std::uint32_t levelIndex, double, double) -> Rgba {
             return levelIndex == 0 ? Rgba{255, 0, 0} : Rgba{0, 0, 255};
@@ -1228,7 +1243,7 @@ TEST_CASE("GPU raster textures stay inside the configured budget",
         &source)));
 
     auto viewport = makeViewport();
-    viewport->setDocument(document->snapshot(), true);
+    runtime.setDocument(*viewport, true);
     viewport->setEyeDomeLightingEnabled(false);
     frameWholeScene(*viewport);
 
@@ -1256,6 +1271,8 @@ TEST_CASE("GPU raster textures stay inside the configured budget",
     REQUIRE(beforeShrink > 1);
     const std::uint64_t loweredBudget = beforeShrink - 1;
     viewport->setRasterByteBudgets(cpuBudget, loweredBudget);
+    // Budget changes take effect after the next frame installs its protection.
+    static_cast<void>(renderFrames(*viewport, 1));
     CHECK(pci::testAccess(*viewport).rasterGpuBytesForTesting() <=
           loweredBudget);
 }

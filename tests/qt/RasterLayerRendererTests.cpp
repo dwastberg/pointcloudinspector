@@ -1,10 +1,15 @@
-#include "renderer/rhi/RasterLayerRenderer.h"
+#include <pci/rendering/rhi/RasterLayerRenderer.h>
+#include <pci/rendering/rhi/UniformStaging.h>
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <cstring>
+#include <limits>
+#include <stdexcept>
 #include <vector>
 
 namespace {
@@ -54,10 +59,20 @@ TEST_CASE("raster uniform staging honours the device stride", "[qt][raster]")
                     staging.data() + index * stride,
                     sizeof(pci::RasterLayerUniform));
         CHECK(copy.opacity == draws[index].uniform.opacity);
+        CHECK(std::ranges::all_of(
+            staging.begin() +
+                static_cast<std::ptrdiff_t>(index * stride +
+                                            sizeof(pci::RasterLayerUniform)),
+            staging.begin() + static_cast<std::ptrdiff_t>((index + 1) * stride),
+            [](const std::byte value) {
+                return value == std::byte{};
+            }));
     }
 
     // A stride smaller than the block would overlap draws in the buffer.
     CHECK_THROWS_AS(pci::stageRasterLayerUniforms(draws, 8),
+                    std::invalid_argument);
+    CHECK_THROWS_AS(pci::stageRasterLayerUniforms({}, 8),
                     std::invalid_argument);
 }
 
@@ -91,9 +106,42 @@ TEST_CASE("raster surface uniform staging honours the device stride",
         std::memcpy(&copy, staging.data() + index * stride, sizeof(copy));
         CHECK(copy.heightParams[0] ==
               draws[index].surfaceUniform.heightParams[0]);
+        CHECK(std::ranges::all_of(
+            staging.begin() +
+                static_cast<std::ptrdiff_t>(index * stride +
+                                            sizeof(pci::RasterSurfaceUniform)),
+            staging.begin() + static_cast<std::ptrdiff_t>((index + 1) * stride),
+            [](const std::byte value) {
+                return value == std::byte{};
+            }));
     }
     CHECK_THROWS_AS(pci::stageRasterSurfaceUniforms(draws, 128),
                     std::invalid_argument);
+    CHECK_THROWS_AS(pci::stageRasterSurfaceUniforms({}, 128),
+                    std::invalid_argument);
+}
+
+TEST_CASE("uniform staging size rejects overflow before allocation",
+          "[qt][renderer][raster][overflow]")
+{
+    constexpr std::size_t maximum = std::numeric_limits<std::size_t>::max();
+    CHECK_THROWS_AS(pci::checkedUniformStagingByteSize(
+                        maximum, 2, 1, maximum, "stride", "size"),
+                    std::length_error);
+    CHECK_THROWS_AS(
+        pci::checkedUniformStagingByteSize(3, 4, 1, 11, "stride", "size"),
+        std::length_error);
+    constexpr std::size_t gpuMaximum =
+        std::numeric_limits<std::uint32_t>::max();
+    CHECK_THROWS_AS(
+        pci::checkedUniformStagingByteSize(
+            gpuMaximum / 256 + 1, 256, 176, gpuMaximum, "stride", "size"),
+        std::length_error);
+    CHECK(pci::checkedUniformStagingByteSize(
+              0, maximum, 1, 0, "stride", "size") == 0);
+    CHECK_THROWS_AS(
+        pci::checkedUniformStagingByteSize(0, 7, 8, maximum, "stride", "size"),
+        std::invalid_argument);
 }
 
 TEST_CASE("surface edge reconstruction closes ordinary and short tile seams",

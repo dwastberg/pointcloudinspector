@@ -1,9 +1,10 @@
 // pci_raster_colorize_bench — non-default release qualification for the
 // bounded raster-to-point colorization path.
 
-#include "scene/PointCloudScene.h"
-#include "scene/RasterColorizeRunStore.h"
-#include "scene/RasterPointColorizer.h"
+#include <pci/operations/RasterPointColorizer.h>
+#include <pci/runtime/point/PointDatasetRuntime.h>
+
+#include <pci/operations/local/LocalRasterColorizeRunStore.h>
 
 #include <algorithm>
 #include <charconv>
@@ -308,7 +309,7 @@ int run(const Options &options)
     pci::PointCloudMetadata metadata;
     metadata.sourcePointCount = options.storedSamples;
     metadata.sourceBounds = benchmarkBounds();
-    auto scene = std::make_shared<pci::PointCloudScene>(
+    auto scene = std::make_shared<pci::PointDatasetRuntime>(
         metadata, source, root, 512ULL * 1024 * 1024);
     auto raster = std::make_shared<GeneratedRasterSource>();
     auto budget =
@@ -339,14 +340,15 @@ int run(const Options &options)
         reserve(budget, preflight.workingReservationBytes),
         reserve(budget, preflight.rootStagingReservationBytes),
         reserve(budget, preflight.flatStagingReservationBytes),
+        pci::makeLocalRasterColorizeRunStoreFactory(),
         {},
         {});
     if (!result || !*result) {
         throw std::runtime_error("benchmark colorization was cancelled");
     }
     const pci::RasterColorizeStatistics statistics = (*result)->statistics;
-    if (scene->applyRasterPointColors(*result) !=
-        pci::RasterPointColorApplyOutcome::Applied) {
+    if (scene->applyRasterPointColors(pci::preparePointColorInstallation(
+            *result)) != pci::RasterPointColorApplyOutcome::Applied) {
         throw std::runtime_error("benchmark prepared result was stale");
     }
     const pci::RasterPointColorMetrics retained =

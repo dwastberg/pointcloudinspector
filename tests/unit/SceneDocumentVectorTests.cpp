@@ -1,10 +1,14 @@
-#include "scene/SceneDocument.h"
-#include "scene/SceneDocumentSnapshot.h"
+#include "support/TestPointDatasets.h"
+#include <pci/document/SceneDocument.h>
+#include <pci/document/SceneDocumentSnapshot.h>
 
 #include <catch2/catch_test_macros.hpp>
 
 #include <array>
+#include <cstddef>
 #include <memory>
+#include <stdexcept>
+#include <vector>
 
 namespace {
 
@@ -82,14 +86,28 @@ TEST_CASE("scene document preserves cross-kind insertion order",
           "[unit][scene][vector][order]")
 {
     pci::SceneDocument document;
-    const auto firstPoint = document.addLayer(
-        std::make_shared<pci::PointCloudScene>(pci::PointCloudMetadata{}));
+    const pci::PointDatasetView firstDataset = pci::test::pointDataset();
+    const auto firstPoint = document.addLayer(firstDataset);
     const auto vector = document.addVectorLayer(vectorData(-2.0, 2.0));
-    const auto secondPoint = document.addLayer(
-        std::make_shared<pci::PointCloudScene>(pci::PointCloudMetadata{}));
+    const auto secondPoint = document.addLayer(pci::test::pointDataset());
 
     CHECK(document.layerOrder() ==
           std::vector<pci::SceneLayerId>{firstPoint, vector, secondPoint});
+
+    const pci::SceneDocumentSnapshotPtr snapshot = document.snapshot();
+    REQUIRE(snapshot);
+    CHECK(snapshot->pointLayerIndices == std::vector<std::size_t>{0, 2});
+    CHECK(snapshot->vectorLayerIndices == std::vector<std::size_t>{1});
+    CHECK(snapshot->rasterLayerIndices.empty());
+
+    const pci::PointCloudLayerSnapshotView points = snapshot->pointLayers();
+    REQUIRE(points.size() == 2);
+    CHECK(points.front().id == firstPoint);
+    CHECK(points.at(1).id == secondPoint);
+    CHECK_THROWS_AS(points.at(2), std::out_of_range);
+    const pci::VectorLayerSnapshotView vectors = snapshot->vectorLayers();
+    REQUIRE(vectors.size() == 1);
+    CHECK(vectors.front().id == vector);
 
     REQUIRE(document.removeLayer(vector));
     CHECK(document.layerOrder() ==
@@ -100,9 +118,8 @@ TEST_CASE("scene document stores one ordered variant layer collection",
           "[unit][scene][vector][variant]")
 {
     pci::SceneDocument document;
-    const auto pointScene =
-        std::make_shared<pci::PointCloudScene>(pci::PointCloudMetadata{});
-    const pci::SceneLayerId pointId = document.addLayer(pointScene);
+    const pci::PointDatasetView pointDataset = pci::test::pointDataset();
+    const pci::SceneLayerId pointId = document.addLayer(pointDataset);
     const pci::SceneLayerId vectorId =
         document.addVectorLayer(vectorData(-4.0, 4.0), false);
 
@@ -112,8 +129,8 @@ TEST_CASE("scene document stores one ordered variant layer collection",
     CHECK(stored[0].visible);
     REQUIRE(
         std::holds_alternative<pci::PointCloudLayerState>(stored[0].payload));
-    CHECK(std::get<pci::PointCloudLayerState>(stored[0].payload).scene ==
-          pointScene);
+    CHECK(std::get<pci::PointCloudLayerState>(stored[0].payload)
+              .descriptor.sourceId == pointDataset.descriptor.sourceId);
     CHECK(stored[1].id == vectorId);
     CHECK_FALSE(stored[1].visible);
     REQUIRE(std::holds_alternative<pci::VectorLayerState>(stored[1].payload));
@@ -131,18 +148,15 @@ TEST_CASE("scene document stores one ordered variant layer collection",
 TEST_CASE("document snapshots are coherent, immutable, and cached",
           "[unit][scene][snapshot][revision]")
 {
-    pci::SceneDocument document(8192);
+    pci::SceneDocument document;
     const auto first = document.snapshot();
     REQUIRE(first);
     CHECK(first == document.snapshot());
     CHECK(first->revision == 0);
     CHECK(first->pointRevision == 0);
     CHECK(first->vectorRevision == 0);
-    CHECK(first->decodedByteBudget == 8192);
-
-    const auto pointScene =
-        std::make_shared<pci::PointCloudScene>(pci::PointCloudMetadata{});
-    const pci::SceneLayerId pointId = document.addLayer(pointScene);
+    const pci::SceneLayerId pointId =
+        document.addLayer(pci::test::pointDataset());
     const auto withPoint = document.snapshot();
     CHECK(withPoint != first);
     CHECK(withPoint->revision == 1);

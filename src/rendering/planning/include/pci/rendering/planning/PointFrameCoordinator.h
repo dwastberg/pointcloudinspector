@@ -1,0 +1,217 @@
+#pragma once
+
+#include <pci/pointcloud/PointDatasetRuntimeSnapshot.h>
+#include <pci/rendering/planning/FrameCamera.h>
+#include <pci/rendering/planning/RenderSelection.h>
+#include <pci/rendering/planning/SceneVisibilityIndex.h>
+
+#include <pci/foundation/Generation.h>
+#include <pci/foundation/LayerIdentity.h>
+#include <pci/pointcloud/PointClassificationFilter.h>
+#include <pci/pointcloud/PointColorPolicy.h>
+#include <pci/pointcloud/PointResidencyView.h>
+
+#include <cstdint>
+#include <functional>
+#include <memory>
+#include <optional>
+#include <span>
+#include <string>
+#include <unordered_map>
+#include <unordered_set>
+#include <utility>
+#include <vector>
+
+namespace pci {
+
+struct PointFrameLayer {
+    PointCloudLayerId layerId;
+    PointCloudSourceId sourceId;
+    BindingGeneration bindingGeneration;
+    PointColorMode colorMode;
+    PointClassificationFilter classificationFilter;
+    Bounds3d sourceBounds;
+    PointResidencyViewPtr residency;
+    const PointDatasetRuntimeSnapshot *snapshot = nullptr;
+    std::optional<PointScalarRange> colorRange;
+};
+
+struct PointFrameRuntimeTarget {
+    PointCloudLayerId layerId;
+    PointCloudSourceId sourceId;
+    BindingGeneration bindingGeneration;
+    std::uint64_t contentRevision = 0;
+
+    bool operator==(const PointFrameRuntimeTarget &) const = default;
+};
+
+struct PointFrameBlockKey {
+    PointCloudLayerId layerId;
+    PointCloudNodeId nodeId;
+    std::uint32_t nodeBlockIndex = 0;
+    std::uint64_t sceneBlockId = 0;
+
+    auto operator<=>(const PointFrameBlockKey &) const = default;
+};
+
+struct PointFrameBlockKeyHash {
+    [[nodiscard]] std::size_t
+    operator()(const PointFrameBlockKey &key) const noexcept;
+};
+
+struct PointFrameSelectedBlock {
+    PointCloudLayerId layerId;
+    PointColorMode colorMode;
+    PointClassificationFilter classificationFilter;
+    std::optional<PointScalarRange> colorRange;
+    PointFrameBlockKey key;
+    PointBlockPtr block;
+    std::uint32_t pointCount = 0;
+    // Zero identifies a flat block, whose spacing is derived from its own
+    // bounds and selected point count when the draw list is built.
+    double pointSpacing = 0.0;
+    double pointCoverageFactor = 1.0;
+};
+
+struct PointFrameUpload {
+    PointFrameBlockKey key;
+    PointBlockPtr block;
+};
+
+struct PointFrameNodeRequest {
+    PointFrameRuntimeTarget target;
+    std::vector<PointCloudNodeId> nodes;
+};
+
+struct PointFrameTrimRequest {
+    PointFrameRuntimeTarget target;
+    // Selected and fallback nodes must remain resident while the executor
+    // reconciles requests and trims the decoded cache.
+    std::vector<PointCloudNodeId> protectedNodes;
+};
+
+struct PointFrameDecodedLookupEffect {
+    PointFrameRuntimeTarget target;
+    PointCloudNodeId nodeId;
+    bool resident = false;
+};
+
+struct PointFrameLayerError {
+    PointCloudLayerId layerId;
+    std::string message;
+};
+
+struct PointFramePlan {
+    std::vector<PointFrameSelectedBlock> blocks;
+    std::vector<PointFrameUpload> uploads;
+    std::vector<PointFrameBlockKey> protectedGpuBlocks;
+    std::vector<PointCloudNodePayloadPtr> decodedLeases;
+    std::unordered_set<PointCloudLayerId> outOfFrustumLayerIds;
+    std::vector<PointFrameNodeRequest> nodeRequests;
+    std::vector<PointFrameTrimRequest> trimRequests;
+    std::vector<PointFrameDecodedLookupEffect> decodedLookupEffects;
+    std::vector<PointFrameLayerError> layerErrors;
+    std::uint64_t selectedPoints = 0;
+    std::uint64_t visibleBlocks = 0;
+    std::uint64_t culledBlocks = 0;
+    std::uint64_t visibleLayerCount = 0;
+    std::uint64_t coveredLayerCount = 0;
+    std::uint64_t rootOnlyLayerCount = 0;
+    bool requiresContinuation = false;
+};
+
+struct PointFrameInput {
+    SessionGeneration sessionGeneration;
+    DocumentGeneration documentGeneration;
+    std::uint64_t documentRevision = 0;
+    std::vector<PointFrameLayer> layers;
+    FrameCamera camera;
+    std::uint64_t cameraRevision = 0;
+    std::uint64_t framePointBudget = 0;
+    std::uint64_t gpuByteBudget = 0;
+    std::function<bool(const PointFrameBlockKey &)> resident;
+};
+
+struct PointFrameExecutionIdentity {
+    SessionGeneration sessionGeneration;
+    DocumentGeneration documentGeneration;
+    std::uint64_t documentRevision = 0;
+    std::uint64_t serial = 0;
+
+    bool operator==(const PointFrameExecutionIdentity &) const = default;
+};
+
+struct PointFrameResult {
+    std::shared_ptr<const PointFramePlan> plan;
+    PointFrameExecutionIdentity execution;
+    bool reused = false;
+};
+
+struct PointBudgetUpdate {
+    std::uint64_t total = 1;
+    std::optional<std::uint64_t> current;
+};
+
+class PointFrameCoordinator {
+public:
+    [[nodiscard]] static FlatFramePlan
+    planFlatCandidates(std::span<const FlatFrameBlockCandidate> candidates,
+                       std::uint64_t gpuByteBudget,
+                       std::uint64_t pointBudget);
+
+    void clear();
+
+    [[nodiscard]] PointBudgetUpdate
+    pointBudgetUpdate(const std::vector<PointFrameLayer> &layers,
+                      std::uint64_t decodedByteBudget,
+                      std::uint64_t gpuByteBudget,
+                      std::uint64_t currentPointBudget);
+
+    [[nodiscard]] PointFrameResult plan(PointFrameInput input);
+
+private:
+    struct FlatFramePlanKey {
+        struct Layer {
+            PointCloudLayerId layerId;
+            PointCloudSourceId sourceId;
+            BindingGeneration bindingGeneration;
+            std::uint64_t sceneRevision = 0;
+
+            bool operator==(const Layer &) const = default;
+        };
+
+        SessionGeneration sessionGeneration;
+        DocumentGeneration documentGeneration;
+        std::uint64_t cameraRevision = 0;
+        std::uint64_t documentRevision = 0;
+        std::uint64_t pointBudget = 0;
+        int outputWidth = 0;
+        int outputHeight = 0;
+        std::vector<Layer> layers;
+
+        bool operator==(const FlatFramePlanKey &) const = default;
+    };
+
+    struct FlatBudgetSettlementKey {
+        std::uint64_t gpuByteBudget = 0;
+        std::vector<std::pair<PointCloudLayerId, std::uint64_t>>
+            retainedLayerPoints;
+
+        bool operator==(const FlatBudgetSettlementKey &) const = default;
+    };
+
+    [[nodiscard]] PointFramePlan buildPlan(const PointFrameInput &input);
+    [[nodiscard]] PointFrameExecutionIdentity
+    nextExecution(const PointFrameInput &input);
+    [[nodiscard]] static FlatFramePlanKey
+    flatPlanKey(const PointFrameInput &input);
+
+    SceneVisibilityIndex visibilityIndex_;
+    std::unordered_map<PointCloudLayerId, RenderSelection> hierarchySelections_;
+    std::optional<FlatFramePlanKey> cachedFlatPlanKey_;
+    std::shared_ptr<const PointFramePlan> cachedFlatPlan_;
+    std::optional<FlatBudgetSettlementKey> flatBudgetSettlementKey_;
+    std::uint64_t executionSerial_ = 0;
+};
+
+} // namespace pci

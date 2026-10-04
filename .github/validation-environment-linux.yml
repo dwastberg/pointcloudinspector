@@ -1,0 +1,12 @@
+name: pcinspector-validation
+channels:
+  - conda-forge
+dependencies:
+  - clangxx_linux-64=22.*
+  - clang-tools=22.1.8
+  - clang-format=22.1.8
+  - cmake>=3.24
+  - libgdal-core>=3.9
+  - libpdal>=2.10
+  - ninja
+  - qt6-main>=6.7

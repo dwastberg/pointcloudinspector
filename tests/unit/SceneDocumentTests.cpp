@@ -1,98 +1,112 @@
-#include "scene/SceneDocument.h"
 #include "support/TestPointColorMaps.h"
+#include "support/TestPointDatasets.h"
+#include <pci/document/SceneDocument.h>
+#include <pci/document/SceneDocumentSnapshot.h>
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <concepts>
 #include <limits>
 #include <memory>
-#include <stop_token>
+#include <stdexcept>
+#include <utility>
+#include <vector>
+
+namespace pci {
+
+class SceneDocumentTestAccess {
+public:
+    static void resetLayerLookupInspections(const SceneDocument &document)
+    {
+        document.layerLookupInspections_ = 0;
+    }
+
+    [[nodiscard]] static std::size_t
+    layerLookupInspections(const SceneDocument &document)
+    {
+        return document.layerLookupInspections_;
+    }
+
+    [[nodiscard]] static bool
+    hasConsistentLayerIndex(const SceneDocument &document)
+    {
+        if (document.layerIndices_.size() != document.sceneLayers_.size()) {
+            return false;
+        }
+        for (std::size_t index = 0; index < document.sceneLayers_.size();
+             ++index) {
+            const auto found =
+                document.layerIndices_.find(document.sceneLayers_[index].id);
+            if (found == document.layerIndices_.end() ||
+                found->second != index) {
+                return false;
+            }
+        }
+        return true;
+    }
+};
+
+} // namespace pci
 
 namespace {
 
-pci::PointCloudScenePtr sceneWith(const pci::Bounds3d bounds,
+template <typename T>
+concept ExposesPointScene = requires(T value) { value.scene; };
+
+template <typename T>
+concept ExposesRasterData = requires(T value) { value.data; };
+
+static_assert(!ExposesPointScene<pci::PointCloudLayerSnapshot>);
+static_assert(!ExposesPointScene<pci::PointCloudLayer>);
+static_assert(!ExposesPointScene<pci::PointCloudLayerState>);
+static_assert(!ExposesRasterData<pci::RasterLayerSnapshot>);
+static_assert(!ExposesRasterData<pci::RasterLayer>);
+static_assert(!ExposesRasterData<pci::RasterLayerState>);
+static_assert(
+    std::same_as<decltype(std::declval<const pci::SceneDocumentSnapshot &>()
+                              .pointLayers()),
+                 pci::PointCloudLayerSnapshotView>);
+static_assert(!std::same_as<pci::PointCloudLayerSnapshotView,
+                            std::vector<pci::PointCloudLayerSnapshot>>);
+
+pci::PointDatasetView datasetWith(const pci::Bounds3d bounds,
                                   const std::uint64_t sourcePointCount,
-                                  const bool hasColor)
+                                  const bool hasColor,
+                                  const bool loadingComplete = false)
 {
     pci::PointCloudMetadata metadata;
     metadata.sourceBounds = bounds;
     metadata.sourcePointCount = sourcePointCount;
     metadata.hasColor = hasColor;
-    return std::make_shared<pci::PointCloudScene>(std::move(metadata));
-}
-
-class RootOnlyHierarchySource final : public pci::PointCloudDataSource {
-public:
-    explicit RootOnlyHierarchySource(const pci::Bounds3d bounds)
-        : bounds_(bounds)
-    {
-    }
-
-    [[nodiscard]] pci::PointCloudNode rootNode() const override
-    {
-        return node(pci::rootPointCloudNode);
-    }
-
-    [[nodiscard]] pci::PointCloudNode
-    node(const pci::PointCloudNodeId id) const override
-    {
-        return {
-            .id = id,
-            .bounds = pci::pointCloudNodeBounds(bounds_, id),
-            .estimatedPointCount = 1,
-            .leaf = true,
-        };
-    }
-
-    [[nodiscard]] pci::PointCloudNodePayloadPtr
-    loadNode(const pci::PointCloudNodeId, const std::stop_token) const override
-    {
-        throw std::logic_error("root-only test source cannot decode children");
-    }
-
-private:
-    pci::Bounds3d bounds_;
-};
-
-pci::PointCloudScenePtr
-hierarchicalSceneWith(const pci::Bounds3d bounds,
-                      const std::size_t rootPointCount,
-                      const std::uint64_t standaloneBudget)
-{
-    pci::PointCloudMetadata metadata;
-    metadata.sourceBounds = bounds;
-    metadata.sourcePointCount = rootPointCount;
-    auto block = std::make_shared<pci::PointBlock>();
-    block->points.resize(rootPointCount);
-    block->attributes.resize(rootPointCount);
-    auto root = std::make_shared<pci::PointCloudNodePayload>();
-    root->nodeId = pci::rootPointCloudNode;
-    root->sourcePointCount = rootPointCount;
-    root->blocks.push_back(std::move(block));
-    return std::make_shared<pci::PointCloudScene>(
-        metadata,
-        std::make_shared<RootOnlyHierarchySource>(bounds),
-        std::move(root),
-        standaloneBudget);
+    return pci::test::pointDataset(
+        std::move(metadata),
+        pci::PointDatasetAvailability{
+            .bounds = bounds,
+            .pointCount = loadingComplete ? sourcePointCount : 0,
+            .colorizeAvailability =
+                loadingComplete ? pci::PointColorizeAvailability::Ready
+                                : pci::PointColorizeAvailability::Loading,
+        });
 }
 
 TEST_CASE("point-cloud document owns independently configured layers",
           "[unit][scene]")
 {
-    pci::SceneDocument document(
-        pci::HierarchyResidencyCoordinator::defaultByteBudget,
-        pci::HierarchyResidencyCoordinator::defaultMaximumConcurrentDecodes,
-        {},
-        {},
-        pci::test::createTestPointColorMapCatalog());
-    const auto colorLayer = document.addLayer(sceneWith(
-        {.minimum = {-2.0, -1.0, 0.0}, .maximum = {1.0, 2.0, 3.0}}, 10, true));
-    const auto scalarLayer = document.addLayer(sceneWith(
+    pci::SceneDocument document(pci::test::createTestPointColorMapCatalog());
+    const pci::PointDatasetView colorDataset = datasetWith(
+        {.minimum = {-2.0, -1.0, 0.0}, .maximum = {1.0, 2.0, 3.0}}, 10, true);
+    const auto colorLayer = document.addLayer(colorDataset);
+    const auto scalarLayer = document.addLayer(datasetWith(
         {.minimum = {4.0, 5.0, 6.0}, .maximum = {7.0, 8.0, 9.0}}, 20, false));
 
     CHECK(document.hasPointCloudLayers());
     CHECK(document.layerCount() == 2);
     CHECK(document.revision() == 2);
     REQUIRE(document.layer(colorLayer));
+    CHECK(document.layer(colorLayer)->descriptor.sourceId ==
+          colorDataset.descriptor.sourceId);
+    CHECK(document.snapshot()->layer(colorLayer)->descriptor.sourceId ==
+          colorDataset.descriptor.sourceId);
     CHECK(document.layer(colorLayer)->colorMode ==
           pci::PointColorMode{
               .source = pci::PointColorSource::Rgb,
@@ -115,13 +129,35 @@ TEST_CASE("point-cloud document owns independently configured layers",
           pci::PointColorMap::Turbo);
 }
 
+TEST_CASE("point-cloud document retains metadata by value",
+          "[unit][scene][ownership]")
+{
+    pci::SceneDocument document;
+    pci::PointDatasetView dataset = datasetWith(
+        {.minimum = {-2.0, -1.0, 0.0}, .maximum = {1.0, 2.0, 3.0}}, 10, true);
+    const pci::PointCloudLayerId id = document.addLayer(dataset);
+
+    dataset.descriptor.metadata.sourcePointCount = 999;
+    dataset.availability.pointCount = 999;
+
+    REQUIRE(document.layer(id));
+    CHECK(document.layer(id)->descriptor.sourceId ==
+          dataset.descriptor.sourceId);
+    CHECK(document.layer(id)->descriptor.metadata.sourcePointCount == 10);
+    CHECK(document.layer(id)->availability.pointCount == 0);
+    REQUIRE(document.snapshot()->layer(id));
+    CHECK(document.snapshot()->layer(id)->descriptor.sourceId ==
+          dataset.descriptor.sourceId);
+    CHECK(document.visibleExpectedPointCount() == 10);
+}
+
 TEST_CASE("point-cloud document aggregates only visible layers",
           "[unit][scene]")
 {
     pci::SceneDocument document;
-    const auto first = document.addLayer(sceneWith(
+    const auto first = document.addLayer(datasetWith(
         {.minimum = {-2.0, -1.0, 0.0}, .maximum = {1.0, 2.0, 3.0}}, 10, true));
-    const auto second = document.addLayer(sceneWith(
+    const auto second = document.addLayer(datasetWith(
         {.minimum = {4.0, 5.0, 6.0}, .maximum = {7.0, 8.0, 9.0}}, 20, true));
 
     CHECK(document.visiblePointCount() == 0);
@@ -140,13 +176,193 @@ TEST_CASE("point-cloud document aggregates only visible layers",
     CHECK_FALSE(document.removeLayer(first));
 }
 
+TEST_CASE("document keeps source-domain and available point bounds distinct",
+          "[unit][scene][bounds][progressive]")
+{
+    pci::PointCloudMetadata metadata;
+    metadata.sourceBounds = {
+        .minimum = {100.0, 200.0, 300.0},
+        .maximum = {400.0, 500.0, 600.0},
+    };
+    const pci::PointDatasetView dataset = pci::test::pointDataset(
+        metadata,
+        pci::PointDatasetAvailability{
+            .bounds = {.minimum = {1.0, 2.0, 3.0}, .maximum = {4.0, 5.0, 6.0}},
+            .pointCount = 1,
+            .colorizeAvailability = pci::PointColorizeAvailability::Loading,
+        });
+
+    pci::SceneDocument document;
+    const pci::PointCloudLayerId id = document.addLayer(dataset);
+
+    REQUIRE(document.layerBounds(id));
+    CHECK(document.layerBounds(id)->minimum == std::array{100.0, 200.0, 300.0});
+    REQUIRE(document.sceneBounds());
+    CHECK(document.sceneBounds()->maximum == std::array{400.0, 500.0, 600.0});
+    REQUIRE(document.bounds());
+    CHECK(document.bounds()->minimum == std::array{100.0, 200.0, 300.0});
+
+    REQUIRE(document.visibleSceneBounds());
+    CHECK(document.visibleSceneBounds()->minimum == std::array{1.0, 2.0, 3.0});
+    REQUIRE(document.visibleBounds());
+    CHECK(document.visibleBounds()->maximum == std::array{4.0, 5.0, 6.0});
+
+    REQUIRE(document.setLayerVisible(id, false));
+    CHECK_FALSE(document.visibleSceneBounds());
+    CHECK_FALSE(document.visibleBounds());
+    REQUIRE(document.bounds());
+    CHECK(document.bounds()->minimum == std::array{100.0, 200.0, 300.0});
+}
+
+TEST_CASE("document snapshots freeze published point availability metadata",
+          "[unit][scene][snapshot][progressive]")
+{
+    pci::PointCloudMetadata metadata;
+    metadata.sourceBounds = {
+        .minimum = {100.0, 200.0, 300.0},
+        .maximum = {400.0, 500.0, 600.0},
+    };
+    metadata.sourcePointCount = 2;
+    metadata.hasIntensity = true;
+    const pci::PointDatasetView dataset = pci::test::pointDataset(
+        metadata,
+        pci::PointDatasetAvailability{
+            .bounds = metadata.sourceBounds,
+            .pointCount = 0,
+            .colorizeAvailability = pci::PointColorizeAvailability::Loading,
+        });
+
+    pci::SceneDocument document;
+    const pci::PointCloudLayerId id = document.addLayer(dataset);
+    const std::uint64_t initialPointRevision = document.pointRevision();
+    const pci::SceneDocumentSnapshotPtr before = document.snapshot();
+    REQUIRE(before);
+    const std::optional<pci::PointCloudLayerSnapshot> beforeLayer =
+        before->layer(id);
+    REQUIRE(beforeLayer);
+    CHECK(beforeLayer->availablePointCount == 0);
+    CHECK(beforeLayer->availableBounds.minimum ==
+          metadata.sourceBounds.minimum);
+    CHECK(beforeLayer->availableBounds.maximum ==
+          metadata.sourceBounds.maximum);
+    CHECK(beforeLayer->colorizeAvailability ==
+          pci::PointColorizeAvailability::Loading);
+    CHECK_FALSE(beforeLayer->scalarRanges.intensity);
+    CHECK_FALSE(beforeLayer->presentClassifications.anyVisible());
+
+    pci::PointDatasetAvailability published{
+        .bounds =
+            {
+                .minimum = {1.0, 2.0, 3.0},
+                .maximum = {4.0, 5.0, 6.0},
+            },
+        .pointCount = 2,
+        .colorizeAvailability = pci::PointColorizeAvailability::Ready,
+    };
+    published.scalarRanges.intensity =
+        pci::PointScalarRange{.minimum = 11.0, .maximum = 22.0};
+    published.presentClassifications.setVisible(7, true);
+    published.presentClassifications.setVisible(9, true);
+
+    // Preparing a new availability value cannot leak through a previously
+    // published snapshot or invalidate the document cache by itself.
+    const std::optional<pci::PointCloudLayerSnapshot> frozenBeforeRefresh =
+        before->layer(id);
+    REQUIRE(frozenBeforeRefresh);
+    CHECK(frozenBeforeRefresh->availablePointCount == 0);
+    CHECK(frozenBeforeRefresh->colorizeAvailability ==
+          pci::PointColorizeAvailability::Loading);
+    CHECK_FALSE(frozenBeforeRefresh->scalarRanges.intensity);
+    CHECK(document.snapshot() == before);
+    CHECK(document.pointRevision() == initialPointRevision);
+
+    CHECK(document.setPointLayerAvailability(id, published));
+    CHECK(document.pointRevision() == initialPointRevision + 1);
+    const pci::SceneDocumentSnapshotPtr after = document.snapshot();
+    REQUIRE(after != before);
+    const std::optional<pci::PointCloudLayerSnapshot> afterLayer =
+        after->layer(id);
+    REQUIRE(afterLayer);
+    CHECK(afterLayer->availablePointCount == 2);
+    CHECK(afterLayer->availableBounds.minimum == std::array{1.0, 2.0, 3.0});
+    CHECK(afterLayer->availableBounds.maximum == std::array{4.0, 5.0, 6.0});
+    CHECK(afterLayer->colorizeAvailability ==
+          pci::PointColorizeAvailability::Ready);
+    REQUIRE(afterLayer->scalarRanges.intensity);
+    CHECK(afterLayer->scalarRanges.intensity->minimum == 11.0);
+    CHECK(afterLayer->scalarRanges.intensity->maximum == 22.0);
+    CHECK(afterLayer->presentClassifications.isVisible(7));
+    CHECK(afterLayer->presentClassifications.isVisible(9));
+
+    // Republishing the same value is idempotent.
+    CHECK(document.setPointLayerAvailability(id, published));
+    CHECK(document.snapshot() == after);
+    CHECK(document.pointRevision() == initialPointRevision + 1);
+
+    const std::optional<pci::PointCloudLayerSnapshot> stillFrozen =
+        before->layer(id);
+    REQUIRE(stillFrozen);
+    CHECK(stillFrozen->availablePointCount == 0);
+    CHECK(stillFrozen->colorizeAvailability ==
+          pci::PointColorizeAvailability::Loading);
+    CHECK_FALSE(stillFrozen->scalarRanges.intensity);
+}
+
+TEST_CASE("point availability publication is validated and invalidates once",
+          "[unit][scene][snapshot][progressive]")
+{
+    pci::SceneDocument document;
+    const pci::PointDatasetView firstDataset = datasetWith(
+        {.minimum = {0.0, 0.0, 0.0}, .maximum = {1.0, 1.0, 1.0}}, 10, true);
+    const pci::PointDatasetView secondDataset = datasetWith(
+        {.minimum = {2.0, 2.0, 2.0}, .maximum = {3.0, 3.0, 3.0}}, 20, false);
+    const pci::PointCloudLayerId first = document.addLayer(firstDataset);
+    const pci::PointCloudLayerId second = document.addLayer(secondDataset);
+    const std::uint64_t revision = document.revision();
+    const std::uint64_t pointRevision = document.pointRevision();
+
+    std::array updates{
+        pci::PointLayerAvailabilityUpdate{
+            .layerId = first,
+            .availability = {.bounds = {.minimum = {4.0, 5.0, 6.0},
+                                        .maximum = {7.0, 8.0, 9.0}},
+                             .pointCount = 4}},
+        pci::PointLayerAvailabilityUpdate{
+            .layerId = second,
+            .availability = {.bounds = {.minimum = {10.0, 11.0, 12.0},
+                                        .maximum = {13.0, 14.0, 15.0}},
+                             .pointCount = 5}},
+    };
+
+    CHECK(document.setPointLayerAvailabilities(updates));
+    CHECK(document.revision() == revision + 1);
+    CHECK(document.pointRevision() == pointRevision + 1);
+    CHECK(document.layer(first)->availability.pointCount == 4);
+    CHECK(document.layer(second)->availability.pointCount == 5);
+
+    CHECK(document.setPointLayerAvailabilities(updates));
+    CHECK(document.revision() == revision + 1);
+    CHECK(document.pointRevision() == pointRevision + 1);
+
+    updates[0].availability.pointCount = 40;
+    updates[1].layerId = pci::PointCloudLayerId{999};
+    CHECK_FALSE(document.setPointLayerAvailabilities(updates));
+    CHECK(document.layer(first)->availability.pointCount == 4);
+    CHECK(document.revision() == revision + 1);
+
+    updates[1] = updates[0];
+    CHECK_FALSE(document.setPointLayerAvailabilities(updates));
+    CHECK(document.layer(first)->availability.pointCount == 4);
+    CHECK(document.revision() == revision + 1);
+}
+
 TEST_CASE("point-cloud document saturates extreme multi-source totals",
           "[unit][scene][multi-layer][overflow]")
 {
     pci::SceneDocument document;
     static_cast<void>(document.addLayer(
-        sceneWith({}, std::numeric_limits<std::uint64_t>::max(), false)));
-    static_cast<void>(document.addLayer(sceneWith({}, 1, false)));
+        datasetWith({}, std::numeric_limits<std::uint64_t>::max(), false)));
+    static_cast<void>(document.addLayer(datasetWith({}, 1, false)));
 
     CHECK(document.visibleExpectedPointCount() ==
           std::numeric_limits<std::uint64_t>::max());
@@ -157,11 +373,11 @@ TEST_CASE(
     "[unit][scene][color][multi-layer]")
 {
     pci::SceneDocument document;
-    const auto first = document.addLayer(sceneWith(
+    const auto first = document.addLayer(datasetWith(
         {.minimum = {10.0, 20.0, 30.0}, .maximum = {20.0, 40.0, 60.0}},
         10,
         false));
-    const auto second = document.addLayer(sceneWith(
+    const auto second = document.addLayer(datasetWith(
         {.minimum = {-5.0, 25.0, 15.0}, .maximum = {100.0, 35.0, 90.0}},
         10,
         false));
@@ -183,13 +399,8 @@ TEST_CASE(
 TEST_CASE("document rejects incompatible maps and invalid manual ranges",
           "[unit][scene][color]")
 {
-    pci::SceneDocument document(
-        pci::HierarchyResidencyCoordinator::defaultByteBudget,
-        pci::HierarchyResidencyCoordinator::defaultMaximumConcurrentDecodes,
-        {},
-        {},
-        pci::test::createTestPointColorMapCatalog());
-    const auto layer = document.addLayer(sceneWith(
+    pci::SceneDocument document(pci::test::createTestPointColorMapCatalog());
+    const auto layer = document.addLayer(datasetWith(
         {.minimum = {0.0, 0.0, 0.0}, .maximum = {1.0, 1.0, 1.0}}, 10, true));
 
     CHECK_FALSE(document.setLayerColorMode(
@@ -219,14 +430,12 @@ TEST_CASE("document stores classification visibility per layer",
 {
     pci::PointCloudMetadata classifiedMetadata;
     classifiedMetadata.hasClassification = true;
-    auto classifiedScene =
-        std::make_shared<pci::PointCloudScene>(classifiedMetadata);
 
     pci::SceneDocument document;
     const pci::PointCloudLayerId classified =
-        document.addLayer(classifiedScene);
+        document.addLayer(pci::test::pointDataset(classifiedMetadata));
     const pci::PointCloudLayerId unclassified =
-        document.addLayer(sceneWith({}, 1, false));
+        document.addLayer(datasetWith({}, 1, false));
     const std::uint64_t initialRevision = document.revision();
 
     pci::PointClassificationFilter filter =
@@ -243,183 +452,60 @@ TEST_CASE("document stores classification visibility per layer",
         pci::PointCloudLayerId{999}, filter));
 }
 
-TEST_CASE("document layer churn releases shared cache entries",
-          "[unit][scene][hierarchy][residency][churn]")
-{
-    const pci::Bounds3d bounds{
-        .minimum = {0.0, 0.0, 0.0},
-        .maximum = {1.0, 1.0, 1.0},
-    };
-    constexpr std::size_t layerCount = 25;
-    pci::SceneDocument document(1024 * 1024, 2);
-    std::vector<pci::PointCloudLayerId> ids;
-    ids.reserve(layerCount);
-    for (std::size_t index = 0; index < layerCount; ++index) {
-        ids.push_back(
-            document.addLayer(hierarchicalSceneWith(bounds, 1, 4096)));
-    }
-    CHECK(document.decodedPageCache()->size() == layerCount);
-
-    for (std::size_t index = 0; index < ids.size(); index += 2) {
-        REQUIRE(document.setLayerVisible(ids[index], false));
-    }
-    for (std::size_t index = 0; index < ids.size(); index += 2) {
-        REQUIRE(document.setLayerVisible(ids[index], true));
-    }
-    for (const pci::PointCloudLayerId id : ids) {
-        REQUIRE(document.removeLayer(id));
-    }
-    CHECK_FALSE(document.hasPointCloudLayers());
-    CHECK(document.decodedPageCache()->size() == 0);
-    CHECK(document.decodedResidentBytes() == 0);
-}
-
-TEST_CASE("document refuses roots that exceed its shared CPU budget",
-          "[unit][scene][hierarchy][residency][admission]")
-{
-    const pci::Bounds3d bounds{
-        .minimum = {0.0, 0.0, 0.0},
-        .maximum = {1.0, 1.0, 1.0},
-    };
-    auto first = hierarchicalSceneWith(bounds, 1, 4096);
-    auto second = hierarchicalSceneWith(bounds, 1, 4096);
-    const std::uint64_t oneRoot = first->decodedResidentBytes();
-    pci::SceneDocument document(oneRoot, 1);
-    static_cast<void>(document.addLayer(first));
-    CHECK_THROWS_AS(document.addLayer(second), std::length_error);
-    CHECK(document.layerCount() == 1);
-    CHECK(document.decodedResidentBytes() == oneRoot);
-}
-
-TEST_CASE("document thins root previews evenly before refusing a source",
-          "[unit][scene][hierarchy][residency][fairness]")
-{
-    const pci::Bounds3d bounds{
-        .minimum = {0.0, 0.0, 0.0},
-        .maximum = {1.0, 1.0, 1.0},
-    };
-    auto first = hierarchicalSceneWith(bounds, 4, 4096);
-    auto second = hierarchicalSceneWith(bounds, 4, 4096);
-    const std::uint64_t oneFullRoot = first->decodedResidentBytes();
-    pci::SceneDocument document(oneFullRoot, 1);
-    static_cast<void>(document.addLayer(first));
-    static_cast<void>(document.addLayer(second));
-
-    CHECK(document.layerCount() == 2);
-    CHECK(first->decodedResidentPoints() == 2);
-    CHECK(second->decodedResidentPoints() == 2);
-    CHECK(document.decodedResidentBytes() == oneFullRoot);
-    CHECK(document.decodedResidentBytes() <= document.decodedByteBudget());
-}
-
-TEST_CASE("document budget synchronization cannot strand pinned roots",
-          "[unit][scene][hierarchy][residency][memory]")
-{
-    const pci::Bounds3d bounds{
-        .minimum = {0.0, 0.0, 0.0},
-        .maximum = {1.0, 1.0, 1.0},
-    };
-    auto scene = hierarchicalSceneWith(bounds, 4, 4096);
-    const std::uint64_t rootBytes = scene->decodedResidentBytes();
-    pci::SceneDocument document(rootBytes + 100, 1);
-    static_cast<void>(document.addLayer(scene));
-
-    REQUIRE(document.memoryBudget()->setByteBudget(rootBytes - 1));
-    document.syncResidencyBudgets();
-    CHECK(document.memoryBudget()->byteBudget() == rootBytes - 1);
-    CHECK(document.decodedPageCache()->byteBudget() == rootBytes - 1);
-    CHECK(document.decodedResidentBytes() < rootBytes);
-    CHECK(document.decodedResidentBytes() <=
-          document.decodedPageCache()->byteBudget());
-}
-
-TEST_CASE("document owns one decoded cache shared by hierarchical layers",
-          "[unit][scene][hierarchy][residency]")
-{
-    const pci::Bounds3d bounds{
-        .minimum = {0.0, 0.0, 0.0},
-        .maximum = {1.0, 1.0, 1.0},
-    };
-    auto firstScene = hierarchicalSceneWith(bounds, 1, 4096);
-    auto secondScene = hierarchicalSceneWith(bounds, 1, 4096);
-    const std::uint64_t retainedRoots = firstScene->decodedResidentBytes() +
-                                        secondScene->decodedResidentBytes();
-    const std::uint64_t documentBudget = retainedRoots + 2000;
-    pci::SceneDocument document(documentBudget, 1);
-
-    const auto first = document.addLayer(firstScene);
-    const auto second = document.addLayer(secondScene);
-
-    CHECK(firstScene->decodedByteBudget() == documentBudget);
-    CHECK(secondScene->decodedByteBudget() == documentBudget);
-    CHECK(document.decodedPageCache()->byteBudget() == documentBudget);
-    CHECK(document.decodedResidentBytes() == retainedRoots);
-    REQUIRE(firstScene->nodePayload(pci::rootPointCloudNode));
-    const pci::SceneDocumentMetrics initialMetrics =
-        document.hierarchyMetrics();
-    CHECK(initialMetrics.hierarchicalLayers == 2);
-    CHECK(initialMetrics.cache.hits == 1);
-    CHECK(initialMetrics.cache.insertions == 2);
-    CHECK(initialMetrics.cache.residentBytes == retainedRoots);
-    CHECK(initialMetrics.cache.byteBudget == documentBudget);
-    CHECK(initialMetrics.cache.peakResidentBytes == retainedRoots);
-
-    CHECK(document.setLayerVisible(second, false));
-    CHECK(secondScene->decodedByteBudget() == documentBudget);
-    CHECK(firstScene->decodedByteBudget() == documentBudget);
-    CHECK(document.decodedPageCache()->residentBytes() == retainedRoots);
-
-    CHECK(document.removeLayer(second));
-    CHECK(firstScene->decodedByteBudget() == documentBudget);
-    CHECK(document.decodedPageCache()->residentBytes() ==
-          firstScene->decodedResidentBytes());
-    REQUIRE(document.layer(first));
-}
-
-TEST_CASE("hierarchical scenes transition from standalone to document "
-          "residency and back",
-          "[unit][scene][hierarchy][residency][lifecycle]")
-{
-    const pci::Bounds3d bounds{
-        .minimum = {0.0, 0.0, 0.0},
-        .maximum = {1.0, 1.0, 1.0},
-    };
-    constexpr std::uint64_t standaloneBudget = 4096;
-    constexpr std::uint64_t documentBudget = 8192;
-    auto scene = hierarchicalSceneWith(bounds, 1, standaloneBudget);
-
-    CHECK(scene->decodedByteBudget() == standaloneBudget);
-    {
-        pci::SceneDocument document(documentBudget, 1);
-        const pci::PointCloudLayerId id = document.addLayer(scene);
-        CHECK(scene->decodedByteBudget() == documentBudget);
-
-        REQUIRE(document.removeLayer(id));
-        CHECK(scene->decodedByteBudget() == standaloneBudget);
-    }
-
-    scene.reset();
-}
-
 TEST_CASE("document inserts late previews at their user-facing order",
           "[unit][scene][multi-file][progressive]")
 {
     pci::SceneDocument document;
-    const auto secondScene = sceneWith({}, 2, false);
-    secondScene->markLoadingComplete();
-    const pci::PointCloudLayerId second = document.insertLayer(secondScene, 0);
-    const auto thirdScene = sceneWith({}, 3, false);
-    thirdScene->markLoadingComplete();
-    const pci::PointCloudLayerId third = document.insertLayer(thirdScene, 1);
-    const auto firstScene = sceneWith({}, 1, false);
-    firstScene->markLoadingComplete();
-    const pci::PointCloudLayerId first = document.insertLayer(firstScene, 0);
+    const pci::PointCloudLayerId second =
+        document.insertLayer(datasetWith({}, 2, false, true), 0);
+    const pci::PointCloudLayerId third =
+        document.insertLayer(datasetWith({}, 3, false, true), 1);
+    const pci::PointCloudLayerId first =
+        document.insertLayer(datasetWith({}, 1, false, true), 0);
 
     const auto layers = document.layers();
     REQUIRE(layers.size() == 3);
     CHECK(layers[0].id == first);
     CHECK(layers[1].id == second);
     CHECK(layers[2].id == third);
+    CHECK(pci::SceneDocumentTestAccess::hasConsistentLayerIndex(document));
+}
+
+TEST_CASE("document scene bounds visit each layer without nested ID lookups",
+          "[unit][scene][bounds][complexity]")
+{
+    constexpr std::size_t layerCount = 64;
+    pci::SceneDocument document;
+    pci::PointCloudLayerId lastId;
+    for (std::size_t index = 0; index < layerCount; ++index) {
+        const double coordinate = static_cast<double>(index);
+        lastId = document.addLayer(datasetWith(
+            {.minimum = {coordinate, coordinate, coordinate},
+             .maximum = {coordinate + 1.0, coordinate + 2.0, coordinate + 3.0}},
+            1,
+            false));
+    }
+
+    pci::SceneDocumentTestAccess::resetLayerLookupInspections(document);
+    const std::optional<pci::Bounds3d> bounds = document.sceneBounds();
+
+    REQUIRE(bounds);
+    CHECK(bounds->minimum == std::array{0.0, 0.0, 0.0});
+    CHECK(bounds->maximum == std::array{64.0, 65.0, 66.0});
+    CHECK(pci::SceneDocumentTestAccess::layerLookupInspections(document) == 0);
+    CHECK(pci::SceneDocumentTestAccess::hasConsistentLayerIndex(document));
+
+    pci::SceneDocumentTestAccess::resetLayerLookupInspections(document);
+    REQUIRE(document.layer(lastId));
+    CHECK_FALSE(document.layer(pci::SceneLayerId{10'000}));
+    CHECK(pci::SceneDocumentTestAccess::layerLookupInspections(document) == 2);
+
+    const pci::SceneDocumentSnapshotPtr snapshot = document.snapshot();
+    REQUIRE(snapshot);
+    CHECK(snapshot->layerIndices.size() == snapshot->layers.size());
+    for (std::size_t index = 0; index < snapshot->layers.size(); ++index) {
+        CHECK(snapshot->layerIndices.at(snapshot->layers[index].id) == index);
+    }
 }
 
 } // namespace

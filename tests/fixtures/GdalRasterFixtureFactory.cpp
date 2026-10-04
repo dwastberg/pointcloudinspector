@@ -417,7 +417,7 @@ writeCoverageNodataFixture(const std::filesystem::path &path)
     for (int y = 0; y < extent; ++y) {
         for (int x = 0; x < extent; ++x) {
             samples[static_cast<std::size_t>(y) * extent + x] =
-                x < extent / 4 ? nodata : 100.0F + x + y;
+                x < extent / 4 ? nodata : 100.0F + static_cast<float>(x + y);
         }
     }
     writeBand(*dataset, 1, GDT_Float32, samples);
@@ -533,7 +533,7 @@ writeTerrainAlphaFixture(const std::filesystem::path &path)
             if (x < width / 2) {
                 // An extreme that must not affect the exact range because the
                 // explicit source alpha makes this half invalid.
-                elevation[index] = 10000.0F + x + y;
+                elevation[index] = 10000.0F + static_cast<float>(x + y);
                 alpha[index] = 0.0F;
             } else {
                 elevation[index] = static_cast<float>(x + y);

@@ -1,4 +1,4 @@
-#include "storage/SecureStorage.h"
+#include <pci/adapters/storage/SecureStorage.h>
 
 #include <catch2/catch_test_macros.hpp>
 

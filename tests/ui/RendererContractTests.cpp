@@ -1,6 +1,8 @@
-#include "development/SyntheticScene.h"
-#include "renderer/RenderViewport.h"
+#include "support/SceneRuntimeFixture.h"
 #include "support/TestPointColorMaps.h"
+#include <pci/desktop/viewport/RenderViewport.h>
+#include <pci/development/SyntheticScene.h>
+#include <pci/document/SceneDocument.h>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -22,15 +24,11 @@ TEST_CASE("render viewport exposes its public widget contract",
     REQUIRE(viewport->widget() != nullptr);
     CHECK_FALSE(viewport->backendName().isEmpty());
 
-    auto document = std::make_shared<pci::SceneDocument>(
-        pci::HierarchyResidencyCoordinator::defaultByteBudget,
-        pci::HierarchyResidencyCoordinator::defaultMaximumConcurrentDecodes,
-        pci::HierarchyDecodeAdmissionPtr{},
-        pci::PointMemoryBudgetPtr{},
-        colorMaps);
+    auto document = std::make_shared<pci::SceneDocument>(colorMaps);
+    pci::test::SceneRuntimeFixture runtime(document);
     const pci::PointCloudLayerId layerId =
-        document->addLayer(pci::buildSyntheticScene(1'000));
-    viewport->setDocument(document->snapshot(), true);
+        runtime.addPointLayer(pci::buildSyntheticScene(1'000));
+    runtime.setDocument(*viewport, true);
     CHECK(viewport->totalPointCount() == 1'000);
 
     CHECK(document->setLayerColorMode(layerId,

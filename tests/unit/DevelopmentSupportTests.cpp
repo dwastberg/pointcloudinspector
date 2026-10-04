@@ -1,5 +1,5 @@
-#include "development/SyntheticPointCloud.h"
-#include "pointcloud/GpuPoint.h"
+#include <pci/development/SyntheticPointCloud.h>
+#include <pci/pointcloud/GpuPoint.h>
 
 #include <catch2/catch_test_macros.hpp>
 

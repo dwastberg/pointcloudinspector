@@ -1,13 +1,15 @@
 // pci_multifile_bench — qualify local multi-file admission, persistent paging,
 // shared residency, request cancellation, and process-memory behavior.
 
-#include "app/ApplicationOptions.h"
-#include "import/PointCloudLoadController.h"
-#include "import/pdal/PdalPointCloudLoader.h"
-#include "platform/ProcessMemory.h"
-#include "platform/QtPath.h"
-#include "scene/SceneDocument.h"
-#include "storage/SecureStorage.h"
+#include <pci/adapters/pdal/PdalPointCloudLoader.h>
+#include <pci/adapters/platform/ProcessMemory.h>
+#include <pci/adapters/platform/QtPath.h>
+#include <pci/adapters/storage/SecureStorage.h>
+#include <pci/desktop/config/ApplicationOptions.h>
+#include <pci/desktop/operations/PointCloudLoadController.h>
+#include <pci/document/SceneDocument.h>
+#include <pci/operations/PointDatasetInstallation.h>
+#include <pci/runtime/scene/SceneRuntime.h>
 
 #include <QCoreApplication>
 #include <QDir>
@@ -283,44 +285,80 @@ int main(int argc, char **argv)
 
     const std::uint64_t cpuBudget = options.cpuCacheMiB * bytesPerMiB;
     auto memoryBudget = std::make_shared<pci::PointMemoryBudget>(cpuBudget);
-    auto document = std::make_shared<pci::SceneDocument>(
+    pci::SceneRuntime runtime(
         cpuBudget,
         pci::HierarchyResidencyCoordinator::defaultMaximumConcurrentDecodes,
         pci::HierarchyDecodeAdmissionPtr{},
         memoryBudget);
+    auto document = std::make_shared<pci::SceneDocument>();
     pci::TaskScheduler scheduler;
     pci::PointCloudLoadController controller(
         std::make_shared<pci::PdalPointCloudLoader>(), scheduler);
     ResidentMemorySampler memory;
     const auto started = Clock::now();
-    std::vector<pci::PointCloudScenePtr> scenes;
+    std::vector<pci::PointDatasetRuntimePtr> scenes;
     std::unordered_map<pci::LoadJobId, double> previewTimes;
     std::unordered_map<pci::LoadJobId, double> readyTimes;
     std::size_t terminal = 0;
     std::size_t failed = 0;
     std::size_t cancelled = 0;
     bool timedOut = false;
+    const auto attachScene = [&](const pci::PointDatasetRuntimePtr &scene) {
+        const pci::BindingGeneration binding =
+            pci::nextGeneration(document->lastBindingGeneration());
+        if (!runtime.attachPoint({.descriptor = scene->descriptor(),
+                                  .runtime = scene,
+                                  .generation = binding})) {
+            throw std::logic_error("duplicate point runtime binding");
+        }
+        try {
+            static_cast<void>(
+                document->addLayer(scene->datasetView(), binding));
+        } catch (...) {
+            static_cast<void>(runtime.detach(binding));
+            throw;
+        }
+    };
 
+    std::unordered_map<pci::LoadJobId, pci::PointDatasetRuntimePtr> importing;
     QObject::connect(
         &controller,
-        &pci::PointCloudLoadController::sceneReady,
+        &pci::PointCloudLoadController::dataReady,
         &application,
-        [&](const pci::LoadJobId jobId, const pci::PointCloudScenePtr &scene) {
-            previewTimes.try_emplace(jobId, elapsedMilliseconds(started));
-            if (std::ranges::find(scenes, scene) == scenes.end()) {
+        [&](const pci::LoadJobId jobId, const pci::PointDatasetEvent &event) {
+            if (const auto *seed =
+                    std::get_if<pci::PreparedPointDatasetPtr>(&event.data)) {
+                auto scene = pci::createPointDatasetRuntime(*seed, cpuBudget);
+                attachScene(scene);
+                importing[jobId] = scene;
                 scenes.push_back(scene);
-                static_cast<void>(document->addLayer(scene));
+                previewTimes.try_emplace(jobId, elapsedMilliseconds(started));
+            } else {
+                const auto &block =
+                    std::get<pci::PreparedPointBlock>(event.data);
+                importing.at(jobId)->addBlock(block.block);
+            }
+        });
+    QObject::connect(
+        &controller,
+        &pci::PointCloudLoadController::prepared,
+        &application,
+        [&](const pci::LoadJobId jobId,
+            const pci::PreparedPointDatasetPtr &dataset) {
+            if (importing.contains(jobId)) {
+                pci::completePointDatasetRuntime(importing.at(jobId), dataset);
+            } else {
+                auto scene = pci::createPointDatasetRuntime(dataset, cpuBudget);
+                attachScene(scene);
+                importing[jobId] = scene;
+                scenes.push_back(scene);
             }
         });
     QObject::connect(
         &controller,
         &pci::PointCloudLoadController::loaded,
         &application,
-        [&](const pci::LoadJobId jobId, const pci::PointCloudScenePtr &scene) {
-            if (std::ranges::find(scenes, scene) == scenes.end()) {
-                scenes.push_back(scene);
-                static_cast<void>(document->addLayer(scene));
-            }
+        [&](const pci::LoadJobId jobId, const pci::PreparedPointDatasetPtr &) {
             readyTimes[jobId] = elapsedMilliseconds(started);
             if (++terminal == paths.size()) {
                 application.quit();
@@ -373,7 +411,7 @@ int main(int argc, char **argv)
             .resources =
                 {
                     .decodedByteBudget = cpuBudget,
-                    .residency = document->residencyCoordinator(),
+                    .residency = runtime.residencyCoordinator(),
                     .memoryBudget = memoryBudget,
                     .flatReservation = {},
                 },
@@ -386,7 +424,7 @@ int main(int argc, char **argv)
 
     const auto requestStarted = Clock::now();
     for (std::uint64_t pass = 0; pass < options.revisitPasses; ++pass) {
-        for (const pci::PointCloudScenePtr &scene : scenes) {
+        for (const pci::PointDatasetRuntimePtr &scene : scenes) {
             if (!scene->hierarchical() || scene->rootNode().leaf) {
                 continue;
             }
@@ -399,15 +437,14 @@ int main(int argc, char **argv)
                     children.data(), children.size() / 2U));
             }
         }
-        document->hierarchyScheduler()->waitForIdle();
-        for (const pci::PointCloudScenePtr &scene : scenes) {
+        runtime.hierarchyScheduler()->waitForIdle();
+        for (const pci::PointDatasetRuntimePtr &scene : scenes) {
             scene->trimDecodedCache();
         }
     }
     const double requestMilliseconds = elapsedMilliseconds(requestStarted);
 
-    const pci::SceneDocumentMetrics documentMetrics =
-        document->hierarchyMetrics();
+    const pci::SceneRuntimeMetrics documentMetrics = runtime.metrics();
     const pci::PointCloudLoadControllerMetrics loadMetrics =
         controller.metrics();
     const pci::ProcessMemoryMetrics finalMemory = pci::processMemoryMetrics();

@@ -1,7 +1,8 @@
-#include "scene/DecodedPageCache.h"
-#include "scene/HierarchyResidencyCoordinator.h"
-#include "scene/PointCloudNode.h"
-#include "scene/PointMemoryBudget.h"
+#include <pci/pointcloud/PointCloudNode.h>
+#include <pci/runtime/point/DecodedPageCache.h>
+
+#include <pci/runtime/HierarchyResidencyCoordinator.h>
+#include <pci/runtime/PointMemoryBudget.h>
 
 #include <catch2/catch_test_macros.hpp>
 

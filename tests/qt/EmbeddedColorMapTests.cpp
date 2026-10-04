@@ -1,8 +1,8 @@
-#include "app/EmbeddedColorMaps.h"
+#include <pci/desktop/ui/EmbeddedColorMaps.h>
 
-#include "pointcloud/PointColorMapCatalog.h"
-#include "pointcloud/PointColorPolicy.h"
-#include "renderer/PointColorMapAtlas.h"
+#include <pci/color/PointColorMapCatalog.h>
+#include <pci/pointcloud/PointColorPolicy.h>
+#include <pci/rendering/rhi/PointColorMapAtlas.h>
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>

@@ -1,5 +1,6 @@
 #include "fixtures/OgrFixtureFactory.h"
-#include "import/ogr/OgrVectorLoader.h"
+#include <pci/adapters/gdal/runtime/GdalRuntime.h>
+#include <pci/adapters/ogr/OgrVectorLoader.h>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -172,6 +173,35 @@ TEST_CASE("OGR vector loader inspects and loads a local vector file",
     CHECK(data->triangleCount() > 0);
     CHECK(data->segments.size() == 9);
     CHECK(data->markers.size() == 1);
+}
+
+TEST_CASE("OGR uses the shared dataset owner with vector-only open flags",
+          "[component][ogr][ownership]")
+{
+    TemporaryGeoJson fixture;
+    pci::GdalDatasetOpenResult vector =
+        pci::tryOpenGdalDataset(fixture.path(), pci::GdalDatasetKind::Vector);
+    REQUIRE(vector.dataset);
+    pci::GdalDatasetOpenResult raster =
+        pci::tryOpenGdalDataset(fixture.path(), pci::GdalDatasetKind::Raster);
+    CHECK_FALSE(raster.dataset);
+}
+
+TEST_CASE("OGR missing-source errors preserve their public context",
+          "[component][ogr][ownership]")
+{
+    pci::OgrVectorLoader loader;
+    pci::VectorImportRequest request;
+    request.sourcePath = "no-such-vector-file.gpkg";
+    try {
+        static_cast<void>(loader.inspect(request));
+        FAIL("expected the missing vector source to fail");
+    } catch (const pci::VectorImportError &error) {
+        CHECK(
+            std::string(error.what())
+                .starts_with(
+                    "Could not open vector source 'no-such-vector-file.gpkg'"));
+    }
 }
 
 TEST_CASE("OGR vector loader reports XY-disjoint extents", "[component][ogr]")

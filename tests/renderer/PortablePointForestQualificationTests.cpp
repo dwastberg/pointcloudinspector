@@ -1,6 +1,6 @@
-#include "renderer/planning/FramePlanner.h"
-#include "renderer/planning/FrustumCuller.h"
-#include "renderer/planning/RenderSelection.h"
+#include <pci/rendering/planning/FramePlanner.h>
+#include <pci/rendering/planning/FrustumCuller.h>
+#include <pci/rendering/planning/RenderSelection.h>
 
 #include <catch2/catch_test_macros.hpp>
 

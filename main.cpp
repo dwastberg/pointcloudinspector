@@ -1,9 +1,9 @@
-#include "app/ApplicationBootstrap.h"
-#include "app/ApplicationConfig.h"
-#include "app/EmbeddedColorMaps.h"
-#include "app/MainWindow.h"
-#include "app/StrataTheme.h"
-#include "pointcloud/PointColorMapCatalog.h"
+#include <pci/color/PointColorMapCatalog.h>
+#include <pci/desktop/bootstrap/ApplicationBootstrap.h>
+#include <pci/desktop/config/ApplicationConfig.h>
+#include <pci/desktop/ui/EmbeddedColorMaps.h>
+#include <pci/desktop/ui/MainWindow.h>
+#include <pci/desktop/ui/StrataTheme.h>
 
 #include <QApplication>
 #include <QCoreApplication>

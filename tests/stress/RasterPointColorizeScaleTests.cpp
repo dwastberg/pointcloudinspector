@@ -1,6 +1,8 @@
-#include "scene/PointCloudScene.h"
-#include "scene/RasterPointColorizer.h"
-#include "storage/SecureStorage.h"
+#include <pci/adapters/storage/SecureStorage.h>
+#include <pci/operations/RasterPointColorizer.h>
+#include <pci/runtime/point/PointDatasetRuntime.h>
+
+#include <pci/operations/local/LocalRasterColorizeRunStore.h>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -134,7 +136,7 @@ private:
     bool detached_ = false;
 };
 
-[[nodiscard]] std::shared_ptr<pci::PointCloudScene>
+[[nodiscard]] std::shared_ptr<pci::PointDatasetRuntime>
 makeScaleScene(const std::uint32_t copies)
 {
     constexpr std::uint32_t width = 2000;
@@ -142,7 +144,7 @@ makeScaleScene(const std::uint32_t copies)
     constexpr std::uint32_t blockCount = 64;
     const std::uint64_t total =
         static_cast<std::uint64_t>(width) * height * copies;
-    auto scene = std::make_shared<pci::PointCloudScene>(
+    auto scene = std::make_shared<pci::PointDatasetRuntime>(
         pci::PointCloudMetadata{.sourcePointCount = total});
     for (std::uint32_t blockIndex = 0; blockIndex < blockCount; ++blockIndex) {
         auto block = std::make_shared<pci::PointBlock>();
@@ -216,6 +218,7 @@ struct ScaleOutcome {
         reserve(budget, preflight.workingReservationBytes),
         reserve(budget, preflight.rootStagingReservationBytes),
         reserve(budget, preflight.flatStagingReservationBytes),
+        pci::makeLocalRasterColorizeRunStoreFactory(),
         {},
         {});
     REQUIRE(result.has_value());
@@ -308,6 +311,7 @@ TEST_CASE("four-million-point raster bake cancels promptly and cleans runs",
                 reserve(budget, preflight.workingReservationBytes),
                 reserve(budget, preflight.rootStagingReservationBytes),
                 reserve(budget, preflight.flatStagingReservationBytes),
+                pci::makeLocalRasterColorizeRunStoreFactory(),
                 stopToken,
                 {});
         });

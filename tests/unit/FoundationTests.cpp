@@ -1,7 +1,11 @@
-#include "foundation/Bounds3d.h"
-#include "foundation/CheckedArithmetic.h"
-#include "foundation/Hash.h"
-#include "foundation/StrongId.h"
+#include <pci/foundation/Bounds3d.h>
+#include <pci/foundation/CheckedArithmetic.h>
+#include <pci/foundation/Generation.h>
+#include <pci/foundation/Hash.h>
+#include <pci/foundation/StrongId.h>
+
+#include <pci/foundation/JobResult.h>
+#include <pci/foundation/LayerIdentity.h>
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -31,6 +35,12 @@ static_assert(!std::is_convertible_v<std::uint64_t, FirstId>);
 static_assert(!std::is_convertible_v<FirstId, std::uint64_t>);
 static_assert(!std::is_convertible_v<FirstId, SecondId>);
 static_assert(!std::is_constructible_v<FirstId, SecondId>);
+static_assert(std::is_same_v<pci::PointCloudLayerId, pci::SceneLayerId>);
+static_assert(!std::is_convertible_v<std::uint64_t, pci::SceneLayerId>);
+static_assert(!std::is_same_v<pci::SessionGeneration, pci::DocumentGeneration>);
+static_assert(!std::is_same_v<pci::DocumentGeneration, pci::BindingGeneration>);
+static_assert(
+    !std::is_convertible_v<pci::SessionGeneration, pci::DocumentGeneration>);
 
 TEST_CASE("strong identifiers preserve tag and representation semantics",
           "[unit][foundation][strong-id]")
@@ -46,6 +56,47 @@ TEST_CASE("strong identifiers preserve tag and representation semantics",
     const std::unordered_set<FirstId> identifiers{first, same, later};
     CHECK(identifiers.size() == 2);
     CHECK(identifiers.contains(FirstId{17}));
+}
+
+TEST_CASE("job results carry portable values and typed errors",
+          "[unit][foundation][job-result]")
+{
+    const pci::JobResult<int> success{42};
+    REQUIRE(success);
+    CHECK(*success == 42);
+
+    const pci::JobResult<int> failure = std::unexpected(pci::JobError{
+        .code = pci::JobErrorCode::ResourceAdmission,
+        .message = "budget unavailable",
+    });
+    REQUIRE_FALSE(failure);
+    CHECK(failure.error() == pci::JobError{
+                                 .code = pci::JobErrorCode::ResourceAdmission,
+                                 .message = "budget unavailable",
+                             });
+}
+
+TEST_CASE("generations are distinct and never wrap",
+          "[unit][foundation][generation]")
+{
+    CHECK(pci::nextGeneration(pci::SessionGeneration{}) ==
+          pci::SessionGeneration{1});
+    CHECK(pci::nextGeneration(pci::DocumentGeneration{41}) ==
+          pci::DocumentGeneration{42});
+    CHECK(pci::nextGeneration(pci::BindingGeneration{8}) ==
+          pci::BindingGeneration{9});
+    CHECK(pci::nextGeneration(pci::AttemptGeneration{8}) ==
+          pci::AttemptGeneration{9});
+
+    constexpr auto maximum = std::numeric_limits<std::uint64_t>::max();
+    CHECK_THROWS_AS(pci::nextGeneration(pci::SessionGeneration{maximum}),
+                    std::overflow_error);
+    CHECK_THROWS_AS(pci::nextGeneration(pci::DocumentGeneration{maximum}),
+                    std::overflow_error);
+    CHECK_THROWS_AS(pci::nextGeneration(pci::BindingGeneration{maximum}),
+                    std::overflow_error);
+    CHECK_THROWS_AS(pci::nextGeneration(pci::AttemptGeneration{maximum}),
+                    std::overflow_error);
 }
 
 TEST_CASE("checked and saturating arithmetic handles unsigned boundaries",

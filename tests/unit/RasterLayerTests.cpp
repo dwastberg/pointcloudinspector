@@ -1,5 +1,7 @@
-#include "raster/RasterLayer.h"
-#include "raster/RasterTileSource.h"
+#include <pci/raster/RasterLayer.h>
+#include <pci/raster/RasterTileSource.h>
+
+#include <pci/raster/RasterIdentity.h>
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -7,10 +9,14 @@
 #include <array>
 #include <cmath>
 #include <limits>
+#include <type_traits>
 #include <unordered_set>
 #include <vector>
 
 namespace {
+
+static_assert(std::is_constructible_v<pci::RasterSourceId, std::uint64_t>);
+static_assert(!std::is_convertible_v<std::uint64_t, pci::RasterSourceId>);
 
 constexpr std::array<double, 6> northUpTransform{
     1000.0, 2.0, 0.0, 5000.0, 0.0, -2.0};

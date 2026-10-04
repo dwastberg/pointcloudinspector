@@ -1,8 +1,8 @@
-#include "app/PerformanceSettingsStore.h"
-#include "app/RasterColorizeUiState.h"
-#include "app/RenderDiagnosticsFormatter.h"
-#include "app/ViewportSettingsStore.h"
-#include "app/WorkspaceSettings.h"
+#include <pci/desktop/ui/PerformanceSettingsStore.h>
+#include <pci/desktop/ui/RasterColorizeUiState.h>
+#include <pci/desktop/ui/RenderDiagnosticsFormatter.h>
+#include <pci/desktop/ui/ViewportSettingsStore.h>
+#include <pci/desktop/ui/WorkspaceSettings.h>
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -45,13 +45,10 @@ TEST_CASE("workspace settings preserve stable geometry and state keys",
 TEST_CASE("raster colorize controls expose contextual state",
           "[ui][raster][colorize]")
 {
-    pci::PointCloudMetadata metadata;
-    metadata.sourcePath = "survey.laz";
-    pci::PointCloudLayer point{
+    pci::PointCloudLayerSnapshot point{
         .id = pci::SceneLayerId{7},
-        .scene = std::make_shared<pci::PointCloudScene>(metadata),
+        .colorizeAvailability = pci::PointColorizeAvailability::Ready,
     };
-    point.scene->markLoadingComplete();
 
     auto state = pci::rasterColorizeUiState(&point, 1, false, false);
     CHECK(state.startEnabled);

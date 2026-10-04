@@ -17,123 +17,218 @@ endfunction()
 function(pci_register_architecture_checks)
     set(target_names
         pcinspector_foundation
+        pcinspector_operation_api
+        pcinspector_operation_local
         pcinspector_platform
         pcinspector_secure_storage
         pcinspector_navigation
+        pcinspector_render_telemetry
+        pcinspector_color
         pcinspector_pointcloud
         pcinspector_raster
+        pcinspector_raster_runtime
         pcinspector_vector
+        pcinspector_document
         pcinspector_tasking
-        pcinspector_scene
+        pcinspector_runtime_resources
+        pcinspector_point_runtime
+        pcinspector_scene_runtime
+        pcinspector_operations
         pcinspector_development_support
-        pcinspector_import_api
-        pcinspector_renderer_api
+        pcinspector_viewport_api
         pcinspector_renderer_planning
+        pcinspector_frame
+        pcinspector_viewport
+        pcinspector_desktop_dispatch
         pcinspector_app_config
         pcinspector_app_model
-        pcinspector_app_session
+        pcinspector_desktop_session
         pcinspector_import_pdal
         pcinspector_gdal_runtime
         pcinspector_import_gdal
         pcinspector_import_ogr
-        pcinspector_import_async
+        pcinspector_desktop_operations
         pcinspector_app_ui
         pcinspector_renderer
         pcinspector)
 
     set(allowed_pcinspector_foundation "")
-    set(allowed_pcinspector_platform pcinspector_foundation Psapi)
-    set(allowed_pcinspector_secure_storage Qt6::Core Advapi32)
-    set(allowed_pcinspector_navigation pcinspector_foundation)
-    set(allowed_pcinspector_pointcloud pcinspector_foundation)
-    set(allowed_pcinspector_raster
-        pcinspector_foundation pcinspector_pointcloud)
-    set(allowed_pcinspector_vector
-        pcinspector_earcut pcinspector_foundation)
-    set(allowed_pcinspector_tasking pcinspector_foundation)
-    set(allowed_pcinspector_scene
+    set(allowed_pcinspector_operation_api
         pcinspector_foundation
         pcinspector_pointcloud
         pcinspector_raster
+        pcinspector_runtime_resources
+        pcinspector_vector)
+    set(allowed_pcinspector_operation_local
+        pcinspector_operation_api
+        pcinspector_platform
         pcinspector_secure_storage
-        pcinspector_tasking
-        pcinspector_vector
         Qt6::Core)
+    set(allowed_pcinspector_platform pcinspector_foundation Qt6::Core Psapi)
+    set(allowed_pcinspector_secure_storage pcinspector_platform Qt6::Core Advapi32)
+    set(allowed_pcinspector_navigation pcinspector_foundation)
+    set(allowed_pcinspector_render_telemetry pcinspector_foundation)
+    set(allowed_pcinspector_color "")
+    set(allowed_pcinspector_pointcloud
+        pcinspector_color pcinspector_foundation)
+    set(allowed_pcinspector_raster
+        pcinspector_color pcinspector_foundation)
+    set(allowed_pcinspector_raster_runtime pcinspector_raster)
+    set(allowed_pcinspector_vector
+        pcinspector_earcut pcinspector_foundation)
+    set(allowed_pcinspector_document
+        pcinspector_color
+        pcinspector_foundation
+        pcinspector_pointcloud
+        pcinspector_raster
+        pcinspector_vector)
+    set(allowed_pcinspector_tasking pcinspector_foundation)
+    set(allowed_pcinspector_runtime_resources pcinspector_foundation)
+    set(allowed_pcinspector_point_runtime
+        pcinspector_foundation
+        pcinspector_pointcloud
+        pcinspector_runtime_resources
+        pcinspector_tasking)
+    set(allowed_pcinspector_scene_runtime
+        pcinspector_foundation
+        pcinspector_pointcloud
+        pcinspector_point_runtime
+        pcinspector_raster
+        pcinspector_runtime_resources
+        pcinspector_tasking)
+    set(allowed_pcinspector_operations
+        pcinspector_operation_api
+        pcinspector_point_runtime
+        pcinspector_tasking)
     set(allowed_pcinspector_development_support
-        pcinspector_pointcloud pcinspector_scene)
-    set(allowed_pcinspector_import_api
-        pcinspector_scene pcinspector_secure_storage)
-    set(allowed_pcinspector_renderer_api pcinspector_scene Qt6::Core)
+        pcinspector_point_runtime pcinspector_pointcloud)
+    set(allowed_pcinspector_viewport_api
+        pcinspector_renderer_planning
+        pcinspector_color
+        pcinspector_document
+        pcinspector_scene_runtime
+        Qt6::Core)
     set(allowed_pcinspector_renderer_planning
-        pcinspector_foundation pcinspector_pointcloud pcinspector_scene)
-    # renderer_planning reaches raster transitively through scene; the raster
-    # LOD planner lives here because pcinspector_raster cannot depend back on
-    # scene or renderer types.
+        pcinspector_document
+        pcinspector_foundation
+        pcinspector_navigation
+        pcinspector_pointcloud
+        pcinspector_raster)
+    set(allowed_pcinspector_frame
+        pcinspector_render_telemetry
+        pcinspector_foundation
+        pcinspector_document
+        pcinspector_raster_runtime
+        pcinspector_renderer_planning
+        pcinspector_scene_runtime)
+    # Both planners consume immutable data contracts. Mutable runtime access
+    # belongs exclusively to frame execution.
     set(allowed_pcinspector_app_config
         pcinspector_foundation
         pcinspector_platform
-        pcinspector_renderer_api)
+        pcinspector_viewport_api)
     set(allowed_pcinspector_app_model
-        pcinspector_import_api pcinspector_renderer_api)
-    set(allowed_pcinspector_app_session
+        pcinspector_operation_api pcinspector_viewport_api)
+    set(allowed_pcinspector_desktop_session
         pcinspector_app_config
         pcinspector_app_model
-        pcinspector_import_async
-        pcinspector_platform
-        pcinspector_scene
-        Qt6::Core)
-    set(allowed_pcinspector_import_pdal
-        pcinspector_import_api pcinspector_secure_storage PDAL::pdalcpp Qt6::Core)
-    set(allowed_pcinspector_gdal_runtime GDAL::GDAL)
-    set(allowed_pcinspector_import_gdal
-        pcinspector_gdal_runtime pcinspector_raster)
-    set(allowed_pcinspector_import_ogr
-        pcinspector_gdal_runtime pcinspector_vector)
-    set(allowed_pcinspector_import_async
-        pcinspector_import_api
+        pcinspector_color
+        pcinspector_document
+        pcinspector_desktop_operations
         pcinspector_platform
         pcinspector_raster
+        pcinspector_scene_runtime
+        Qt6::Core)
+    set(allowed_pcinspector_import_pdal
+        pcinspector_platform
+        pcinspector_operation_api
+        pcinspector_secure_storage
+        PDAL::pdalcpp
+        Qt6::Core)
+    set(allowed_pcinspector_gdal_runtime GDAL::GDAL)
+    set(allowed_pcinspector_import_gdal
+        pcinspector_color
+        pcinspector_gdal_runtime
+        pcinspector_operation_api
+        pcinspector_raster)
+    set(allowed_pcinspector_import_ogr
+        pcinspector_gdal_runtime pcinspector_operation_api pcinspector_vector)
+    set(allowed_pcinspector_desktop_dispatch pcinspector_runtime_resources Qt6::Core)
+    set(allowed_pcinspector_viewport pcinspector_viewport_api pcinspector_renderer pcinspector_frame pcinspector_render_telemetry pcinspector_desktop_dispatch pcinspector_platform Qt6::Widgets Qt6::GuiPrivate)
+    set(allowed_pcinspector_desktop_operations
+        pcinspector_desktop_dispatch
+        pcinspector_document
+        pcinspector_foundation
+        pcinspector_operation_api
+        pcinspector_operations
+        pcinspector_platform
+        pcinspector_raster
+        pcinspector_runtime_resources
         pcinspector_tasking
         Qt6::Core)
     set(allowed_pcinspector_app_ui
         pcinspector_app_config
         pcinspector_app_model
-        pcinspector_app_session
-        pcinspector_import_async
-        pcinspector_platform
+        pcinspector_desktop_session
+        pcinspector_color
+        pcinspector_document
+        pcinspector_desktop_operations
         pcinspector_pointcloud
-        pcinspector_renderer_api
-        pcinspector_scene
+        pcinspector_viewport_api
         pcinspector_vector
-        Qt6::Concurrent
-        Qt6::Widgets)
+        Qt6::Widgets
+        pcinspector_platform)
     set(allowed_pcinspector_renderer
+        pcinspector_color
+        pcinspector_document
         pcinspector_navigation
         pcinspector_platform
         pcinspector_pointcloud
         pcinspector_raster
-        pcinspector_renderer_api
+        pcinspector_raster_runtime
+        pcinspector_render_telemetry
+        pcinspector_frame
         pcinspector_renderer_planning
-        pcinspector_scene
+        pcinspector_scene_runtime
         pcinspector_vector
         Qt6::GuiPrivate
-        Qt6::Widgets)
+        Qt6::Gui)
     set(allowed_pcinspector
         pcinspector_app_config
         pcinspector_app_ui
+        pcinspector_color
         pcinspector_development_support
-        pcinspector_import_async
+        pcinspector_desktop_operations
         pcinspector_import_gdal
         pcinspector_import_ogr
         pcinspector_import_pdal
+        pcinspector_operation_local
         pcinspector_platform
-        pcinspector_renderer
+        pcinspector_viewport
         pcinspector_secure_storage
         Qt6::Core)
+
+    if(PCINSPECTOR_BUILD_TOOLS)
+        list(APPEND target_names pci_load_bench pci_residency_bench pci_multifile_bench
+            pci_raster_colorize_bench pci_qualification_diff)
+        set(allowed_pci_load_bench pcinspector_app_config pcinspector_import_pdal pcinspector_operations pcinspector_platform)
+        set(allowed_pci_residency_bench pcinspector_app_config pcinspector_document pcinspector_import_pdal pcinspector_operations pcinspector_platform pcinspector_scene_runtime)
+        set(allowed_pci_multifile_bench pcinspector_app_config pcinspector_document pcinspector_desktop_operations pcinspector_import_pdal pcinspector_operations pcinspector_platform pcinspector_scene_runtime)
+        set(allowed_pci_raster_colorize_bench pcinspector_operation_local pcinspector_operations)
+        set(allowed_pci_qualification_diff pcinspector_platform Qt6::Core)
+    endif()
 
     set(manifest "# Generated by pci_register_architecture_checks.\n")
     string(APPEND manifest "set(PCI_ARCHITECTURE_TARGETS ${target_names})\n")
     foreach(target IN LISTS target_names)
+        get_target_property(public_includes "${target}" INTERFACE_INCLUDE_DIRECTORIES)
+        get_target_property(private_includes "${target}" INCLUDE_DIRECTORIES)
+        foreach(include_root IN LISTS public_includes private_includes)
+            if(include_root STREQUAL "${PROJECT_SOURCE_DIR}/src")
+                message(FATAL_ERROR "${target} exposes the legacy global source include root")
+            endif()
+        endforeach()
+
         if(NOT TARGET "${target}")
             message(FATAL_ERROR "Architecture target '${target}' does not exist")
         endif()

@@ -1,4 +1,4 @@
-#include "import/RasterElevationController.h"
+#include <pci/desktop/operations/RasterElevationController.h>
 
 #include <QSignalSpy>
 #include <QTest>
@@ -99,8 +99,18 @@ TEST_CASE("DEM exact scans serialize without occupying both import workers",
     QSignalSpy completed(&controller,
                          &pci::RasterElevationController::completed);
 
-    static_cast<void>(controller.start(pci::SceneLayerId{1}, dataFor(source)));
-    static_cast<void>(controller.start(pci::SceneLayerId{2}, dataFor(source)));
+    const pci::RasterLayerDataPtr first = dataFor(source);
+    const pci::RasterLayerDataPtr second = dataFor(source);
+    static_cast<void>(
+        controller.start({.layerId = pci::SceneLayerId{1},
+                          .sourceId = first->sourceId,
+                          .bindingGeneration = pci::BindingGeneration{1}},
+                         first->source));
+    static_cast<void>(
+        controller.start({.layerId = pci::SceneLayerId{2},
+                          .sourceId = second->sourceId,
+                          .bindingGeneration = pci::BindingGeneration{2}},
+                         second->source));
     REQUIRE(QTest::qWaitFor(
         [&source] {
             return source->active.load() == 1;

@@ -1,9 +1,11 @@
-#include "pointcloud/GpuPoint.h"
-#include "pointcloud/GpuPointProperties.h"
-#include "pointcloud/PointAttributes.h"
-#include "pointcloud/PointClassificationFilter.h"
-#include "pointcloud/PointCloudMetadata.h"
-#include "pointcloud/SourcePoint.h"
+#include <pci/pointcloud/GpuPoint.h>
+#include <pci/pointcloud/GpuPointProperties.h>
+#include <pci/pointcloud/PointAttributes.h>
+#include <pci/pointcloud/PointClassificationFilter.h>
+#include <pci/pointcloud/PointCloudMetadata.h>
+#include <pci/pointcloud/SourcePoint.h>
+
+#include <pci/pointcloud/PointIdentity.h>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -11,6 +13,9 @@
 #include <type_traits>
 
 namespace {
+
+static_assert(std::is_constructible_v<pci::PointCloudSourceId, std::uint64_t>);
+static_assert(!std::is_convertible_v<std::uint64_t, pci::PointCloudSourceId>);
 
 TEST_CASE("point attribute defaults are neutral", "[unit][pointcloud]")
 {

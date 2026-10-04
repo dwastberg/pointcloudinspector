@@ -1,6 +1,6 @@
 #include "qualification/QualificationDiff.h"
 
-#include "platform/QtPath.h"
+#include <pci/adapters/platform/QtPath.h>
 
 #include <QFile>
 #include <QJsonArray>

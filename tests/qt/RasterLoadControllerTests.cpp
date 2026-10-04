@@ -1,4 +1,4 @@
-#include "import/RasterLoadController.h"
+#include <pci/desktop/operations/RasterLoadController.h>
 
 #include <QSignalSpy>
 #include <QTest>
@@ -9,6 +9,20 @@
 #include <utility>
 
 #include <catch2/catch_test_macros.hpp>
+
+namespace pci {
+class RasterLoadControllerTestAccess {
+public:
+    static void deliver(RasterLoadController &controller,
+                        LoadJobId id,
+                        AttemptGeneration attempt,
+                        RasterLayerDataPtr data)
+    {
+        controller.finishInspection(
+            id, attempt, RasterImportPreflight{.data = std::move(data)});
+    }
+};
+} // namespace pci
 
 namespace {
 
@@ -266,6 +280,56 @@ TEST_CASE("raster load controller rejects an empty path",
 
     CHECK_THROWS_AS(controller.startImport({}), std::invalid_argument);
     CHECK(controller.jobRows().empty());
+}
+
+TEST_CASE(
+    "raster installation acknowledgement rejects stale and duplicate attempts",
+    "[qt][raster][transaction]")
+{
+    pci::TaskScheduler scheduler(1, 1024 * 1024);
+    pci::RasterLoadController controller(std::make_shared<FakeRasterLoader>(),
+                                         scheduler);
+    pci::AttemptGeneration first;
+    bool reject = true;
+    controller.setInstaller([&](pci::LoadJobId,
+                                pci::SessionGeneration session,
+                                pci::AttemptGeneration attempt,
+                                const pci::RasterLayerDataPtr &,
+                                bool) -> pci::JobResult<void> {
+        CHECK(session == pci::SessionGeneration{9});
+        if (reject) {
+            first = attempt;
+            return std::unexpected(pci::JobError{
+                pci::JobErrorCode::ResourceAdmission, "injected rejection"});
+        }
+        CHECK(attempt != first);
+        return {};
+    });
+    QSignalSpy loaded(&controller, &pci::RasterLoadController::loaded);
+    auto input = request();
+    input.session = pci::SessionGeneration{9};
+    const auto id = controller.startImport(std::move(input));
+    REQUIRE(QTest::qWaitFor(
+        [&] {
+            return !controller.hasActiveJobs();
+        },
+        2000));
+    CHECK(loaded.count() == 0);
+    CHECK(controller.jobState(id)->phase == pci::RasterLoadJobPhase::Failed);
+    reject = false;
+    REQUIRE(controller.retry(id));
+    pci::RasterLoadControllerTestAccess::deliver(
+        controller, id, first, stubData());
+    CHECK(loaded.count() == 0);
+    REQUIRE(QTest::qWaitFor(
+        [&] {
+            return !controller.hasActiveJobs();
+        },
+        2000));
+    CHECK(loaded.count() == 1);
+    pci::RasterLoadControllerTestAccess::deliver(
+        controller, id, pci::nextGeneration(first), stubData());
+    CHECK(loaded.count() == 1);
 }
 
 } // namespace

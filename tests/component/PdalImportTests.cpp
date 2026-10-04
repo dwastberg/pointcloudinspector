@@ -1,14 +1,16 @@
 #include "fixtures/PdalFixtureFactory.h"
-#include "import/PointCloudImport.h"
-#include "import/local/LocalPointIndexBuilder.h"
-#include "import/local/LocalPointPageFormat.h"
-#include "import/pdal/LocalPageBuildInfrastructure.h"
-#include "import/pdal/PdalHierarchicalPointSource.h"
-#include "import/pdal/PdalPointCloudLoader.h"
-#include "import/pdal/PdalPointCloudStatistics.h"
-#include "import/pdal/PdalSourceInspector.h"
-#include "pointcloud/GpuPointProperties.h"
-#include "scene/PointBlock.h"
+#include <pci/adapters/pdal/LocalPageBuildInfrastructure.h>
+#include <pci/adapters/pdal/LocalPointIndexBuilder.h>
+#include <pci/adapters/pdal/LocalPointPageFormat.h>
+#include <pci/adapters/pdal/PdalHierarchicalPointSource.h>
+#include <pci/adapters/pdal/PdalPointCloudLoader.h>
+#include <pci/adapters/pdal/PdalPointCloudStatistics.h>
+#include <pci/adapters/pdal/PdalSourceInspector.h>
+#include <pci/operations/PointCloudImport.h>
+#include <pci/operations/PointDatasetInstallation.h>
+#include <pci/operations/local/LocalStorageMaintenance.h>
+#include <pci/pointcloud/GpuPointProperties.h>
+#include <pci/pointcloud/PointBlock.h>
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -82,7 +84,8 @@ void checkMetadata(const pci::PointCloudMetadata &metadata,
     CHECK(metadata.hasNumberOfReturns);
 }
 
-std::vector<pci::GpuPoint> sortedPoints(const pci::PointCloudScenePtr &scene)
+std::vector<pci::GpuPoint>
+sortedPoints(const pci::PointDatasetRuntimePtr &scene)
 {
     std::vector<pci::GpuPoint> points;
     for (const auto &block : scene->blocks()) {
@@ -237,15 +240,17 @@ TEST_CASE("PDAL loads equivalent block scenes from supported formats",
     const FixtureDirectory fixture;
     const pci::PdalPointCloudLoader loader;
 
-    const auto las = loader.load({.sourcePath = fixture.paths().las});
-    const auto laz = loader.load({.sourcePath = fixture.paths().laz});
+    const auto las = pci::createPointDatasetRuntime(
+        loader.load({.sourcePath = fixture.paths().las}));
+    const auto laz = pci::createPointDatasetRuntime(
+        loader.load({.sourcePath = fixture.paths().laz}));
     const pci::PointCloudLoadOptions copcOptions{
         .sourcePath = fixture.paths().copc,
         .maximumPoints = 4,
     };
     const pci::PointCloudImportPreflight copcPreflight =
         loader.inspect(copcOptions);
-    const auto copc = loader.load(copcOptions);
+    const auto copc = pci::createPointDatasetRuntime(loader.load(copcOptions));
 
     CHECK(las->totalPointCount() == pci::test::fixturePoints.size());
     CHECK_FALSE(las->hierarchical());
@@ -342,14 +347,14 @@ TEST_CASE("PDAL point limits use a deterministic stride", "[component][pdal]")
     const FixtureDirectory fixture;
     const pci::PdalPointCloudLoader loader;
 
-    const auto first = loader.load({
+    const auto first = pci::createPointDatasetRuntime(loader.load({
         .sourcePath = fixture.paths().las,
         .maximumPoints = 4,
-    });
-    const auto repeated = loader.load({
+    }));
+    const auto repeated = pci::createPointDatasetRuntime(loader.load({
         .sourcePath = fixture.paths().las,
         .maximumPoints = 4,
-    });
+    }));
 
     REQUIRE(first->totalPointCount() == 4);
     CHECK(sortedPoints(first) == sortedPoints(repeated));
@@ -389,9 +394,13 @@ TEST_CASE(
             },
     };
     const pci::PointCloudLoadContext context{
-        .sceneReady =
-            [&](const pci::PointCloudScenePtr &value) {
-                shellLoadingComplete = value->snapshot().loadingComplete;
+        .dataReady =
+            [&](const pci::PointDatasetEvent &event) {
+                if (const auto *value =
+                        std::get_if<pci::PreparedPointDatasetPtr>(
+                            &event.data)) {
+                    shellLoadingComplete = (*value)->loadingComplete;
+                }
             },
     };
 
@@ -399,8 +408,8 @@ TEST_CASE(
     CHECK(preflight.hierarchical);
     CHECK(preflight.localPaging);
     CHECK(preflight.desiredRetainedPoints == pci::test::fixturePoints.size());
-    const auto scene =
-        loader.load(request.options, request.resources, preflight, context);
+    const auto scene = pci::createPointDatasetRuntime(
+        loader.load(request.options, request.resources, preflight, context));
     REQUIRE(scene);
     REQUIRE(shellLoadingComplete);
     CHECK_FALSE(*shellLoadingComplete);
@@ -934,10 +943,10 @@ TEST_CASE("PDAL safety previews sample deterministic spatial cells",
     pci::PointCloudImportPreflight preflight = loader.inspect(request);
     preflight.retainedPointLimit = 4;
     preflight.spatialPreview = true;
-    const auto first =
-        loader.load(request.options, request.resources, preflight, {});
-    const auto repeated =
-        loader.load(request.options, request.resources, preflight, {});
+    const auto first = pci::createPointDatasetRuntime(
+        loader.load(request.options, request.resources, preflight, {}));
+    const auto repeated = pci::createPointDatasetRuntime(
+        loader.load(request.options, request.resources, preflight, {}));
     REQUIRE(first->totalPointCount() == 4);
     CHECK(sortedPoints(first) == sortedPoints(repeated));
 
@@ -953,45 +962,44 @@ TEST_CASE("PDAL safety previews sample deterministic spatial cells",
     CHECK(intensities == std::vector<std::uint16_t>{100, 200, 300, 400});
 }
 
-TEST_CASE("PDAL publishes the scene before streaming blocks",
+TEST_CASE("PDAL publishes immutable metadata before streaming blocks",
           "[component][pdal]")
 {
     const FixtureDirectory fixture;
     const pci::PdalPointCloudLoader loader;
-
-    pci::PointCloudScenePtr early;
-    pci::PointCloudSceneInvalidationSubscription subscription;
-    std::uint64_t blocksAtSceneReady = 0;
-    std::uint64_t publishedRevision = 0;
-    std::uint64_t publishedPoints = 0;
-    bool loadActive = true;
-    const pci::PointCloudLoadOptions options{
-        .sourcePath = fixture.paths().las,
-    };
+    pci::PreparedPointDatasetPtr early;
+    std::vector<pci::PointBlockPtr> streamed;
+    std::uint64_t sequence = 0;
     const pci::PointCloudLoadContext context{
-        .sceneReady =
-            [&](const pci::PointCloudScenePtr &value) {
-                early = value;
-                blocksAtSceneReady = value->blocks().size();
-                subscription = value->subscribeInvalidation([&, value] {
-                    if (loadActive) {
-                        publishedRevision = value->revision();
-                        publishedPoints = value->totalPointCount();
-                    }
-                });
+        .dataReady =
+            [&](const pci::PointDatasetEvent &event) {
+                REQUIRE(event.sequence == sequence++);
+                if (const auto *seed =
+                        std::get_if<pci::PreparedPointDatasetPtr>(
+                            &event.data)) {
+                    early = *seed;
+                    CHECK(early->blocks.empty());
+                    CHECK_FALSE(early->loadingComplete);
+                } else {
+                    const auto &block =
+                        std::get<pci::PreparedPointBlock>(event.data);
+                    REQUIRE(early);
+                    REQUIRE(block.index == streamed.size());
+                    CHECK(block.sourceId == early->descriptor.sourceId);
+                    streamed.push_back(block.block);
+                }
             },
     };
-    const auto scene = loader.load(options, {}, context);
-    loadActive = false;
-
-    REQUIRE(early != nullptr);
-    CHECK(early.get() == scene.get());
-    CHECK(blocksAtSceneReady == 0);
-    CHECK(early->metadata().sourcePointCount ==
-          pci::test::fixturePoints.size());
-    CHECK(publishedRevision > 0);
-    CHECK(publishedPoints > 0);
-    CHECK(publishedPoints == scene->totalPointCount());
+    const auto result =
+        loader.load({.sourcePath = fixture.paths().las}, {}, context);
+    REQUIRE(early);
+    CHECK(early->blocks.empty());
+    CHECK_FALSE(early->loadingComplete);
+    CHECK(result->loadingComplete);
+    CHECK(result->eventCount == sequence);
+    CHECK(result->blocks == streamed);
+    CHECK(result->descriptor.sourceId == early->descriptor.sourceId);
+    CHECK(result->pointCount() == pci::test::fixturePoints.size());
 }
 
 TEST_CASE("PDAL reports progress and observes cancellation",
@@ -1016,12 +1024,15 @@ TEST_CASE("PDAL reports progress and observes cancellation",
                     callbackOrder.push_back(0);
                 }
             },
-        .sceneReady =
-            [&callbackOrder](const pci::PointCloudScenePtr &) {
-                callbackOrder.push_back(1);
+        .dataReady =
+            [&callbackOrder](const pci::PointDatasetEvent &event) {
+                if (event.sequence == 0) {
+                    callbackOrder.push_back(1);
+                }
             },
     };
-    const auto scene = loader.load(options, {}, context);
+    const auto scene =
+        pci::createPointDatasetRuntime(loader.load(options, {}, context));
 
     CHECK(scene->totalPointCount() == 8);
     REQUIRE_FALSE(progress.empty());
@@ -1037,7 +1048,7 @@ TEST_CASE("PDAL reports progress and observes cancellation",
 
     std::stop_source stop;
     stop.request_stop();
-    REQUIRE_THROWS_AS(loader.load(
+    REQUIRE_THROWS_AS(pci::createPointDatasetRuntime(loader.load(
                           pci::PointCloudLoadOptions{
                               .sourcePath = fixture.paths().las,
                               .maximumPoints = 8,
@@ -1045,7 +1056,7 @@ TEST_CASE("PDAL reports progress and observes cancellation",
                           {},
                           pci::PointCloudLoadContext{
                               .stopToken = stop.get_token(),
-                          }),
+                          })),
                       pci::PointCloudImportCancelled);
 }
 
@@ -1055,19 +1066,19 @@ TEST_CASE("PDAL rejects a zero point limit", "[component][pdal]")
     const pci::PdalPointCloudLoader loader;
 
     try {
-        static_cast<void>(loader.load({
+        static_cast<void>(pci::createPointDatasetRuntime(loader.load({
             .sourcePath = fixture.paths().las,
             .maximumPoints = 0,
-        }));
+        })));
         FAIL("loading unexpectedly succeeded");
     } catch (const pci::PointCloudImportError &error) {
         CHECK(std::string_view(error.what()).contains("maximumPoints"));
     }
 
     try {
-        static_cast<void>(loader.load(
+        static_cast<void>(pci::createPointDatasetRuntime(loader.load(
             pci::PointCloudLoadOptions{.sourcePath = fixture.paths().copc},
-            pci::PointCloudLoadResources{.decodedByteBudget = 0}));
+            pci::PointCloudLoadResources{.decodedByteBudget = 0})));
         FAIL("loading unexpectedly succeeded");
     } catch (const pci::PointCloudImportError &error) {
         CHECK(std::string_view(error.what()).contains("decodedByteBudget"));
@@ -1075,3 +1086,61 @@ TEST_CASE("PDAL rejects a zero point limit", "[component][pdal]")
 }
 
 } // namespace
+
+TEST_CASE(
+    "storage cleanup preserves progressive builds and retained point readers",
+    "[component][pdal][storage]")
+{
+    const FixtureDirectory fixture;
+    const pci::PdalPointCloudLoader loader;
+    const auto cache = testCache(fixture, "maintenance-cache");
+    const auto maintenance =
+        pci::makeLocalStorageMaintenance({.pointCache = cache->directory()});
+    pci::PointCloudLoadOptions request{
+        .sourcePath = fixture.paths().laz,
+        .maximumPoints = 8,
+        .localPaging = {.pointThreshold = 1},
+    };
+    const auto preflight = loader.inspect(request);
+    const pci::LocalPointPageStoreOptions options{
+        .cache = cache,
+        .pointsPerLeaf = 2,
+        .rootPreviewPoints = 2,
+        .sortMemoryBytes = 4096,
+        .diskCacheBytes = 64 * 1024 * 1024,
+    };
+    pci::LocalPointIndexBuilder builder;
+    bool checkedBuild = false;
+    auto built = builder.openOrBuild(
+        preflight, 8, options, {}, {}, [&](const auto &, const auto &) {
+            const auto result = maintenance->run(
+                pci::StorageMaintenanceAction::CleanUnused, {}, {});
+            CHECK(result.errorCount == 0);
+            CHECK(result.removedBytes == 0);
+            CHECK(result.usage[0].protectedBytes > 0);
+            checkedBuild = true;
+        });
+    REQUIRE(checkedBuild);
+    auto retained = built.source;
+    const auto directory = built.storeDirectory;
+    built.source.reset();
+    auto clean =
+        maintenance->run(pci::StorageMaintenanceAction::CleanUnused, {}, {});
+    CHECK(clean.errorCount == 0);
+    CHECK(clean.removedBytes == 0);
+    CHECK(clean.usage[0].protectedBytes > 0);
+    CHECK(retained->loadNode(pci::rootPointCloudNode, {}));
+    // A second open registers independent ownership before returning.
+    auto reopened = builder.openOrBuild(preflight, 8, options);
+    REQUIRE(reopened.reused);
+    retained.reset();
+    CHECK(maintenance->run(pci::StorageMaintenanceAction::CleanUnused, {}, {})
+              .removedBytes == 0);
+    CHECK(reopened.source->loadNode(pci::rootPointCloudNode, {}));
+    reopened.source.reset();
+    clean =
+        maintenance->run(pci::StorageMaintenanceAction::CleanUnused, {}, {});
+    CHECK(clean.removedBytes > 0);
+    CHECK_FALSE(std::filesystem::exists(directory));
+    CHECK(std::filesystem::exists(fixture.paths().laz));
+}

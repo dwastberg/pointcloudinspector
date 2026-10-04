@@ -1,7 +1,7 @@
-#include "app/SceneLayerListModel.h"
-#include "app/SceneLayersDock.h"
-#include "app/TaskDock.h"
-#include "app/TaskListModel.h"
+#include <pci/desktop/ui/SceneLayerListModel.h>
+#include <pci/desktop/ui/SceneLayersDock.h>
+#include <pci/desktop/ui/TaskDock.h>
+#include <pci/desktop/ui/TaskListModel.h>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -13,21 +13,42 @@
 #include <memory>
 #include <vector>
 
+namespace pci {
+struct TaskListModelTestAccess {
+    static void reset(TaskListModel &model)
+    {
+        model.lookupInspections_ = 0;
+    }
+    static std::size_t inspections(const TaskListModel &model)
+    {
+        return model.lookupInspections_;
+    }
+};
+} // namespace pci
+
 namespace {
 
-pci::PointCloudLayer pointLayer(const std::uint64_t id,
-                                const char *path,
-                                const std::uint64_t count = 10)
+pci::PointCloudLayerSnapshot pointLayer(const std::uint64_t id,
+                                        const char *path,
+                                        const std::uint64_t count = 10)
 {
     pci::PointCloudMetadata metadata;
     metadata.sourcePath = path;
     metadata.sourcePointCount = count;
-    return {.id = pci::SceneLayerId{id},
-            .scene = std::make_shared<pci::PointCloudScene>(metadata)};
+    return {
+        .id = pci::SceneLayerId{id},
+        .descriptor =
+            {
+                .sourceId = pci::PointCloudSourceId{id},
+                .metadata = std::move(metadata),
+            },
+        .availablePointCount = count,
+        .colorizeAvailability = pci::PointColorizeAvailability::Ready,
+    };
 }
 
 pci::SceneDocumentSnapshotPtr
-snapshot(std::initializer_list<pci::PointCloudLayer> layers)
+snapshot(std::initializer_list<pci::PointCloudLayerSnapshot> layers)
 {
     auto result = std::make_shared<pci::SceneDocumentSnapshot>();
     for (const auto &layer : layers) {
@@ -35,58 +56,45 @@ snapshot(std::initializer_list<pci::PointCloudLayer> layers)
             .id = layer.id,
             .visible = layer.visible,
             .payload =
-                pci::PointCloudLayerState{
-                    .scene = layer.scene,
+                pci::PointCloudLayerSnapshotState{
                     .colorMode = layer.colorMode,
                     .classificationFilter = layer.classificationFilter,
                     .rasterColors = layer.rasterColors,
                     .colorGeneration = layer.colorGeneration,
+                    .descriptor = layer.descriptor,
+                    .availableBounds = layer.availableBounds,
+                    .availablePointCount = layer.availablePointCount,
+                    .colorizeAvailability = layer.colorizeAvailability,
+                    .scalarRanges = layer.scalarRanges,
+                    .presentClassifications = layer.presentClassifications,
                 },
         });
     }
     return result;
 }
 
-class ListModelRasterSource final : public pci::RasterTileSource {
-public:
-    explicit ListModelRasterSource(pci::RasterLayerMetadata metadata)
-        : metadata_(std::move(metadata))
-    {
-    }
-
-    [[nodiscard]] const pci::RasterLayerMetadata &
-    metadata() const noexcept override
-    {
-        return metadata_;
-    }
-
-    [[nodiscard]] pci::RasterTileData readTile(const pci::RasterTileRequest &,
-                                               std::stop_token) const override
-    {
-        throw pci::RasterReadError("the list fixture holds no pixels");
-    }
-
-private:
-    pci::RasterLayerMetadata metadata_;
-};
-
-pci::RasterLayerDataPtr rasterData(const char *path,
-                                   const std::uint32_t width = 1024,
-                                   const std::uint32_t height = 768)
+pci::RasterLayerSnapshot rasterLayer(const std::uint64_t id,
+                                     const char *path,
+                                     const std::uint32_t width = 1024,
+                                     const std::uint32_t height = 768)
 {
     pci::RasterLayerMetadata metadata;
     metadata.sourcePath = path;
     metadata.width = width;
     metadata.height = height;
     metadata.geoTransform = {0.0, 1.0, 0.0, 0.0, 0.0, -1.0};
-    return std::make_shared<pci::RasterLayerData>(pci::RasterLayerData{
-        .sourceId = pci::nextRasterSourceId(),
-        .source = std::make_shared<ListModelRasterSource>(std::move(metadata)),
-    });
+    return {
+        .id = pci::SceneLayerId{id},
+        .descriptor =
+            {
+                .sourceId = pci::RasterSourceId{id},
+                .metadata = std::move(metadata),
+            },
+    };
 }
 
 pci::SceneDocumentSnapshotPtr
-rasterSnapshot(std::initializer_list<pci::RasterLayer> layers)
+rasterSnapshot(std::initializer_list<pci::RasterLayerSnapshot> layers)
 {
     auto result = std::make_shared<pci::SceneDocumentSnapshot>();
     for (const auto &layer : layers) {
@@ -94,7 +102,15 @@ rasterSnapshot(std::initializer_list<pci::RasterLayer> layers)
             .id = layer.id,
             .visible = layer.visible,
             .payload =
-                pci::RasterLayerState{.data = layer.data, .style = layer.style},
+                pci::RasterLayerSnapshotState{
+                    .style = layer.style,
+                    .elevationStatus = layer.elevationStatus,
+                    .exactElevationRange = layer.exactElevationRange,
+                    .elevationFailure = layer.elevationFailure,
+                    .elevationGeneration = layer.elevationGeneration,
+                    .renderGeneration = layer.renderGeneration,
+                    .descriptor = layer.descriptor,
+                },
         });
     }
     return result;
@@ -243,8 +259,7 @@ TEST_CASE("scene layer model projects raster rows with dimensions",
     const QAbstractItemModelTester tester(&model);
 
     model.setSnapshot(rasterSnapshot({
-        pci::RasterLayer{.id = pci::SceneLayerId{7},
-                         .data = rasterData("/data/ortho.tif", 2048, 1536)},
+        rasterLayer(7, "/data/ortho.tif", 2048, 1536),
     }));
     REQUIRE(model.rowCount() == 1);
 
@@ -267,24 +282,23 @@ TEST_CASE("scene layer model warns about unusable raster placement",
 
     SECTION("a disjoint extent offers Show anyway once hidden")
     {
-        pci::RasterLayerDataPtr data = rasterData("/data/elsewhere.tif");
-        const_cast<pci::RasterLayerMetadata &>(data->metadata())
-            .extentDisjointXY = true;
+        pci::RasterLayerSnapshot raster = rasterLayer(1, "/data/elsewhere.tif");
+        raster.descriptor.metadata.extentDisjointXY = true;
+        raster.visible = false;
         // The controller hides a disjoint raster on arrival, which is the
         // state in which the affordance is offered.
         model.setSnapshot(rasterSnapshot({
-            pci::RasterLayer{
-                .id = pci::SceneLayerId{1}, .data = data, .visible = false},
+            std::move(raster),
         }));
         const QModelIndex index = model.index(0, 0);
         CHECK(index.data(pci::SceneLayerListModel::WarningRole).toBool());
         CHECK(index.data(pci::SceneLayerListModel::ShowAnywayRole).toBool());
 
         // Once shown, the affordance disappears but the warning remains.
-        model.setSnapshot(rasterSnapshot({
-            pci::RasterLayer{
-                .id = pci::SceneLayerId{1}, .data = data, .visible = true},
-        }));
+        raster = rasterLayer(1, "/data/elsewhere.tif");
+        raster.descriptor.metadata.extentDisjointXY = true;
+        raster.visible = true;
+        model.setSnapshot(rasterSnapshot({std::move(raster)}));
         CHECK(model.index(0, 0)
                   .data(pci::SceneLayerListModel::WarningRole)
                   .toBool());
@@ -295,12 +309,9 @@ TEST_CASE("scene layer model warns about unusable raster placement",
 
     SECTION("insufficient overviews warn without offering Show anyway")
     {
-        pci::RasterLayerDataPtr data = rasterData("/data/huge.tif");
-        const_cast<pci::RasterLayerMetadata &>(data->metadata())
-            .insufficientOverviews = true;
-        model.setSnapshot(rasterSnapshot({
-            pci::RasterLayer{.id = pci::SceneLayerId{2}, .data = data},
-        }));
+        pci::RasterLayerSnapshot raster = rasterLayer(2, "/data/huge.tif");
+        raster.descriptor.metadata.insufficientOverviews = true;
+        model.setSnapshot(rasterSnapshot({std::move(raster)}));
         const QModelIndex index = model.index(0, 0);
         // Display quality is bounded by what the dataset provides; the
         // application reports that rather than compensating for it.
@@ -311,12 +322,9 @@ TEST_CASE("scene layer model warns about unusable raster placement",
 
     SECTION("a missing CRS is a warning, not a rejection")
     {
-        pci::RasterLayerDataPtr data = rasterData("/data/no-crs.tif");
-        const_cast<pci::RasterLayerMetadata &>(data->metadata()).crsMissing =
-            true;
-        model.setSnapshot(rasterSnapshot({
-            pci::RasterLayer{.id = pci::SceneLayerId{3}, .data = data},
-        }));
+        pci::RasterLayerSnapshot raster = rasterLayer(3, "/data/no-crs.tif");
+        raster.descriptor.metadata.crsMissing = true;
+        model.setSnapshot(rasterSnapshot({std::move(raster)}));
         CHECK(model.rowCount() == 1);
         CHECK(model.index(0, 0)
                   .data(pci::SceneLayerListModel::WarningRole)
@@ -325,12 +333,10 @@ TEST_CASE("scene layer model warns about unusable raster placement",
 
     SECTION("a positional RGB assignment is a warning")
     {
-        pci::RasterLayerDataPtr data = rasterData("/data/unlabelled.tif");
-        const_cast<pci::RasterLayerMetadata &>(data->metadata())
-            .positionalBandFallback = true;
-        model.setSnapshot(rasterSnapshot({
-            pci::RasterLayer{.id = pci::SceneLayerId{4}, .data = data},
-        }));
+        pci::RasterLayerSnapshot raster =
+            rasterLayer(4, "/data/unlabelled.tif");
+        raster.descriptor.metadata.positionalBandFallback = true;
+        model.setSnapshot(rasterSnapshot({std::move(raster)}));
         CHECK(model.index(0, 0)
                   .data(pci::SceneLayerListModel::WarningRole)
                   .toBool());
@@ -345,21 +351,33 @@ TEST_CASE("scene layer model mixes point, vector, and raster rows in order",
 
     pci::PointCloudMetadata pointMetadata;
     pointMetadata.sourcePath = "/data/cloud.las";
-    combined->layers.push_back(
-        {.id = pci::SceneLayerId{1},
-         .payload = pci::PointCloudLayerState{
-             .scene = std::make_shared<pci::PointCloudScene>(pointMetadata)}});
+    combined->layers.push_back({
+        .id = pci::SceneLayerId{1},
+        .payload =
+            pci::PointCloudLayerSnapshotState{
+                .descriptor =
+                    {
+                        .sourceId = pci::PointCloudSourceId{1},
+                        .metadata = std::move(pointMetadata),
+                    },
+            },
+    });
 
     auto vector = std::make_shared<pci::VectorLayerData>();
     vector->sourcePath = "/data/roads.gpkg";
     vector->bounds = {.minimum = {0.0, 0.0, 0.0}, .maximum = {1.0, 1.0, 0.0}};
     combined->layers.push_back(
         {.id = pci::SceneLayerId{2},
-         .payload = pci::VectorLayerState{.data = vector}});
+         .payload = pci::VectorLayerSnapshotState{.data = vector}});
 
-    combined->layers.push_back({.id = pci::SceneLayerId{3},
-                                .payload = pci::RasterLayerState{
-                                    .data = rasterData("/data/ortho.tif")}});
+    const pci::RasterLayerSnapshot raster = rasterLayer(3, "/data/ortho.tif");
+    combined->layers.push_back({
+        .id = pci::SceneLayerId{3},
+        .payload =
+            pci::RasterLayerSnapshotState{
+                .descriptor = raster.descriptor,
+            },
+    });
 
     model.setSnapshot(combined);
     REQUIRE(model.rowCount() == 3);
@@ -372,4 +390,55 @@ TEST_CASE("scene layer model mixes point, vector, and raster rows in order",
     CHECK(model.index(2, 0)
               .data(pci::SceneLayerListModel::LayerKindRole)
               .toInt() == static_cast<int>(pci::SceneLayerKind::Raster));
+}
+
+TEST_CASE(
+    "task deltas update one indexed row and preserve persistent selections",
+    "[ui][model][registry][unit]")
+{
+    pci::TaskListModel model;
+    QAbstractItemModelTester tester(
+        &model, QAbstractItemModelTester::FailureReportingMode::Fatal);
+    std::vector<pci::LoadJobRow> rows;
+    for (std::uint64_t i = 1; i <= 1024; ++i)
+        rows.push_back({.key = {pci::LoadJobKind::Raster, pci::LoadJobId{i}},
+                        .title = QString::number(i)});
+    model.setRows(rows);
+    QPersistentModelIndex selected(model.index(511));
+    QSignalSpy changed(&model, &QAbstractItemModel::dataChanged);
+    QSignalSpy reset(&model, &QAbstractItemModel::modelReset);
+    rows[511].completion = 0.5;
+    model.updateRow(rows[511]);
+    CHECK(changed.size() == 1);
+    CHECK(reset.empty());
+    CHECK(selected.isValid());
+    CHECK(selected.row() == 511);
+    CHECK(model.rowForKey(rows[511].key) == 511);
+    CHECK(model.data(selected, pci::TaskListModel::CompletionRole).toDouble() ==
+          0.5);
+    model.removeRow(rows.front().key);
+    CHECK(selected.row() == 510);
+    CHECK(model.rowForKey(rows[511].key) == 510);
+    model.updateRow(rows.front());
+    CHECK(selected.row() == 511);
+    model.updateRow(rows[511]);
+    CHECK(changed.size() == 1);
+    CHECK(reset.empty());
+}
+
+TEST_CASE("task row lookup does not rescan unchanged rows",
+          "[ui][model][complexity][unit]")
+{
+    for (std::uint64_t count : {32U, 1024U}) {
+        pci::TaskListModel model;
+        std::vector<pci::LoadJobRow> rows;
+        for (std::uint64_t i = 1; i <= count; ++i)
+            rows.push_back(
+                {.key = {pci::LoadJobKind::Raster, pci::LoadJobId{i}}});
+        const auto key = rows.back().key;
+        model.setRows(std::move(rows));
+        pci::TaskListModelTestAccess::reset(model);
+        CHECK(model.rowForKey(key) == static_cast<int>(count - 1));
+        CHECK(pci::TaskListModelTestAccess::inspections(model) == 1);
+    }
 }

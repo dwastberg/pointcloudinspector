@@ -1,6 +1,7 @@
-#include "pointcloud/PointColorMapCatalog.h"
-#include "pointcloud/PointColorPolicy.h"
 #include "support/TestPointColorMaps.h"
+#include <pci/pointcloud/PointColorPolicy.h>
+
+#include <pci/color/PointColorMapCatalog.h>
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -201,6 +202,20 @@ TEST_CASE("color map catalogs freeze independently with typed errors",
     CHECK_FALSE(late);
     CHECK(late.errorCode ==
           pci::PointColorMapRegistrationResult::Error::Frozen);
+}
+
+TEST_CASE("catalog sampling matches the shared ramp kernel",
+          "[unit][pointcloud][color][ramp]")
+{
+    const auto catalog = pci::test::createTestPointColorMapCatalog();
+    const pci::PointColorMapDefinition *viridis =
+        catalog->definition(pci::PointColorMap::Viridis);
+    REQUIRE(viridis != nullptr);
+    for (const float position : {0.0F, 0.125F, 0.5F, 0.875F, 1.0F}) {
+        CHECK(
+            catalog->sampleContinuous(pci::PointColorMap::Viridis, position) ==
+            pci::interpolateColorRamp(viridis->stops, position, {}));
+    }
 }
 
 } // namespace

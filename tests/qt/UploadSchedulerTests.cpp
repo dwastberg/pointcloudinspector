@@ -1,4 +1,4 @@
-#include "renderer/rhi/UploadScheduler.h"
+#include <pci/rendering/rhi/UploadScheduler.h>
 
 #include <catch2/catch_test_macros.hpp>
 

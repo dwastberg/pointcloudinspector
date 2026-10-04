@@ -1,4 +1,4 @@
-#include "app/VectorSublayerDialog.h"
+#include <pci/desktop/ui/VectorSublayerDialog.h>
 
 #include <QDialogButtonBox>
 #include <QLabel>

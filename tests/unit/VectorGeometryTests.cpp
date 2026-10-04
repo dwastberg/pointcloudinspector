@@ -1,5 +1,5 @@
-#include "vector/VectorGeometry.h"
-#include "vector/VectorLayerData.h"
+#include <pci/vector/VectorGeometry.h>
+#include <pci/vector/VectorLayerData.h>
 
 #include <catch2/catch_test_macros.hpp>
 

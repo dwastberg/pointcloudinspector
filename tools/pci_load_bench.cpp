@@ -8,12 +8,13 @@
 //
 // Usage: pci_load_bench [--max-points N] <files-or-globs...>
 
-#include "app/ApplicationOptions.h"
-#include "import/PointCloudImport.h"
-#include "import/pdal/PdalPointCloudLoader.h"
-#include "platform/ProcessMemory.h"
-#include "pointcloud/GpuPoint.h"
-#include "scene/PointCloudScene.h"
+#include <pci/adapters/pdal/PdalPointCloudLoader.h>
+#include <pci/adapters/platform/ProcessMemory.h>
+#include <pci/desktop/config/ApplicationOptions.h>
+#include <pci/operations/PointCloudImport.h>
+#include <pci/operations/PointDatasetInstallation.h>
+#include <pci/pointcloud/GpuPoint.h>
+#include <pci/runtime/point/PointDatasetRuntime.h>
 
 #include <algorithm>
 #include <atomic>
@@ -41,8 +42,8 @@ struct LoadResult {
     double seconds = 0.0;
 };
 
-pci::PointCloudScenePtr loadOne(const std::filesystem::path &path,
-                                const std::uint64_t maxPoints)
+pci::PointDatasetRuntimePtr loadOne(const std::filesystem::path &path,
+                                    const std::uint64_t maxPoints)
 {
     pci::PointCloudLoadOptions options{
         .sourcePath = path,
@@ -57,12 +58,13 @@ pci::PointCloudScenePtr loadOne(const std::filesystem::path &path,
     const pci::PointCloudLoadContext context{
         .stopToken = {},
         .progress = [](pci::PointCloudImportProgress) {},
-        .sceneReady = [](pci::PointCloudScenePtr) {},
+
     };
     const pci::PdalPointCloudLoader loader;
     const pci::PointCloudImportPreflight preflight =
         loader.inspect(options, resources.decodedByteBudget, context.stopToken);
-    return loader.load(options, resources, preflight, context);
+    return pci::createPointDatasetRuntime(
+        loader.load(options, resources, preflight, context));
 }
 
 double megaPointsPerSecond(const std::uint64_t points, const double seconds)
@@ -140,7 +142,8 @@ int main(int argc, char **argv)
     try {
         for (std::size_t i = 0; i < paths.size(); ++i) {
             const auto start = Clock::now();
-            const pci::PointCloudScenePtr scene = loadOne(paths[i], maxPoints);
+            const pci::PointDatasetRuntimePtr scene =
+                loadOne(paths[i], maxPoints);
             const double seconds =
                 std::chrono::duration_cast<Seconds>(Clock::now() - start)
                     .count();
@@ -192,7 +195,7 @@ int main(int argc, char **argv)
                     }
                     try {
                         const auto start = Clock::now();
-                        const pci::PointCloudScenePtr scene =
+                        const pci::PointDatasetRuntimePtr scene =
                             loadOne(paths[i], maxPoints);
                         parallelSeconds[i] =
                             std::chrono::duration_cast<Seconds>(Clock::now() -

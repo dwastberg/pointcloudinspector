@@ -1,11 +1,12 @@
 #include "fixtures/GdalRasterFixtureFactory.h"
-#include "import/gdal/GdalRasterLoader.h"
-#include "import/gdal/GdalRasterSource.h"
-#include "import/gdal/GdalRuntime.h"
-#include "platform/ProcessMemory.h"
-#include "renderer/planning/RasterLodPlanner.h"
-#include "renderer/rhi/RasterTileStreamer.h"
-#include "storage/SecureStorage.h"
+#include <pci/adapters/gdal/GdalRasterLoader.h>
+#include <pci/adapters/gdal/GdalRasterSource.h>
+#include <pci/adapters/gdal/runtime/GdalRuntime.h>
+#include <pci/adapters/platform/ProcessMemory.h>
+#include <pci/adapters/storage/SecureStorage.h>
+#include <pci/document/SceneLayer.h>
+#include <pci/rendering/planning/RasterLodPlanner.h>
+#include <pci/runtime/raster/RasterTileStreamer.h>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -14,6 +15,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <vector>
 
 namespace {
@@ -38,6 +40,18 @@ const pci::test::GdalRasterFixturePaths &fixtures()
     return fixture.paths;
 }
 
+struct RasterLayerFixture {
+    pci::SceneLayerId id;
+    pci::RasterLayerDataPtr data;
+    pci::RasterLayerStyle style;
+    pci::RasterElevationStatus elevationStatus =
+        pci::RasterElevationStatus::NotApplicable;
+    std::optional<pci::RasterElevationRange> exactElevationRange;
+    std::uint64_t renderGeneration = 1;
+    pci::BindingGeneration bindingGeneration;
+    pci::RasterDatasetDescriptor descriptor;
+};
+
 [[nodiscard]] pci::RasterLayerDataPtr load(const std::filesystem::path &path,
                                            const pci::GdalRasterLoader &loader)
 {
@@ -46,12 +60,14 @@ const pci::test::GdalRasterFixturePaths &fixtures()
     return loader.inspect(request).data;
 }
 
-[[nodiscard]] pci::RasterLayer layerFor(pci::RasterLayerDataPtr data)
+[[nodiscard]] RasterLayerFixture layerFor(pci::RasterLayerDataPtr data)
 {
-    pci::RasterLayer layer;
+    RasterLayerFixture layer;
     layer.id = pci::SceneLayerId{1};
     layer.renderGeneration = 1;
+    layer.bindingGeneration = pci::BindingGeneration{1};
     layer.data = std::move(data);
+    layer.descriptor = layer.data->descriptor();
     layer.style = pci::defaultRasterLayerStyle(layer.data->metadata());
     return layer;
 }
@@ -81,12 +97,15 @@ const pci::test::GdalRasterFixturePaths &fixtures()
     return camera;
 }
 
-[[nodiscard]] pci::RasterLodPlanInput planInput(const pci::RasterLayer &layer,
+[[nodiscard]] pci::RasterLodPlanInput planInput(const RasterLayerFixture &layer,
                                                 const pci::FrameCamera &camera)
 {
-    pci::RasterLodPlanInput input;
-    input.layer = layer;
-    input.camera = camera;
+    pci::RasterLodPlanInput input{
+        pci::RasterLodLayerView{layer.descriptor.metadata,
+                                layer.style,
+                                layer.elevationStatus,
+                                layer.exactElevationRange},
+        camera};
     input.cpuResident = [](pci::RasterTileKey) {
         return false;
     };
@@ -94,6 +113,20 @@ const pci::test::GdalRasterFixturePaths &fixtures()
         return false;
     };
     return input;
+}
+
+void reconcile(pci::RasterTileStreamer &streamer,
+               const pci::RasterLodPlan &plan,
+               const RasterLayerFixture &layer)
+{
+    const pci::RasterRequestBatch batch{
+        .sourceId = layer.descriptor.sourceId,
+        .bindingGeneration = layer.bindingGeneration,
+        .renderGeneration = layer.renderGeneration,
+        .source = layer.data->source,
+        .orderedRequests = plan.requests,
+    };
+    streamer.reconcile(std::span{&batch, 1});
 }
 
 TEST_CASE("a huge catalog plans and reads a bounded amount of work",
@@ -107,7 +140,7 @@ TEST_CASE("a huge catalog plans and reads a bounded amount of work",
     // reads, then take RSS only after fixture creation and GDAL registration.
     pci::setGdalBlockCacheBytes(gdalBudget);
     const pci::GdalRasterLoader loader;
-    const pci::RasterLayer layer = layerFor(load(fixtures().catalog, loader));
+    const RasterLayerFixture layer = layerFor(load(fixtures().catalog, loader));
     const pci::RasterLayerMetadata &metadata = layer.data->metadata();
     const auto *source =
         dynamic_cast<const pci::GdalRasterSource *>(layer.data->source.get());
@@ -150,7 +183,7 @@ TEST_CASE("a huge catalog plans and reads a bounded amount of work",
     // Planning reads nothing; it is arithmetic over the level table.
     CHECK(source->readCount() == readsBeforePlanning);
 
-    streamer.reconcile(wide, layer);
+    reconcile(streamer, wide, layer);
     streamer.waitForIdle();
     static_cast<void>(
         streamer.drainCompletions({}, pci::rasterMaximumPendingRequests));
@@ -197,7 +230,7 @@ TEST_CASE("a huge catalog plans and reads a bounded amount of work",
         REQUIRE_FALSE(churn.selected.empty());
         CHECK(churn.selected.size() <= 512);
 
-        streamer.reconcile(churn, layer);
+        reconcile(streamer, churn, layer);
         streamer.waitForIdle();
         static_cast<void>(
             streamer.drainCompletions({}, pci::rasterMaximumPendingRequests));
@@ -235,7 +268,7 @@ TEST_CASE("zooming into a catalog member reaches its native pixels",
           "[component][raster][stress]")
 {
     const pci::GdalRasterLoader loader;
-    const pci::RasterLayer layer = layerFor(load(fixtures().catalog, loader));
+    const RasterLayerFixture layer = layerFor(load(fixtures().catalog, loader));
     const pci::RasterLayerMetadata &metadata = layer.data->metadata();
 
     // The first member sits at the catalog's north-west corner. Its pixels are
@@ -260,7 +293,7 @@ TEST_CASE("zooming into a catalog member reaches its native pixels",
 
     // The tiles named are the ones covering the member, not the catalog.
     pci::RasterTileStreamer streamer(64ULL * 1024 * 1024, 2);
-    streamer.reconcile(close, layer);
+    reconcile(streamer, close, layer);
     streamer.waitForIdle();
     const std::vector<pci::RasterCacheKey> admitted =
         streamer.drainCompletions({});
@@ -278,7 +311,7 @@ TEST_CASE("a sparse BigTIFF costs its tiles, not its extent",
     // shape of "enormous", where the pixels are real rather than assembled
     // from members.
     const pci::GdalRasterLoader loader;
-    const pci::RasterLayer layer =
+    const RasterLayerFixture layer =
         layerFor(load(fixtures().sparseHuge, loader));
     const pci::RasterLayerMetadata &metadata = layer.data->metadata();
     const auto *source =
@@ -296,7 +329,7 @@ TEST_CASE("a sparse BigTIFF costs its tiles, not its extent",
     pci::RasterTileStreamer streamer(32ULL * 1024 * 1024, 2);
     const pci::RasterLodPlan plan =
         planRasterTiles(planInput(layer, overheadCamera(center, 20000.0)));
-    streamer.reconcile(plan, layer);
+    reconcile(streamer, plan, layer);
     streamer.waitForIdle();
     static_cast<void>(streamer.drainCompletions({}));
 
@@ -314,7 +347,8 @@ TEST_CASE("a huge mosaic covers coarsely before it refines",
           "[component][raster][stress]")
 {
     const pci::GdalRasterLoader loader;
-    const pci::RasterLayer layer = layerFor(load(fixtures().vrtMosaic, loader));
+    const RasterLayerFixture layer =
+        layerFor(load(fixtures().vrtMosaic, loader));
     const pci::RasterLayerMetadata &metadata = layer.data->metadata();
     REQUIRE(pci::rasterBackedLevelCount(metadata.levels) == 3);
 

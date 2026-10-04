@@ -1,8 +1,10 @@
-#include "development/SyntheticScene.h"
-#include "renderer/rhi/BackendPolicy.h"
-#include "renderer/rhi/RenderViewportWidget_p.h"
-#include "renderer/rhi/ShaderLoader.h"
 #include "support/RenderViewportTestAccess.h"
+#include "support/SceneRuntimeFixture.h"
+#include <pci/desktop/viewport/BackendPolicy.h>
+#include <pci/desktop/viewport/RenderViewportWidget_p.h>
+#include <pci/development/SyntheticScene.h>
+#include <pci/document/SceneDocument.h>
+#include <pci/rendering/rhi/ShaderLoader.h>
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -14,16 +16,41 @@
 
 #include <limits>
 #include <memory>
+#include <stdexcept>
 
 namespace {
+
+TEST_CASE("render viewport requires paired document and runtime snapshots",
+          "[ui][renderer-internal][runtime][architecture]")
+{
+    pci::RenderViewportWidget viewport(true);
+    auto document = std::make_shared<pci::SceneDocument>();
+    CHECK_THROWS_AS(
+        viewport.setDocument(
+            document->snapshot(),
+            {},
+            {.decodedPointBytes =
+                 pci::HierarchyResidencyCoordinator::defaultByteBudget},
+            pci::SessionGeneration{1},
+            false),
+        std::invalid_argument);
+    CHECK_THROWS_AS(
+        viewport.setDocument(document->snapshot(),
+                             pci::test::runtimeSnapshotForTest(*document),
+                             {},
+                             pci::SessionGeneration{1},
+                             false),
+        std::invalid_argument);
+}
 
 TEST_CASE("render viewport routes navigation input internally",
           "[ui][renderer-internal][input]")
 {
     pci::RenderViewportWidget viewport(true);
     auto document = std::make_shared<pci::SceneDocument>();
-    static_cast<void>(document->addLayer(pci::buildSyntheticScene(1'000)));
-    viewport.setDocument(document->snapshot(), true);
+    pci::test::SceneRuntimeFixture runtime(document);
+    static_cast<void>(runtime.addPointLayer(pci::buildSyntheticScene(1'000)));
+    runtime.setDocument(viewport, true);
 
     const auto initialRevision =
         pci::testAccess(viewport).cameraForTesting().revision();
@@ -67,8 +94,9 @@ TEST_CASE("map view locks top-down orthographic GIS navigation",
     pci::RenderViewportWidget viewport(true);
     viewport.resize(1000, 1000);
     auto document = std::make_shared<pci::SceneDocument>();
-    static_cast<void>(document->addLayer(pci::buildSyntheticScene(1'000)));
-    viewport.setDocument(document->snapshot(), true);
+    pci::test::SceneRuntimeFixture runtime(document);
+    static_cast<void>(runtime.addPointLayer(pci::buildSyntheticScene(1'000)));
+    runtime.setDocument(viewport, true);
 
     viewport.setMapView(true);
     REQUIRE(viewport.isMapView());

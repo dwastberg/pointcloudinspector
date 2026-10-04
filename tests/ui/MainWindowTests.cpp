@@ -1,16 +1,19 @@
-#include "app/ColorizeFromRasterDialog.h"
-#include "app/LayerInspectorDock.h"
-#include "app/MainWindow.h"
-#include "app/SceneLayersDock.h"
-#include "app/SettingsDialog.h"
-#include "app/TaskDock.h"
+#include <pci/desktop/ui/ColorizeFromRasterDialog.h>
+#include <pci/desktop/ui/LayerInspectorDock.h>
+#include <pci/desktop/ui/MainWindow.h>
+#include <pci/desktop/ui/SceneLayersDock.h>
+#include <pci/desktop/ui/SettingsDialog.h>
+#include <pci/desktop/ui/TaskDock.h>
 
-#include "import/PointCloudLoadController.h"
-#include "platform/QtPath.h"
-#include "pointcloud/PointColorPolicy.h"
-#include "renderer/RenderViewport.h"
-#include "scene/PointCloudDataSource.h"
+#include "support/InMemoryRasterColorizeRunStore.h"
 #include "support/TestPointColorMaps.h"
+#include <pci/adapters/platform/QtPath.h>
+#include <pci/desktop/operations/PointCloudLoadController.h>
+#include <pci/desktop/viewport/RenderViewport.h>
+#include <pci/pointcloud/PointCloudDataSource.h>
+#include <pci/pointcloud/PointColorPolicy.h>
+
+#include <pci/operations/PointDatasetInstallation.h>
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -81,12 +84,20 @@ makeSnapshot(const std::vector<pci::PointCloudLayer> &points,
                 .id = id,
                 .visible = point->visible,
                 .payload =
-                    pci::PointCloudLayerState{
-                        .scene = point->scene,
+                    pci::PointCloudLayerSnapshotState{
                         .colorMode = point->colorMode,
                         .classificationFilter = point->classificationFilter,
                         .rasterColors = point->rasterColors,
                         .colorGeneration = point->colorGeneration,
+                        .descriptor = point->descriptor,
+                        .availableBounds = point->availability.bounds,
+                        .availablePointCount = point->availability.pointCount,
+                        .colorizeAvailability =
+                            point->availability.colorizeAvailability,
+                        .scalarRanges = point->availability.scalarRanges,
+                        .presentClassifications =
+                            point->availability.presentClassifications,
+                        .storage = point->availability.storage,
                     },
             });
             continue;
@@ -98,7 +109,7 @@ makeSnapshot(const std::vector<pci::PointCloudLayer> &points,
                 .id = id,
                 .visible = vector->visible,
                 .payload =
-                    pci::VectorLayerState{
+                    pci::VectorLayerSnapshotState{
                         .data = vector->data,
                         .style = vector->style,
                     },
@@ -112,14 +123,14 @@ makeSnapshot(const std::vector<pci::PointCloudLayer> &points,
             .id = id,
             .visible = raster->visible,
             .payload =
-                pci::RasterLayerState{
-                    .data = raster->data,
+                pci::RasterLayerSnapshotState{
                     .style = raster->style,
                     .elevationStatus = raster->elevationStatus,
                     .exactElevationRange = raster->exactElevationRange,
                     .elevationFailure = raster->elevationFailure,
                     .elevationGeneration = raster->elevationGeneration,
                     .renderGeneration = raster->renderGeneration,
+                    .descriptor = raster->descriptor,
                 },
         });
     }
@@ -128,7 +139,7 @@ makeSnapshot(const std::vector<pci::PointCloudLayer> &points,
 
 class ImmediateLoader final : public pci::PointCloudLoader {
 public:
-    pci::PointCloudScenePtr
+    pci::PreparedPointDatasetPtr
     load(const pci::PointCloudLoadOptions &options,
          const pci::PointCloudLoadResources &,
          const pci::PointCloudImportPreflight &,
@@ -160,10 +171,8 @@ public:
         metadata.hasColor = !scalarOnly;
         metadata.hasIntensity = !scalarOnly;
         metadata.hasClassification = !scalarOnly;
-        auto scene = std::make_shared<pci::PointCloudScene>(metadata);
-        if (context.sceneReady) {
-            context.sceneReady(scene);
-        }
+        auto scene = std::make_shared<pci::PointDatasetPreparation>(metadata);
+        scene->publish(context);
         auto block = std::make_shared<pci::PointBlock>();
         block->points.resize(3);
         block->attributes.resize(3);
@@ -187,7 +196,7 @@ public:
                 .total = 3,
             });
         }
-        return scene;
+        return scene->finish();
     }
 };
 
@@ -240,9 +249,9 @@ public:
         };
     }
 
-    pci::PointCloudScenePtr
+    pci::PreparedPointDatasetPtr
     load(const pci::PointCloudLoadOptions &options,
-         const pci::PointCloudLoadResources &resources,
+         const pci::PointCloudLoadResources &,
          const pci::PointCloudImportPreflight &,
          const pci::PointCloudLoadContext &context) const override
     {
@@ -257,15 +266,13 @@ public:
         root->nodeId = pci::rootPointCloudNode;
         root->sourcePointCount = 10;
         root->blocks.push_back(std::move(block));
-        auto scene = std::make_shared<pci::PointCloudScene>(
+        auto scene = std::make_shared<pci::PointDatasetPreparation>(
             metadata,
             std::make_shared<CachedHierarchySource>(),
             std::move(root),
-            resources.decodedByteBudget);
-        if (context.sceneReady) {
-            context.sceneReady(scene);
-        }
-        return scene;
+            true);
+        scene->publish(context);
+        return scene->finish();
     }
 };
 
@@ -274,7 +281,7 @@ public:
     mutable std::atomic<bool> started = false;
     mutable std::atomic<bool> stopped = false;
 
-    pci::PointCloudScenePtr
+    pci::PreparedPointDatasetPtr
     load(const pci::PointCloudLoadOptions &,
          const pci::PointCloudLoadResources &,
          const pci::PointCloudImportPreflight &,
@@ -301,7 +308,7 @@ public:
     mutable std::atomic<int> gatedLoads = 0;
     mutable std::atomic<bool> allowGatedCompletion = false;
 
-    pci::PointCloudScenePtr
+    pci::PreparedPointDatasetPtr
     load(const pci::PointCloudLoadOptions &options,
          const pci::PointCloudLoadResources &,
          const pci::PointCloudImportPreflight &,
@@ -312,10 +319,8 @@ public:
         metadata.sourcePath = options.sourcePath;
         metadata.sourcePointCount = 3;
         metadata.hasColor = true;
-        auto scene = std::make_shared<pci::PointCloudScene>(metadata);
-        if (context.sceneReady) {
-            context.sceneReady(scene);
-        }
+        auto scene = std::make_shared<pci::PointDatasetPreparation>(metadata);
+        scene->publish(context);
         if (gated) {
             ++gatedLoads;
             while (!allowGatedCompletion.load() &&
@@ -330,13 +335,13 @@ public:
         block->points.resize(3);
         block->attributes.resize(3);
         scene->addBlock(std::move(block));
-        return scene;
+        return scene->finish();
     }
 };
 
 class FailingLoader final : public pci::PointCloudLoader {
 public:
-    pci::PointCloudScenePtr
+    pci::PreparedPointDatasetPtr
     load(const pci::PointCloudLoadOptions &,
          const pci::PointCloudLoadResources &,
          const pci::PointCloudImportPreflight &,
@@ -352,7 +357,7 @@ public:
     mutable std::atomic_bool previewPublished = false;
     mutable std::atomic_bool releaseFailure = false;
 
-    pci::PointCloudScenePtr
+    pci::PreparedPointDatasetPtr
     load(const pci::PointCloudLoadOptions &options,
          const pci::PointCloudLoadResources &,
          const pci::PointCloudImportPreflight &,
@@ -361,10 +366,8 @@ public:
         pci::PointCloudMetadata metadata;
         metadata.sourcePath = options.sourcePath;
         metadata.sourcePointCount = 1;
-        auto scene = std::make_shared<pci::PointCloudScene>(metadata);
-        if (context.sceneReady) {
-            context.sceneReady(scene);
-        }
+        auto scene = std::make_shared<pci::PointDatasetPreparation>(metadata);
+        scene->publish(context);
         if (options.sourcePath.filename() == "broken-after-preview.las") {
             previewPublished = true;
             while (!releaseFailure.load() &&
@@ -380,7 +383,7 @@ public:
         block->points.resize(1);
         block->attributes.resize(1);
         scene->addBlock(std::move(block));
-        return scene;
+        return scene->finish();
     }
 };
 
@@ -482,7 +485,7 @@ makeUiRasterData(const std::filesystem::path &sourcePath)
     });
 }
 
-[[nodiscard]] pci::PointCloudScenePtr
+[[nodiscard]] pci::PointDatasetRuntimePtr
 makeUiColorizableScene(const std::filesystem::path &sourcePath)
 {
     pci::PointCloudMetadata metadata;
@@ -491,7 +494,8 @@ makeUiColorizableScene(const std::filesystem::path &sourcePath)
     metadata.sourceBounds = {{8.0, 8.0, 0.0}, {8.0, 8.0, 0.0}};
     metadata.spatialReferenceWkt = "STUBCRS";
     metadata.hasColor = true;
-    auto scene = std::make_shared<pci::PointCloudScene>(std::move(metadata));
+    auto scene =
+        std::make_shared<pci::PointDatasetRuntime>(std::move(metadata));
     auto block = std::make_shared<pci::PointBlock>();
     block->origin = {8.0, 8.0, 0.0};
     block->bounds = {{8.0, 8.0, 0.0}, {8.0, 8.0, 0.0}};
@@ -566,7 +570,8 @@ makeTestImportServices(std::shared_ptr<const pci::PointCloudLoader> pointLoader,
     services.rasterElevation =
         std::make_unique<pci::RasterElevationController>(*services.scheduler);
     services.colorize = std::make_unique<pci::PointCloudColorizeController>(
-        *services.scheduler);
+        *services.scheduler,
+        pci::test::inMemoryRasterColorizeRunStoreFactory());
     services.statistics = std::make_shared<UnavailableStatistics>();
     return services;
 }
@@ -576,7 +581,7 @@ public:
     mutable std::atomic_bool slowStarted = false;
     mutable std::atomic_bool releaseSlow = false;
 
-    pci::PointCloudScenePtr
+    pci::PreparedPointDatasetPtr
     load(const pci::PointCloudLoadOptions &options,
          const pci::PointCloudLoadResources &,
          const pci::PointCloudImportPreflight &,
@@ -594,15 +599,13 @@ public:
         pci::PointCloudMetadata metadata;
         metadata.sourcePath = options.sourcePath;
         metadata.sourcePointCount = 1;
-        auto scene = std::make_shared<pci::PointCloudScene>(metadata);
+        auto scene = std::make_shared<pci::PointDatasetPreparation>(metadata);
         auto block = std::make_shared<pci::PointBlock>();
         block->points.resize(1);
         block->attributes.resize(1);
         scene->addBlock(std::move(block));
-        if (context.sceneReady) {
-            context.sceneReady(scene);
-        }
-        return scene;
+        scene->publish(context);
+        return scene->finish();
     }
 };
 
@@ -624,16 +627,26 @@ public:
     }
 
     void setDocument(pci::SceneDocumentSnapshotPtr document,
+                     pci::SceneRuntimeSnapshotPtr runtime,
+                     pci::RuntimeBudgetSnapshot runtimeBudget,
+                     pci::SessionGeneration,
                      const bool frameVisibleLayers) override
     {
         document_ = std::move(document);
+        runtime_ = std::move(runtime);
+        runtimeBudget_ = runtimeBudget;
         ++documentSetCount_;
         lastDocumentWasFramed_ = frameVisibleLayers;
     }
 
-    void updateDocument(pci::SceneDocumentSnapshotPtr document) override
+    void updateDocument(pci::SceneDocumentSnapshotPtr document,
+                        pci::SceneRuntimeSnapshotPtr runtime,
+                        pci::RuntimeBudgetSnapshot runtimeBudget,
+                        pci::SessionGeneration) override
     {
         document_ = std::move(document);
+        runtime_ = std::move(runtime);
+        runtimeBudget_ = runtimeBudget;
         ++documentUpdateCount_;
         requestRender();
     }
@@ -830,14 +843,21 @@ public:
     void emitDisplayReady(const pci::PointCloudLayerId layerId,
                           const std::uint64_t points = 3)
     {
+        const auto layer = document_ ? document_->layer(layerId) : std::nullopt;
+        if (!layer) {
+            throw std::logic_error(
+                "cannot emit readiness for an absent point layer");
+        }
         emitLoadProgress({
             .layerId = layerId,
+            .bindingGeneration = layer->bindingGeneration,
             .stage = pci::RenderLoadStage::FirstFrameReady,
             .completed = points,
             .total = points,
         });
         emitLoadProgress({
             .layerId = layerId,
+            .bindingGeneration = layer->bindingGeneration,
             .stage = pci::RenderLoadStage::DisplayReady,
             .completed = points,
             .total = points,
@@ -854,6 +874,11 @@ public:
     [[nodiscard]] pci::SceneDocumentSnapshotPtr document() const
     {
         return document_;
+    }
+
+    [[nodiscard]] pci::SceneRuntimeSnapshotPtr runtime() const
+    {
+        return runtime_;
     }
 
     [[nodiscard]] int documentSetCount() const noexcept
@@ -905,6 +930,8 @@ public:
 private:
     QWidget widget_;
     pci::SceneDocumentSnapshotPtr document_;
+    pci::SceneRuntimeSnapshotPtr runtime_;
+    pci::RuntimeBudgetSnapshot runtimeBudget_;
     int documentSetCount_ = 0;
     int documentUpdateCount_ = 0;
     int renderRequestCount_ = 0;
@@ -1339,8 +1366,8 @@ TEST_CASE("main window accepts and opens mixed local file drops",
     CHECK(viewportPointer->document()
               ->pointLayers()
               .front()
-              .scene->metadata()
-              .sourcePath.filename() == std::filesystem::path(u8"mätning.laz"));
+              .descriptor.metadata.sourcePath.filename() ==
+          std::filesystem::path(u8"mätning.laz"));
 }
 
 TEST_CASE("main window rejects non-local and directory-only drops",
@@ -1465,7 +1492,7 @@ TEST_CASE(
 
     const pci::SceneDocumentSnapshotPtr vectorOnlyDocument =
         viewportPointer->document();
-    const pci::VectorLayer original =
+    const pci::VectorLayerSnapshot original =
         vectorOnlyDocument->vectorLayers().front();
     window.loadPointCloud("first.las", pci::PointCloudLoadMode::Add);
     REQUIRE(waitFor([&] {
@@ -1478,7 +1505,8 @@ TEST_CASE(
     CHECK(replacement->hasAnyLayer());
     CHECK(replacement->hasPointCloudLayers());
     REQUIRE(replacement->vectorLayerCount() == 1);
-    const pci::VectorLayer preserved = replacement->vectorLayers().front();
+    const pci::VectorLayerSnapshot preserved =
+        replacement->vectorLayers().front();
     CHECK(preserved.id == original.id);
     CHECK(preserved.data == original.data);
     CHECK(preserved.style == original.style);
@@ -1808,6 +1836,9 @@ TEST_CASE("main window add mode keeps per-layer colors independent",
     }));
     const auto firstDocument = viewportPointer->document();
     const auto firstLayer = firstDocument->pointLayers().front();
+    REQUIRE(viewportPointer->runtime());
+    CHECK(viewportPointer->runtime()->point(firstLayer.descriptor.sourceId,
+                                            firstLayer.bindingGeneration));
     CHECK_FALSE(openAction->isEnabled());
     viewportPointer->emitDisplayReady(firstLayer.id);
     REQUIRE(waitFor([&] {
@@ -1897,7 +1928,7 @@ TEST_CASE("layer colors can be applied to every compatible point cloud",
     REQUIRE(applyToAll->isEnabled());
     applyToAll->click();
 
-    for (const pci::PointCloudLayer &layer :
+    for (const pci::PointCloudLayerSnapshot &layer :
          viewportPointer->document()->pointLayers()) {
         CHECK(layer.colorMode.source == pci::PointColorSource::Z);
         CHECK(layer.colorMode.colorMap == pci::PointColorMap::Turbo);
@@ -2240,12 +2271,15 @@ TEST_CASE("scene panel displays point and vector layers in document order",
     pci::SceneLayersDock panel;
     pci::PointCloudMetadata metadata;
     metadata.sourcePath = "survey.las";
-    auto scene = std::make_shared<pci::PointCloudScene>(metadata);
+    auto scene = std::make_shared<pci::PointDatasetRuntime>(metadata);
+    const pci::PointDatasetDescriptor descriptor = scene->descriptor();
     auto data = std::make_shared<pci::VectorLayerData>();
     data->sublayerName = "Parcel boundaries";
     data->featureCount = 12;
-    const std::vector points{pci::PointCloudLayer{.id = pci::SceneLayerId{7},
-                                                  .scene = std::move(scene)}};
+    const std::vector points{pci::PointCloudLayer{
+        .id = pci::SceneLayerId{7},
+        .descriptor = descriptor,
+        .availability = scene->datasetView().availability}};
     const std::vector vectors{pci::VectorLayer{.id = pci::SceneLayerId{42},
                                                .data = std::move(data),
                                                .visible = false}};
@@ -2267,13 +2301,16 @@ TEST_CASE("scene panel gates raster colorize and revert actions",
           "[ui][raster][colorize]")
 {
     pci::SceneLayersDock panel;
+    const pci::PointDatasetRuntimePtr pointScene =
+        makeUiColorizableScene("target.laz");
     pci::PointCloudLayer point{
         .id = pci::SceneLayerId{7},
-        .scene = makeUiColorizableScene("target.laz"),
+        .descriptor = pointScene->descriptor(),
+        .availability = pointScene->datasetView().availability,
     };
     const auto rasterData = makeUiRasterData("ortho.tif");
     const pci::RasterLayer raster{.id = pci::SceneLayerId{8},
-                                  .data = rasterData};
+                                  .descriptor = rasterData->descriptor()};
 
     panel.setDocumentSnapshot(
         makeSnapshot({point}, {}, {point.id, raster.id}, {raster}));
@@ -2318,18 +2355,40 @@ TEST_CASE("scene panel gates raster colorize and revert actions",
 TEST_CASE("raster colorize dialog and point inspector expose frozen bake state",
           "[ui][raster][colorize][inspector]")
 {
+    const pci::PointDatasetRuntimePtr pointScene =
+        makeUiColorizableScene("target.laz");
     pci::PointCloudLayer point{
         .id = pci::SceneLayerId{17},
-        .scene = makeUiColorizableScene("target.laz"),
+        .descriptor = pointScene->descriptor(),
+        .availability = pointScene->datasetView().availability,
     };
     const auto rasterData = makeUiRasterData("ortho.tif");
     const pci::RasterLayer raster{.id = pci::SceneLayerId{18},
-                                  .data = rasterData};
+                                  .descriptor = rasterData->descriptor()};
     const auto snapshot =
         makeSnapshot({point}, {}, {point.id, raster.id}, {raster});
+    const auto estimateColorize =
+        [pointScene, rasterData](
+            const pci::SceneLayerId) -> pci::RasterColorizeResourceEstimate {
+        pci::RasterColorizeOptions options;
+        options.temporaryDirectory = std::filesystem::temp_directory_path();
+        const auto target = pointScene->rasterPointColorizeTarget();
+        if (!target) {
+            throw std::logic_error("test point target is unavailable");
+        }
+        return pci::rasterColorizeResourceEstimate(
+            pci::preflightRasterPointColorize(
+                *target, rasterData->metadata(), options));
+    };
+    const auto target = snapshot->layer(point.id);
+    REQUIRE(target);
 
     pci::ColorizeFromRasterDialog dialog(
-        point, snapshot, {}, std::numeric_limits<std::uint64_t>::max());
+        *target,
+        snapshot,
+        estimateColorize,
+        {},
+        std::numeric_limits<std::uint64_t>::max());
     auto *combo =
         dialog.findChild<QComboBox *>(QStringLiteral("colorizeRasterCombo"));
     auto *warning =
@@ -2405,8 +2464,16 @@ TEST_CASE("raster colorize dialog and point inspector expose frozen bake state",
     revert->click();
     CHECK(reverted == point.id);
 
+    const auto replacementSnapshot =
+        makeSnapshot({point}, {}, {point.id, raster.id}, {raster});
+    const auto replacementTarget = replacementSnapshot->layer(point.id);
+    REQUIRE(replacementTarget);
     pci::ColorizeFromRasterDialog replacement(
-        point, snapshot, {}, std::numeric_limits<std::uint64_t>::max());
+        *replacementTarget,
+        replacementSnapshot,
+        estimateColorize,
+        {},
+        std::numeric_limits<std::uint64_t>::max());
     auto *replace = replacement.findChild<QPushButton *>(
         QStringLiteral("colorizeRasterApplyButton"));
     REQUIRE(replace != nullptr);
@@ -2720,9 +2787,12 @@ TEST_CASE("vector placement offers scene-relative actions",
         .minimum = {0.0, 0.0, 100.0},
         .maximum = {100.0, 100.0, 200.0},
     };
-    auto scene = std::make_shared<pci::PointCloudScene>(metadata);
+    auto scene = std::make_shared<pci::PointDatasetRuntime>(metadata);
     const std::vector points{pci::PointCloudLayer{
-        .id = pci::SceneLayerId{1}, .scene = scene, .visible = true}};
+        .id = pci::SceneLayerId{1},
+        .visible = true,
+        .descriptor = scene->descriptor(),
+        .availability = scene->datasetView().availability}};
 
     auto data = std::make_shared<pci::VectorLayerData>();
     data->sublayerName = "Parcels";
@@ -2794,11 +2864,11 @@ TEST_CASE(
 
     const auto layers = viewportPointer->document()->pointLayers();
     REQUIRE(layers.size() == 3);
-    CHECK(layers[0].scene->metadata().sourcePath ==
+    CHECK(layers[0].descriptor.metadata.sourcePath ==
           std::filesystem::path("first.las"));
-    CHECK(layers[1].scene->metadata().sourcePath ==
+    CHECK(layers[1].descriptor.metadata.sourcePath ==
           std::filesystem::path("second.las"));
-    CHECK(layers[2].scene->metadata().sourcePath ==
+    CHECK(layers[2].descriptor.metadata.sourcePath ==
           std::filesystem::path("third.las"));
 
     // The batch finishes only once every layer reaches the renderer's final
@@ -2913,6 +2983,7 @@ TEST_CASE("batch loading progress runs monotonically from zero to one hundred",
     for (const auto &layer : layers) {
         viewportPointer->emitLoadProgress({
             .layerId = layer.id,
+            .bindingGeneration = layer.bindingGeneration,
             .stage = pci::RenderLoadStage::Uploading,
             .completed = 5,
             .total = 10,
@@ -2965,12 +3036,14 @@ TEST_CASE("cached paged batch progress starts with measured residency work",
     for (const auto &layer : layers) {
         viewportPointer->emitLoadProgress({
             .layerId = layer.id,
+            .bindingGeneration = layer.bindingGeneration,
             .stage = pci::RenderLoadStage::Uploading,
             .completed = 1,
             .total = 10,
         });
         viewportPointer->emitLoadProgress({
             .layerId = layer.id,
+            .bindingGeneration = layer.bindingGeneration,
             .stage = pci::RenderLoadStage::FirstFrameReady,
             .completed = 1,
             .total = 10,
@@ -2982,6 +3055,7 @@ TEST_CASE("cached paged batch progress starts with measured residency work",
     for (const auto &layer : layers) {
         viewportPointer->emitLoadProgress({
             .layerId = layer.id,
+            .bindingGeneration = layer.bindingGeneration,
             .stage = pci::RenderLoadStage::Uploading,
             .completed = 5,
             .total = 10,
@@ -3018,8 +3092,7 @@ TEST_CASE("later batch previews publish without waiting for a slow first file",
     CHECK(viewportPointer->document()
               ->pointLayers()
               .front()
-              .scene->metadata()
-              .sourcePath.filename() ==
+              .descriptor.metadata.sourcePath.filename() ==
           std::filesystem::path("fast-second.las"));
 
     loader->releaseSlow = true;
@@ -3027,9 +3100,9 @@ TEST_CASE("later batch previews publish without waiting for a slow first file",
         return viewportPointer->document()->layerCount() == 2;
     }));
     const auto layers = viewportPointer->document()->pointLayers();
-    CHECK(layers[0].scene->metadata().sourcePath.filename() ==
+    CHECK(layers[0].descriptor.metadata.sourcePath.filename() ==
           std::filesystem::path("slow-first.las"));
-    CHECK(layers[1].scene->metadata().sourcePath.filename() ==
+    CHECK(layers[1].descriptor.metadata.sourcePath.filename() ==
           std::filesystem::path("fast-second.las"));
     for (const auto &layer : layers) {
         viewportPointer->emitDisplayReady(layer.id, 1);
@@ -3081,12 +3154,17 @@ TEST_CASE("main window keeps replacements transactional and removes cancelled "
     REQUIRE(waitFor([&] {
         return openAction->isEnabled();
     }));
-    CHECK(viewportPointer->document() == originalDocument);
+    const auto restoredDocument = viewportPointer->document();
+    REQUIRE(restoredDocument != originalDocument);
+    CHECK(restoredDocument->generation > originalDocument->generation);
+    REQUIRE(restoredDocument->layerCount() == 1);
+    CHECK(restoredDocument->pointLayers().front().descriptor.sourceId ==
+          originalLayer.descriptor.sourceId);
     CHECK(viewportPointer->document()
               ->pointLayers()
               .front()
-              .scene->metadata()
-              .sourcePath == std::filesystem::path("first.las"));
+              .descriptor.metadata.sourcePath ==
+          std::filesystem::path("first.las"));
 
     loader->allowGatedCompletion = false;
     window.loadPointCloud("pending.las", pci::PointCloudLoadMode::Add);
@@ -3141,19 +3219,31 @@ TEST_CASE("replacement failure after preview restores the previous document",
                viewportPointer->document() != original;
     }));
     REQUIRE(viewportPointer->document()->layerCount() == 1);
+    const pci::DocumentGeneration replacementGeneration =
+        viewportPointer->document()->generation;
     CHECK(viewportPointer->document()
               ->pointLayers()
               .front()
-              .scene->metadata()
-              .sourcePath.filename() ==
+              .descriptor.metadata.sourcePath.filename() ==
           std::filesystem::path("broken-after-preview.las"));
 
     loader->releaseFailure = true;
     REQUIRE(waitFor([&] {
-        return viewportPointer->document() == original &&
+        return viewportPointer->document() != original &&
+               viewportPointer->document()
+                       ->pointLayers()
+                       .front()
+                       .descriptor.metadata.sourcePath.filename() ==
+                   std::filesystem::path("original.las") &&
                window.statusBar()->currentMessage().contains(
                    QStringLiteral("Loading failed"));
     }));
+    CHECK(viewportPointer->document()->generation > replacementGeneration);
+    CHECK(viewportPointer->document()
+              ->pointLayers()
+              .front()
+              .descriptor.sourceId ==
+          original->pointLayers().front().descriptor.sourceId);
 }
 
 TEST_CASE("main window keeps loading visible until final display readiness",
@@ -3186,6 +3276,7 @@ TEST_CASE("main window keeps loading visible until final display readiness",
     const auto layer = viewportPointer->document()->pointLayers().front();
     viewportPointer->emitLoadProgress({
         .layerId = layer.id,
+        .bindingGeneration = layer.bindingGeneration,
         .stage = pci::RenderLoadStage::Uploading,
         .completed = 1,
         .total = 10,
@@ -3193,6 +3284,7 @@ TEST_CASE("main window keeps loading visible until final display readiness",
     CHECK(bar->value() == 77);
     viewportPointer->emitLoadProgress({
         .layerId = layer.id,
+        .bindingGeneration = layer.bindingGeneration,
         .stage = pci::RenderLoadStage::FirstFrameReady,
         .completed = 3,
         .total = 3,
@@ -3201,6 +3293,7 @@ TEST_CASE("main window keeps loading visible until final display readiness",
 
     viewportPointer->emitLoadProgress({
         .layerId = layer.id,
+        .bindingGeneration = layer.bindingGeneration,
         .stage = pci::RenderLoadStage::Uploading,
         .completed = 4,
         .total = 10,
@@ -3215,6 +3308,7 @@ TEST_CASE("main window keeps loading visible until final display readiness",
 
     viewportPointer->emitLoadProgress({
         .layerId = layer.id,
+        .bindingGeneration = layer.bindingGeneration,
         .stage = pci::RenderLoadStage::DisplayReady,
         .completed = 10,
         .total = 10,
@@ -3614,9 +3708,9 @@ TEST_CASE("main window publishes imported rasters to the viewport",
     CHECK(rasterLoader->lastSourcePath.filename() == "ortho.tif");
 
     const pci::SceneDocumentSnapshotPtr document = viewportPointer->document();
-    const pci::RasterLayer layer = document->rasterLayers().front();
+    const pci::RasterLayerSnapshot layer = document->rasterLayers().front();
     CHECK(layer.visible);
-    CHECK(layer.data->metadata().width == 64);
+    CHECK(layer.descriptor.metadata.width == 64);
     // Point and vector counts stay in their own domains.
     CHECK(document->layerCount() == 0);
     CHECK(document->vectorLayerCount() == 0);

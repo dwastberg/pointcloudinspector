@@ -1,11 +1,14 @@
-#include "scene/SceneDocument.h"
-#include "scene/SceneDocumentSnapshot.h"
+#include "support/TestPointDatasets.h"
+#include <pci/document/SceneDocument.h>
+#include <pci/document/SceneDocumentSnapshot.h>
+#include <pci/raster/RasterTileSource.h>
 
 #include <catch2/catch_test_macros.hpp>
 
 #include <memory>
 #include <stdexcept>
 #include <utility>
+#include <vector>
 
 namespace {
 
@@ -62,11 +65,17 @@ rasterData(pci::RasterLayerMetadata metadata = rasterMetadata())
     });
 }
 
+[[nodiscard]] pci::RasterDatasetDescriptor
+rasterDescriptor(pci::RasterLayerMetadata metadata = rasterMetadata())
+{
+    return rasterData(std::move(metadata))->descriptor();
+}
+
 TEST_CASE("scene document keeps rasters in their own revision domain",
           "[unit][scene][raster]")
 {
     pci::SceneDocument document;
-    const auto id = document.addRasterLayer(rasterData(), false);
+    const auto id = document.addRasterLayer(rasterDescriptor(), false);
 
     CHECK_FALSE(document.hasPointCloudLayers());
     CHECK(document.hasAnyLayer());
@@ -96,7 +105,7 @@ TEST_CASE("raster layer bounds inflate only the flat Z dimension",
           "[unit][scene][raster]")
 {
     pci::SceneDocument document;
-    const auto id = document.addRasterLayer(rasterData(), true);
+    const auto id = document.addRasterLayer(rasterDescriptor(), true);
 
     const auto bounds = document.layerBounds(id);
     REQUIRE(bounds.has_value());
@@ -123,7 +132,7 @@ TEST_CASE("raster style changes invalidate pixels only when they must",
           "[unit][scene][raster]")
 {
     pci::SceneDocument document;
-    const auto id = document.addRasterLayer(rasterData(), true);
+    const auto id = document.addRasterLayer(rasterDescriptor(), true);
     REQUIRE(document.rasterLayer(id).has_value());
     const std::uint64_t initial = document.rasterLayer(id)->renderGeneration;
 
@@ -168,30 +177,55 @@ TEST_CASE("raster style changes invalidate pixels only when they must",
     }
 }
 
-TEST_CASE("raster layers reject invalid attachments", "[unit][scene][raster]")
+TEST_CASE("raster layers reject invalid descriptors", "[unit][scene][raster]")
 {
     pci::SceneDocument document;
-    CHECK_THROWS_AS(document.addRasterLayer(nullptr), std::invalid_argument);
+    CHECK_THROWS_AS(document.addRasterLayer({}), std::invalid_argument);
 
     pci::RasterLayerMetadata singular = rasterMetadata();
     singular.geoTransform = {0.0, 1.0, 2.0, 0.0, 2.0, 4.0};
-    CHECK_THROWS_AS(document.addRasterLayer(rasterData(singular)),
+    CHECK_THROWS_AS(document.addRasterLayer(rasterDescriptor(singular)),
                     std::invalid_argument);
 
     // Two layers may not share a source: the tile cache is keyed by source
     // identity, so they would share cache entries.
-    const pci::RasterLayerDataPtr shared = rasterData();
+    const pci::RasterDatasetDescriptor shared = rasterDescriptor();
     static_cast<void>(document.addRasterLayer(shared));
     CHECK_THROWS_AS(document.addRasterLayer(shared), std::invalid_argument);
+}
+
+TEST_CASE("scene document retains raster metadata without retaining its source",
+          "[unit][scene][raster][ownership]")
+{
+    auto source = std::make_shared<StubRasterSource>(rasterMetadata());
+    std::weak_ptr<const pci::RasterTileSource> sourceLifetime = source;
+    pci::RasterLayerDataPtr data =
+        std::make_shared<pci::RasterLayerData>(pci::RasterLayerData{
+            .sourceId = pci::nextRasterSourceId(),
+            .source = source,
+        });
+    source.reset();
+
+    pci::SceneDocument document;
+    const pci::SceneLayerId id = document.addRasterLayer(data->descriptor());
+    const pci::RasterSourceId sourceId = data->sourceId;
+    data.reset();
+
+    CHECK(sourceLifetime.expired());
+    const auto layer = document.rasterLayer(id);
+    REQUIRE(layer);
+    CHECK(layer->descriptor.sourceId == sourceId);
+    CHECK(layer->descriptor.metadata.width == 64);
 }
 
 TEST_CASE("snapshot projections agree with the document for rasters",
           "[unit][scene][raster][variant]")
 {
     pci::SceneDocument document;
-    const auto raster = document.addRasterLayer(rasterData(), true);
+    const pci::RasterLayerDataPtr firstData = rasterData();
+    const auto raster = document.addRasterLayer(firstData->descriptor(), true);
     const auto second = document.addRasterLayer(
-        rasterData(rasterMetadata(5000.0, 9000.0)), false);
+        rasterDescriptor(rasterMetadata(5000.0, 9000.0)), false);
 
     const pci::SceneDocumentSnapshotPtr snapshot = document.snapshot();
     REQUIRE(snapshot != nullptr);
@@ -202,8 +236,15 @@ TEST_CASE("snapshot projections agree with the document for rasters",
     CHECK(snapshot->vectorLayerCount() == 0);
     CHECK(snapshot->layerCount() == 0);
     CHECK(snapshot->rasterLayers().size() == 2);
+    CHECK(snapshot->pointLayerIndices.empty());
+    CHECK(snapshot->vectorLayerIndices.empty());
+    CHECK(snapshot->rasterLayerIndices == std::vector<std::size_t>{0, 1});
 
     REQUIRE(snapshot->rasterLayer(raster).has_value());
+    CHECK(snapshot->rasterLayer(raster)->descriptor.sourceId ==
+          firstData->sourceId);
+    CHECK(snapshot->rasterLayer(raster)->descriptor.metadata.sourceDriver ==
+          firstData->metadata().sourceDriver);
     CHECK(snapshot->rasterLayer(raster)->visible);
     CHECK_FALSE(snapshot->rasterLayer(second)->visible);
     CHECK_FALSE(snapshot->vectorLayer(raster).has_value());
@@ -226,7 +267,7 @@ TEST_CASE("overlay copying preserves ids for vectors and rasters alike",
     auto vector = std::make_shared<pci::VectorLayerData>();
     vector->bounds = {.minimum = {0.0, 0.0, 0.0}, .maximum = {1.0, 1.0, 0.0}};
     const auto vectorId = source.addVectorLayer(vector, true);
-    const auto rasterId = source.addRasterLayer(rasterData(), true);
+    const auto rasterId = source.addRasterLayer(rasterDescriptor(), true);
 
     pci::SceneDocument destination;
     CHECK(destination.copyOverlayLayersFrom(source));
@@ -250,9 +291,9 @@ TEST_CASE("raster layers participate in isolation and removal",
           "[unit][scene][raster]")
 {
     pci::SceneDocument document;
-    const auto first = document.addRasterLayer(rasterData(), true);
+    const auto first = document.addRasterLayer(rasterDescriptor(), true);
     const auto second = document.addRasterLayer(
-        rasterData(rasterMetadata(7000.0, 8000.0)), true);
+        rasterDescriptor(rasterMetadata(7000.0, 8000.0)), true);
 
     CHECK(document.isolateLayer(second));
     CHECK_FALSE(document.rasterLayer(first)->visible);
@@ -273,18 +314,19 @@ TEST_CASE("raster layers participate in isolation and removal",
 TEST_CASE("raster point-color provenance survives source-layer removal",
           "[unit][scene][raster][colorize]")
 {
-    auto scene = std::make_shared<pci::PointCloudScene>(
-        pci::PointCloudMetadata{.sourcePointCount = 1});
-    auto block = std::make_shared<pci::PointBlock>();
-    block->points.push_back({.rgba = 0xff112233U});
-    block->bounds = {.minimum = {0.0, 0.0, 0.0}, .maximum = {0.0, 0.0, 0.0}};
-    scene->addBlock(block);
-    scene->markLoadingComplete();
+    const pci::PointDatasetView pointDataset = pci::test::pointDataset(
+        pci::PointCloudMetadata{.sourcePointCount = 1},
+        pci::PointDatasetAvailability{
+            .bounds = {},
+            .pointCount = 1,
+            .colorizeAvailability = pci::PointColorizeAvailability::Ready,
+        });
 
     pci::SceneDocument document;
-    const pci::PointCloudLayerId pointId = document.addLayer(scene);
+    const pci::PointCloudLayerId pointId = document.addLayer(pointDataset);
     const pci::RasterLayerDataPtr data = rasterData();
-    const pci::SceneLayerId rasterId = document.addRasterLayer(data);
+    const pci::SceneLayerId rasterId =
+        document.addRasterLayer(data->descriptor());
     CHECK_FALSE(
         document.setLayerColorMode(pointId,
                                    {.source = pci::PointColorSource::Rgb,
@@ -337,12 +379,12 @@ TEST_CASE("reference CRS prefers point clouds over rasters",
     pci::SceneDocument document;
     pci::RasterLayerMetadata unreferenced = rasterMetadata();
     unreferenced.spatialReferenceWkt.clear();
-    static_cast<void>(document.addRasterLayer(rasterData(unreferenced)));
+    static_cast<void>(document.addRasterLayer(rasterDescriptor(unreferenced)));
     // The first raster carries no CRS, so the scan continues rather than
     // settling for an empty answer.
     CHECK(document.referenceSpatialReferenceWkt().empty());
 
-    static_cast<void>(document.addRasterLayer(rasterData()));
+    static_cast<void>(document.addRasterLayer(rasterDescriptor()));
     CHECK(document.referenceSpatialReferenceWkt() == "STUBCRS");
 }
 
@@ -354,7 +396,7 @@ TEST_CASE("exact DEM range updates bounds without invalidating decoded color",
     metadata.elevation.anchor = 100.0;
     pci::SceneDocument document;
     const pci::SceneLayerId id =
-        document.addRasterLayer(rasterData(std::move(metadata)), true);
+        document.addRasterLayer(rasterDescriptor(std::move(metadata)), true);
 
     REQUIRE(document.rasterLayer(id).has_value());
     CHECK(document.rasterLayer(id)->elevationStatus ==

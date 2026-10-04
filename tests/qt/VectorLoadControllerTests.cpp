@@ -1,13 +1,29 @@
-#include "import/VectorLoadController.h"
+#include <pci/desktop/operations/VectorLoadController.h>
 
 #include <QSignalSpy>
 #include <QTest>
 
 #include <atomic>
 #include <chrono>
+#include <mutex>
 #include <thread>
 
 #include <catch2/catch_test_macros.hpp>
+
+namespace pci {
+class VectorLoadControllerTestAccess {
+public:
+    static void deliver(VectorLoadController &controller,
+                        LoadJobId id,
+                        AttemptGeneration attempt)
+    {
+        controller.finishOne(id,
+                             {.index = 0, .name = "good"},
+                             attempt,
+                             std::make_shared<VectorLayerData>());
+    }
+};
+} // namespace pci
 
 namespace {
 
@@ -291,11 +307,13 @@ TEST_CASE("vector load controller forwards monotonic sublayer progress",
                         &pci::VectorLoadController::progressChanged);
     QSignalSpy finished(&controller, &pci::VectorLoadController::finished);
     pci::VectorImportRequest request;
+    request.origin = std::array<double, 2>{};
     request.limits.maximumApplicationWorkingBytes = 1024;
     request.sublayers = {{.index = 0, .name = "good"}};
     static_cast<void>(startSelectedLoad(controller, std::move(request)));
+    scheduler.waitForIdle();
     REQUIRE(finished.wait(2000));
-    REQUIRE(progress.count() >= 2);
+    REQUIRE(progress.count() == 1);
     std::uint64_t previous = 0;
     for (int index = 0; index < progress.count(); ++index) {
         const auto &signal = progress.at(index);
@@ -307,6 +325,110 @@ TEST_CASE("vector load controller forwards monotonic sublayer progress",
     }
     CHECK(previous == 2);
     scheduler.waitForIdle();
+}
+
+TEST_CASE("vector completed payloads and progress wait in a bounded window",
+          "[qt][vector][transaction][backpressure]")
+{
+    pci::TaskScheduler scheduler(2, 1024 * 1024);
+    auto controller = std::make_unique<pci::VectorLoadController>(
+        std::make_shared<FakeVectorLoader>(), scheduler);
+    std::size_t workerProgress = 0;
+    std::mutex progressMutex;
+    pci::VectorImportRequest request;
+    request.origin = std::array<double, 2>{};
+    request.limits.maximumApplicationWorkingBytes = 1024;
+    for (int index = 0; index < 100; ++index) {
+        request.sublayers.push_back({.index = index, .name = "good"});
+    }
+    request.progress = [&](pci::VectorImportProgress) {
+        const std::scoped_lock lock(progressMutex);
+        ++workerProgress;
+    };
+    QSignalSpy progress(controller.get(),
+                        &pci::VectorLoadController::progressChanged);
+    QSignalSpy installed(controller.get(),
+                         &pci::VectorLoadController::sublayerLoaded);
+    QSignalSpy finished(controller.get(), &pci::VectorLoadController::finished);
+    static_cast<void>(startSelectedLoad(*controller, std::move(request)));
+    scheduler.waitForIdle(); // Do not drain the owner queue.
+    {
+        const std::scoped_lock lock(progressMutex);
+        CHECK(workerProgress == 4); // Two values from each admitted worker.
+    }
+    CHECK(installed.count() == 0);
+    CHECK(progress.count() == 0);
+    SECTION("owner admission releases the next window")
+    {
+        REQUIRE(QTest::qWaitFor(
+            [&] {
+                return finished.count() == 1;
+            },
+            5000));
+        CHECK(installed.count() == 100);
+        CHECK(progress.count() <= 200);
+    }
+    SECTION("shutdown releases completed work without pumping the owner queue")
+    {
+        controller.reset();
+        scheduler.waitForIdle();
+        CHECK(installed.count() == 0);
+    }
+}
+
+TEST_CASE("vector installation rejection remains retryable without duplicating "
+          "success",
+          "[qt][vector][transaction]")
+{
+    pci::TaskScheduler scheduler(1, 1024 * 1024);
+    pci::VectorLoadController controller(std::make_shared<FakeVectorLoader>(),
+                                         scheduler);
+    pci::AttemptGeneration firstAttempt;
+    bool reject = true;
+    controller.setInstaller(
+        [&](pci::LoadJobId,
+            pci::SessionGeneration session,
+            pci::AttemptGeneration attempt,
+            const pci::VectorSublayerKey &,
+            const pci::VectorLayerDataPtr &) -> pci::JobResult<void> {
+            CHECK(session == pci::SessionGeneration{7});
+            if (reject) {
+                firstAttempt = attempt;
+                return std::unexpected(
+                    pci::JobError{pci::JobErrorCode::ResourceAdmission,
+                                  "injected admission failure"});
+            }
+            CHECK(attempt != firstAttempt);
+            return {};
+        });
+    pci::VectorImportRequest request;
+    request.session = pci::SessionGeneration{7};
+    request.origin = std::array<double, 2>{};
+    request.limits.maximumApplicationWorkingBytes = 1024;
+    request.sublayers = {{.index = 0, .name = "good"}};
+    QSignalSpy loaded(&controller, &pci::VectorLoadController::sublayerLoaded);
+    const auto id = startSelectedLoad(controller, std::move(request));
+    REQUIRE(QTest::qWaitFor(
+        [&] {
+            return !controller.hasActiveJobs();
+        },
+        2000));
+    CHECK(loaded.count() == 0);
+    REQUIRE(controller.jobState(id)->canRetry);
+    reject = false;
+    REQUIRE(controller.retry(id));
+    pci::VectorLoadControllerTestAccess::deliver(controller, id, firstAttempt);
+    CHECK(loaded.count() == 0);
+    REQUIRE(QTest::qWaitFor(
+        [&] {
+            return !controller.hasActiveJobs();
+        },
+        2000));
+    CHECK(loaded.count() == 1);
+    CHECK(controller.jobState(id)->summary.successful.size() == 1);
+    pci::VectorLoadControllerTestAccess::deliver(
+        controller, id, pci::nextGeneration(firstAttempt));
+    CHECK(loaded.count() == 1);
 }
 
 } // namespace

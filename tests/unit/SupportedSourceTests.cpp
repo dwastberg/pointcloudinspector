@@ -1,8 +1,9 @@
-#include "import/SupportedSource.h"
+#include <pci/desktop/config/SupportedSource.h>
 
 #include <catch2/catch_test_macros.hpp>
 
 #include <filesystem>
+#include <string>
 #include <vector>
 
 TEST_CASE("supported source classification applies compound-name precedence",
@@ -44,4 +45,30 @@ TEST_CASE("source classification preserves supported and unsupported order",
     CHECK(result.supported[2].path == std::filesystem::path("roads.gpkg"));
     REQUIRE(result.unsupported.size() == 1);
     CHECK(result.unsupported.front() == std::filesystem::path("notes.txt"));
+}
+
+TEST_CASE("source descriptors keep routing and dialog filters in parity",
+          "[unit][source-open][routing]")
+{
+    for (const pci::SupportedSourceDescriptor &descriptor :
+         pci::supportedSourceDescriptors()) {
+        CAPTURE(descriptor.dialogLabel);
+        CHECK_FALSE(descriptor.routingSuffixes.empty());
+        CHECK_FALSE(descriptor.dialogPatterns.empty());
+        CHECK_FALSE(descriptor.combinedDialogPatterns.empty());
+        for (const std::string_view suffix : descriptor.routingSuffixes) {
+            CHECK(pci::supportedSourceKind(std::filesystem::path(
+                      "source" + std::string(suffix))) == descriptor.kind);
+        }
+    }
+
+    CHECK(pci::supportedSourceDialogFilter() ==
+          "Supported files (*.las *.laz *ept.json *.gpkg *.geojson *.json "
+          "*.shp *.kml *.gml *.fgb *.dxf *.tif *.tiff *.cog *.vrt *.gti "
+          "*.img *.jp2 *.png *.jpg *.jpeg);;"
+          "Point clouds (*.las *.laz *.copc.laz *ept.json);;"
+          "Vector files (*.gpkg *.geojson *.json *.shp *.kml *.gml *.fgb "
+          "*.dxf);;"
+          "Raster files (*.tif *.tiff *.cog *.vrt *.gti *.img *.jp2 *.png "
+          "*.jpg *.jpeg);;All files (*)");
 }

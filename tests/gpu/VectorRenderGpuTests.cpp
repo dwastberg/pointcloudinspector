@@ -1,6 +1,8 @@
-#include "app/ApplicationOptions.h"
-#include "renderer/rhi/RenderViewportWidget_p.h"
 #include "support/RenderViewportTestAccess.h"
+#include "support/SceneRuntimeFixture.h"
+#include <pci/desktop/config/ApplicationOptions.h>
+#include <pci/desktop/viewport/RenderViewportWidget_p.h>
+#include <pci/document/SceneDocument.h>
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
@@ -124,7 +126,7 @@ QImage grabRenderedFrame(pci::RenderViewportWidget &viewport,
     return image;
 }
 
-pci::PointCloudScenePtr pointSurfaceScene()
+pci::PointDatasetRuntimePtr pointSurfaceScene()
 {
     pci::PointCloudMetadata metadata;
     metadata.sourcePointCount = 21U * 21U;
@@ -133,7 +135,7 @@ pci::PointCloudScenePtr pointSurfaceScene()
         .maximum = {1.0, 1.0, 1.0},
     };
     metadata.hasColor = true;
-    auto scene = std::make_shared<pci::PointCloudScene>(metadata);
+    auto scene = std::make_shared<pci::PointDatasetRuntime>(metadata);
     auto block = std::make_shared<pci::PointBlock>();
     block->origin = {-1.0, -1.0, -1.0};
     block->scale = 2.0 / 65535.0;
@@ -165,16 +167,17 @@ pci::PointCloudScenePtr pointSurfaceScene()
     return scene;
 }
 
-pci::SceneDocumentPtr
+pci::test::SceneRuntimeFixture
 pointSurfaceDocument(pci::PointCloudLayerId *layerId = nullptr)
 {
     auto document = std::make_shared<pci::SceneDocument>();
+    pci::test::SceneRuntimeFixture runtime(document);
     const pci::PointCloudLayerId added =
-        document->addLayer(pointSurfaceScene());
+        runtime.addPointLayer(pointSurfaceScene());
     if (layerId) {
         *layerId = added;
     }
-    return document;
+    return runtime;
 }
 
 pci::VectorLayerDataPtr filledRectangle(const float minimumX,
@@ -318,7 +321,7 @@ TEST_CASE("GPU renders a vector-only marker with EDL on and off",
         gpuTestGraphicsApi(),
         gpuTestValidation);
     viewport.resize(viewportSize, viewportSize);
-    viewport.setDocument(document->snapshot(), true);
+    pci::test::setTestDocument(viewport, document, true);
     CHECK(visiblePixelCount(grabRenderedFrame(viewport, true)) > 0);
 
     const std::uint64_t frame =
@@ -345,7 +348,8 @@ TEST_CASE("GPU vector depth matrix is stable with EDL on and off",
                                             DepthScenario::Background);
     CAPTURE(eyeDomeLighting, depthScenarioName(scenario));
 
-    auto document = pointSurfaceDocument();
+    auto runtime = pointSurfaceDocument();
+    const auto &document = runtime.document();
     const bool background = scenario == DepthScenario::Background;
     pci::RenderViewportWidget viewport(
         false,
@@ -355,7 +359,7 @@ TEST_CASE("GPU vector depth matrix is stable with EDL on and off",
     viewport.resize(viewportSize, viewportSize);
     viewport.setPointSizePixels(pci::maximumPointSizePixels);
     viewport.setEyeDomeLightingEnabled(eyeDomeLighting);
-    viewport.setDocument(document->snapshot(), true);
+    runtime.setDocument(viewport, true);
     viewport.frameVisibleLayersTopDown();
 
     const pci::SceneLayerId vectorId = document->addVectorLayer(
@@ -371,7 +375,7 @@ TEST_CASE("GPU vector depth matrix is stable with EDL on and off",
     }
     REQUIRE(document->setVectorLayerStyle(
         vectorId, opaqueFill({1.0F, 0.0F, 0.0F, 1.0F}, zOffset, alwaysOnTop)));
-    viewport.updateDocument(document->snapshot());
+    runtime.updateDocument(viewport);
     const QImage image = grabRenderedFrame(viewport, eyeDomeLighting);
 
     if (background) {
@@ -398,7 +402,8 @@ TEST_CASE("GPU vector near-plane clipping remains finite with EDL on and off",
     CAPTURE(eyeDomeLighting, nearPlaneScenarioName(scenario));
 
     pci::PointCloudLayerId framingLayer;
-    auto document = pointSurfaceDocument(&framingLayer);
+    auto runtime = pointSurfaceDocument(&framingLayer);
+    const auto &document = runtime.document();
     pci::RenderViewportWidget viewport(
         false,
         pci::UploadScheduler::defaultResidencyByteBudget,
@@ -406,7 +411,7 @@ TEST_CASE("GPU vector near-plane clipping remains finite with EDL on and off",
         gpuTestValidation);
     viewport.resize(viewportSize, viewportSize);
     viewport.setEyeDomeLightingEnabled(eyeDomeLighting);
-    viewport.setDocument(document->snapshot(), true);
+    runtime.setDocument(viewport, true);
 
     const pci::Vec3d eye =
         pci::testAccess(viewport).cameraForTesting().position();
@@ -451,7 +456,7 @@ TEST_CASE("GPU vector near-plane clipping remains finite with EDL on and off",
     const pci::SceneLayerId vectorId =
         document->addVectorLayer(lineData(segment));
     REQUIRE(document->setVectorLayerStyle(vectorId, opaqueLine()));
-    viewport.updateDocument(document->snapshot());
+    runtime.updateDocument(viewport);
 
     const QImage image = grabRenderedFrame(viewport, eyeDomeLighting);
     const std::uint64_t red = redPixelCount(image);
@@ -469,8 +474,9 @@ TEST_CASE("GPU vector polygon fill readback matches the configured color",
           "[gpu][vector][fill]")
 {
     pci::PointCloudLayerId framingLayer;
-    auto document = pointSurfaceDocument(&framingLayer);
-    REQUIRE(document->setLayerVisible(framingLayer, false));
+    auto runtime = pointSurfaceDocument(&framingLayer);
+    const auto &document = runtime.document();
+    REQUIRE(runtime.setPointLayerVisible(framingLayer, false));
     const pci::SceneLayerId vectorId =
         document->addVectorLayer(filledRectangle(-0.45F, -0.45F, 0.45F, 0.45F));
     REQUIRE(document->setVectorLayerStyle(
@@ -483,7 +489,7 @@ TEST_CASE("GPU vector polygon fill readback matches the configured color",
         gpuTestValidation);
     viewport.resize(viewportSize, viewportSize);
     viewport.setEyeDomeLightingEnabled(false);
-    viewport.setDocument(document->snapshot(), true);
+    runtime.setDocument(viewport, true);
     viewport.frameVisibleLayersTopDown();
     const QColor center = centerPixel(grabRenderedFrame(viewport, false));
     CHECK(center.red() >= 245);
@@ -495,8 +501,9 @@ TEST_CASE("GPU renders a connected fill across two 16-bit batches",
           "[gpu][vector][fill][batching]")
 {
     pci::PointCloudLayerId framingLayer;
-    auto document = pointSurfaceDocument(&framingLayer);
-    REQUIRE(document->setLayerVisible(framingLayer, false));
+    auto runtime = pointSurfaceDocument(&framingLayer);
+    const auto &document = runtime.document();
+    REQUIRE(runtime.setPointLayerVisible(framingLayer, false));
 
     auto data = std::make_shared<pci::VectorLayerData>();
     data->origin = {};
@@ -544,7 +551,7 @@ TEST_CASE("GPU renders a connected fill across two 16-bit batches",
         gpuTestValidation);
     viewport.resize(viewportSize, viewportSize);
     viewport.setEyeDomeLightingEnabled(false);
-    viewport.setDocument(document->snapshot(), true);
+    runtime.setDocument(viewport, true);
     viewport.frameVisibleLayersTopDown();
     const QImage image = grabRenderedFrame(viewport, false);
     CHECK(redPixelCount(image, 0, image.width() / 2) > 100);
@@ -555,8 +562,9 @@ TEST_CASE("GPU always-on-top overlap follows document painter order",
           "[gpu][vector][painter-order]")
 {
     pci::PointCloudLayerId framingLayer;
-    auto document = pointSurfaceDocument(&framingLayer);
-    REQUIRE(document->setLayerVisible(framingLayer, false));
+    auto runtime = pointSurfaceDocument(&framingLayer);
+    const auto &document = runtime.document();
+    REQUIRE(runtime.setPointLayerVisible(framingLayer, false));
     const pci::SceneLayerId first =
         document->addVectorLayer(filledRectangle(-0.45F, -0.45F, 0.45F, 0.45F));
     const pci::SceneLayerId second =
@@ -573,7 +581,7 @@ TEST_CASE("GPU always-on-top overlap follows document painter order",
         gpuTestValidation);
     viewport.resize(viewportSize, viewportSize);
     viewport.setEyeDomeLightingEnabled(true);
-    viewport.setDocument(document->snapshot(), true);
+    runtime.setDocument(viewport, true);
     viewport.frameVisibleLayersTopDown();
     const QColor center = centerPixel(grabRenderedFrame(viewport, true));
     CHECK(greenDominant(center));

@@ -9,6 +9,11 @@ add_subdirectory("${PROJECT_SOURCE_DIR}/third_party/Catch2"
 # formatters) from its compiled library. Compile it at the same language level
 # as its consumers so headers and library agree on that ABI surface.
 target_compile_features(Catch2 PUBLIC cxx_std_23)
+# Instrument the compiled test framework consistently with test consumers.
+# Mixed libc++ vector instantiations otherwise disagree about ASan container
+# annotations (observed in Catch::StringStreams during reporter destruction).
+target_link_libraries(Catch2 PRIVATE pcinspector::project_options)
+target_link_libraries(Catch2WithMain PRIVATE pcinspector::project_options)
 set_target_properties(Catch2 Catch2WithMain PROPERTIES CXX_EXTENSIONS OFF)
 list(APPEND CMAKE_MODULE_PATH
         "${PROJECT_SOURCE_DIR}/third_party/Catch2/extras")
@@ -58,49 +63,126 @@ pci_add_catch_test_target(pcinspector_secure_storage_tests
         SOURCES unit/SecureStorageTests.cpp
         LIBRARIES pcinspector::secure_storage)
 
+pci_add_catch_test_target(pcinspector_color_tests
+        WITH_MAIN
+        SOURCES
+        unit/ColorRampTests.cpp
+        unit/CptColorMapParserTests.cpp
+        LIBRARIES pcinspector::color)
+
 pci_add_catch_test_target(pcinspector_pointcloud_tests
         WITH_MAIN
         SOURCES
-        unit/CptColorMapParserTests.cpp
+        unit/PointBlockTests.cpp
+        unit/PointBlockPartitionerTests.cpp
         unit/PointColorPolicyTests.cpp
         unit/PointCloudContractTests.cpp
         LIBRARIES pcinspector::pointcloud)
 
-pci_add_catch_test_target(pcinspector_scene_tests
+pci_add_catch_test_target(pcinspector_document_tests
         WITH_MAIN
         SOURCES
-        unit/PointBlockTests.cpp
-        unit/BlockPartitionerTests.cpp
-        unit/PointCloudSceneTests.cpp
-        unit/PointCloudHierarchyTests.cpp
-        unit/RasterColorizeRunStoreTests.cpp
-        unit/RasterPointColorizerTests.cpp
         unit/SceneDocumentTests.cpp
         unit/SceneDocumentVectorTests.cpp
         unit/SceneDocumentRasterTests.cpp
+        INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}"
         LIBRARIES
-        pcinspector::scene
+        pcinspector::document
         Qt6::Core)
+
+pci_add_catch_test_target(pcinspector_scene_runtime_tests
+        WITH_MAIN
+        SOURCES unit/SceneRuntimeTests.cpp
+        LIBRARIES pcinspector::scene_runtime)
+
+pci_add_catch_test_target(pcinspector_operations_tests
+        WITH_MAIN
+        SOURCES unit/RasterPointColorizerTests.cpp
+                unit/OperationRegistryTests.cpp
+                unit/StatisticsOperationTests.cpp
+                unit/StorageMaintenanceOperationTests.cpp
+                unit/PointDatasetIngestionTests.cpp
+        INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}"
+        LIBRARIES
+        pcinspector::operations
+        Qt6::Core)
+
+pci_add_catch_test_target(pcinspector_point_runtime_tests
+        WITH_MAIN
+        SOURCES
+        unit/PointDatasetRuntimeTests.cpp
+        unit/PointCloudHierarchyTests.cpp
+        unit/PointResidencyServiceTests.cpp
+        unit/DecodedPageCacheTests.cpp
+        LIBRARIES pcinspector::point_runtime)
 
 pci_add_catch_test_target(pcinspector_raster_tests
         WITH_MAIN
         SOURCES
         unit/RasterLayerTests.cpp
+        unit/RasterLayerDisplayTests.cpp
         unit/RasterPointSamplerTests.cpp
-        unit/RasterTileCacheTests.cpp
         LIBRARIES pcinspector::raster)
+
+pci_add_catch_test_target(pcinspector_raster_runtime_tests
+        WITH_MAIN
+        SOURCES
+        raster_runtime/RasterTileCacheTests.cpp
+        raster_runtime/RasterTileStreamerTests.cpp
+        LIBRARIES pcinspector::raster_runtime)
 
 pci_add_catch_test_target(pcinspector_foundation_tests
         WITH_MAIN
         SOURCES unit/FoundationTests.cpp
         LIBRARIES pcinspector::foundation)
 
+pci_add_catch_test_target(pcinspector_render_telemetry_tests
+        WITH_MAIN
+        SOURCES unit/RenderTelemetryTests.cpp
+        LIBRARIES pcinspector::render_telemetry)
+
 pci_add_catch_test_target(pcinspector_tasking_tests
         WITH_MAIN
         SOURCES unit/TaskSchedulerTests.cpp
         LIBRARIES pcinspector::tasking)
 
+pci_add_catch_test_target(pcinspector_runtime_resources_tests
+        WITH_MAIN
+        SOURCES
+        unit/CompletionExecutorTests.cpp
+        unit/RuntimeResourcesTests.cpp
+        INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}"
+        LIBRARIES pcinspector::runtime_resources)
+
+pci_add_catch_test_target(pcinspector_operation_api_tests
+        WITH_MAIN
+        SOURCES unit/RasterColorizeRunStoreContractTests.cpp
+        LIBRARIES pcinspector::operation_api)
+
+pci_add_catch_test_target(pcinspector_operation_local_tests
+        WITH_MAIN
+        SOURCES unit/RasterColorizeRunStoreTests.cpp
+        LIBRARIES
+        pcinspector::operation_local
+        Qt6::Core)
+
+pci_add_catch_test_target(pcinspector_storage_maintenance_tests
+        INTEGRATION
+        WITH_MAIN
+        SOURCES component/StorageMaintenanceTests.cpp
+        LIBRARIES pcinspector::operation_local
+        pcinspector::secure_storage
+        pcinspector::platform
+        Qt6::Core)
+
+add_executable(pcinspector_storage_lease_probe support/StorageLeaseProbe.cpp)
+target_link_libraries(pcinspector_storage_lease_probe PRIVATE pcinspector::secure_storage pcinspector::platform Qt6::Core)
+pci_configure_target(pcinspector_storage_lease_probe)
+add_dependencies(pcinspector_storage_maintenance_tests pcinspector_storage_lease_probe)
+target_compile_definitions(pcinspector_storage_maintenance_tests PRIVATE PCI_STORAGE_LEASE_PROBE="$<TARGET_FILE:pcinspector_storage_lease_probe>")
+
 pci_add_catch_test_target(pcinspector_renderer_planning_tests
+        INTEGRATION
         WITH_MAIN
         SOURCES
         renderer/FrustumCullerTests.cpp
@@ -110,9 +192,15 @@ pci_add_catch_test_target(pcinspector_renderer_planning_tests
         renderer/RenderActivityTests.cpp
         renderer/RenderSelectionTests.cpp
         renderer/RendererPlanningTests.cpp
+        renderer/RasterFrameCoordinatorTests.cpp
         renderer/RasterLodPlannerTests.cpp
         renderer/SceneVisibilityIndexTests.cpp
-        LIBRARIES pcinspector::renderer_planning)
+        LIBRARIES pcinspector::renderer_planning pcinspector::point_runtime)
+
+pci_add_catch_test_target(pcinspector_renderer_execution_tests
+        WITH_MAIN
+        SOURCES renderer/PointFrameExecutorTests.cpp renderer/FrameExecutorTests.cpp
+        LIBRARIES pcinspector::frame)
 
 pci_add_catch_test_target(pcinspector_vector_tests
         WITH_MAIN
@@ -123,6 +211,7 @@ pci_add_catch_test_target(pcinspector_vector_tests
         LIBRARIES pcinspector::vector)
 
 pci_add_catch_test_target(pcinspector_import_pdal_tests
+        INTEGRATION
         WITH_MAIN
         SOURCES
         fixtures/PdalFixtureFactory.cpp
@@ -131,6 +220,8 @@ pci_add_catch_test_target(pcinspector_import_pdal_tests
         "${CMAKE_CURRENT_SOURCE_DIR}"
         LIBRARIES
         pcinspector::import_pdal
+        pcinspector::operations
+        pcinspector::operation_local
         Qt6::Core
         PDAL::pdalcpp)
 
@@ -157,7 +248,7 @@ pci_add_catch_test_target(pcinspector_import_gdal_tests
         RESOURCE_LOCK pcinspector_import_gdal_fixtures)
 
 # The large-source acceptance lane. It links both the GDAL adapter and the
-# renderer's streaming code because the bound being asserted spans them: reads
+# raster runtime's streaming code because the bound spans them: reads
 # come from the adapter, admission and eviction from the streamer.
 pci_add_catch_test_target(pcinspector_raster_stress_tests
         WITH_MAIN
@@ -169,9 +260,13 @@ pci_add_catch_test_target(pcinspector_raster_stress_tests
         INCLUDE_DIRECTORIES
         "${CMAKE_CURRENT_SOURCE_DIR}"
         LIBRARIES
+        pcinspector::platform
         pcinspector::import_gdal
+        pcinspector::operation_local
+        pcinspector::operations
+        pcinspector::raster_runtime
         pcinspector::renderer
-        pcinspector::scene
+        pcinspector::document
         pcinspector::secure_storage
         GDAL::GDAL
         PROPERTIES
@@ -179,6 +274,7 @@ pci_add_catch_test_target(pcinspector_raster_stress_tests
         TIMEOUT 120)
 
 pci_add_catch_test_target(pcinspector_import_ogr_tests
+        INTEGRATION
         WITH_MAIN
         SOURCES
         fixtures/OgrFixtureFactory.cpp
@@ -187,6 +283,7 @@ pci_add_catch_test_target(pcinspector_import_ogr_tests
         "${CMAKE_CURRENT_SOURCE_DIR}"
         LIBRARIES
         pcinspector::import_ogr
+        pcinspector::gdal_runtime
         GDAL::GDAL
         Qt6::Core)
 
@@ -276,15 +373,28 @@ if(TARGET pci_multifile_bench)
             TIMEOUT 45)
 endif()
 
-if(TARGET pci_qualification_diff AND
-        EXISTS "${PROJECT_SOURCE_DIR}/qualification/tolerances.json" AND
-        EXISTS "${PROJECT_SOURCE_DIR}/qualification/release-h-local-two-file.json" AND
-        EXISTS "${PROJECT_SOURCE_DIR}/qualification/release-h-local-two-file-reopen.json" AND
-        EXISTS "${PROJECT_SOURCE_DIR}/qualification/release-h-native-metal-final.json")
+if(TARGET pci_qualification_diff)
     set(pcinspector_qualification_directory
-        "${PROJECT_SOURCE_DIR}/qualification")
+        "${CMAKE_CURRENT_SOURCE_DIR}/data/qualification")
     set(pcinspector_qualification_tolerances
         "${pcinspector_qualification_directory}/tolerances.json")
+    set(pcinspector_qualification_runner
+        "${CMAKE_CURRENT_SOURCE_DIR}/cmake/RunQualificationDiffCheck.cmake")
+    set(pcinspector_qualification_registration_guard
+        "${CMAKE_CURRENT_SOURCE_DIR}/cmake/CheckQualificationTestRegistration.cmake")
+    set(pcinspector_qualification_registration_guard_test
+        "${CMAKE_CURRENT_SOURCE_DIR}/cmake/TestQualificationRegistrationGuard.cmake")
+    set(QUALIFICATION_FIXTURE_DIR "${pcinspector_qualification_directory}")
+    set(QUALIFICATION_RUNNER "${pcinspector_qualification_runner}")
+    set(QUALIFICATION_REGISTRATION_GUARD
+        "${pcinspector_qualification_registration_guard}")
+    set(QUALIFICATION_REGISTRATION_GUARD_TEST
+        "${pcinspector_qualification_registration_guard_test}")
+    include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/CheckQualificationTestInputs.cmake")
+    unset(QUALIFICATION_FIXTURE_DIR)
+    unset(QUALIFICATION_RUNNER)
+    unset(QUALIFICATION_REGISTRATION_GUARD)
+    unset(QUALIFICATION_REGISTRATION_GUARD_TEST)
     foreach(report IN ITEMS
             release-h-local-two-file.json
             release-h-local-two-file-reopen.json
@@ -322,29 +432,86 @@ if(TARGET pci_qualification_diff AND
                     "-DBASELINE=${pcinspector_qualification_directory}/release-h-native-metal-final.json"
                     "-DTOLERANCES=${pcinspector_qualification_tolerances}"
                     "-DMODE=${check}"
+                    "-DOUTPUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/qualification-candidates/$<CONFIG>/${check}"
                     "-DEXPECTED_EXIT=${expected_exit}"
                     "-DEXPECTED_OUTPUT=${expected_output}"
                     -P
-                    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/RunQualificationDiffCheck.cmake")
+                    "${pcinspector_qualification_runner}")
         set_tests_properties(
             "qualification_diff_${check}_self_check"
             PROPERTIES LABELS "qualification;tools")
     endforeach()
+
+    add_test(
+        NAME qualification_test_registration
+        COMMAND "${CMAKE_COMMAND}"
+                "-DBUILD_DIR=${PROJECT_BINARY_DIR}"
+                "-DCTEST_CONFIGURATION=$<CONFIG>"
+                "-DCTEST_EXECUTABLE=${CMAKE_CTEST_COMMAND}"
+                -P "${pcinspector_qualification_registration_guard}")
+    set_tests_properties(
+        qualification_test_registration
+        PROPERTIES LABELS "qualification;tools")
+
+    foreach(guard_mode IN ITEMS valid zero missing unexpected disabled)
+        add_test(
+            NAME "qualification_registration_guard_${guard_mode}"
+            COMMAND "${CMAKE_COMMAND}"
+                    "-DMODE=${guard_mode}"
+                    "-DCHECK_SCRIPT=${pcinspector_qualification_registration_guard}"
+                    "-DCTEST_EXECUTABLE=${CMAKE_CTEST_COMMAND}"
+                    "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/qualification-registration-guard/$<CONFIG>"
+                    -P
+                    "${pcinspector_qualification_registration_guard_test}")
+        set_tests_properties(
+            "qualification_registration_guard_${guard_mode}"
+            PROPERTIES LABELS "qualification;tools;cmake")
+    endforeach()
+
+    foreach(missing_fixture IN ITEMS
+            tolerances.json
+            release-h-local-two-file.json
+            release-h-local-two-file-reopen.json
+            release-h-native-metal-final.json)
+        string(REPLACE ".json" "" missing_fixture_name
+               "${missing_fixture}")
+        add_test(
+            NAME "qualification_inputs_missing_${missing_fixture_name}"
+            COMMAND "${CMAKE_COMMAND}"
+                    "-DVALIDATOR=${CMAKE_CURRENT_SOURCE_DIR}/cmake/CheckQualificationTestInputs.cmake"
+                    "-DSOURCE_FIXTURE_DIR=${pcinspector_qualification_directory}"
+                    "-DRUNNER=${pcinspector_qualification_runner}"
+                    "-DREGISTRATION_GUARD=${pcinspector_qualification_registration_guard}"
+                    "-DREGISTRATION_GUARD_TEST=${pcinspector_qualification_registration_guard_test}"
+                    "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/qualification-inputs/$<CONFIG>"
+                    "-DMISSING_FILE=${missing_fixture}"
+                    -P
+                    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/TestQualificationInputs.cmake")
+        set_tests_properties(
+            "qualification_inputs_missing_${missing_fixture_name}"
+            PROPERTIES LABELS "qualification;tools;cmake")
+    endforeach()
     unset(expected_exit)
     unset(expected_output)
+    unset(pcinspector_qualification_runner)
+    unset(pcinspector_qualification_registration_guard)
+    unset(pcinspector_qualification_registration_guard_test)
     unset(pcinspector_qualification_directory)
     unset(pcinspector_qualification_tolerances)
 endif()
 
 pci_add_catch_test_target(pcinspector_qt_async_tests
+        INTEGRATION
         SOURCES
         support/CatchQCoreMain.cpp
         qt/PointCloudLoadControllerTests.cpp
+        qt/QueuedControllerCallbackTests.cpp
         qt/VectorLoadControllerTests.cpp
         qt/RasterLoadControllerTests.cpp
         qt/RasterElevationControllerTests.cpp
         LIBRARIES
-        pcinspector::import_async
+        pcinspector::desktop_operations
+        pcinspector::secure_storage
         Qt6::Test)
 
 pci_add_catch_test_target(pcinspector_scene_session_tests
@@ -352,7 +519,7 @@ pci_add_catch_test_target(pcinspector_scene_session_tests
         support/CatchQCoreMain.cpp
         qt/SceneSessionTests.cpp
         LIBRARIES
-        pcinspector::app_session
+        pcinspector::desktop_session
         Qt6::Test)
 
 pci_add_catch_test_target(pcinspector_qt_platform_tests
@@ -384,6 +551,7 @@ pci_add_catch_test_target(pcinspector_ui_tests
         ui/ClassificationFilterDialogTests.cpp
         ui/LoadingOverlayTests.cpp
         ui/SettingsDialogTests.cpp
+        ui/StorageSettingsTests.cpp
         ui/VectorColorButtonTests.cpp
         ui/VectorSublayerDialogTests.cpp
         ui/MainWindowTests.cpp
@@ -400,16 +568,22 @@ pci_add_catch_test_target(pcinspector_qt_renderer_tests
         support/CatchQCoreMain.cpp
         qt/BackendPolicyTests.cpp
     qt/PointCloudRendererTests.cpp
-        qt/RenderTelemetryAccumulatorTests.cpp
-    qt/VectorLayerRendererTests.cpp
+        qt/VectorLayerRendererTests.cpp
         qt/RasterLayerRendererTests.cpp
-        qt/RasterTileStreamerTests.cpp
         qt/UploadSchedulerTests.cpp
         qt/PointPickResultTests.cpp
         LIBRARIES
-        pcinspector::renderer
+        pcinspector::viewport
         Qt6::GuiPrivate
         Qt6::Test)
+
+pci_add_catch_test_target(pcinspector_render_telemetry_projection_tests
+        INTEGRATION
+        WITH_MAIN
+        SOURCES qt/RenderTelemetryAccumulatorTests.cpp
+        LIBRARIES
+        pcinspector::render_telemetry
+        pcinspector::viewport)
 
 pci_add_catch_test_target(pcinspector_renderer_ui_tests
         INTEGRATION
@@ -418,7 +592,7 @@ pci_add_catch_test_target(pcinspector_renderer_ui_tests
         ui/RendererContractTests.cpp
         LIBRARIES
         pcinspector::development_support
-        pcinspector::renderer
+        pcinspector::viewport
         Qt6::Test
         PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
@@ -434,7 +608,10 @@ pci_add_catch_test_target(pcinspector_renderer_internal_ui_tests
         "${CMAKE_CURRENT_SOURCE_DIR}"
         LIBRARIES
         pcinspector::development_support
-        pcinspector::renderer
+        pcinspector::navigation
+        pcinspector::raster_runtime
+        pcinspector::render_telemetry
+        pcinspector::viewport
         Qt6::GuiPrivate
         Qt6::Test
         PROPERTIES
@@ -466,7 +643,10 @@ if(PCINSPECTOR_ENABLE_GPU_TESTS)
             LIBRARIES
             pcinspector::app_config
             pcinspector::import_gdal
-            pcinspector::renderer
+            pcinspector::navigation
+            pcinspector::raster_runtime
+            pcinspector::render_telemetry
+            pcinspector::viewport
             pcinspector::secure_storage
             GDAL::GDAL
             Qt6::GuiPrivate

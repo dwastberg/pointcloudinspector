@@ -1,10 +1,13 @@
-#include "renderer/planning/RasterLodPlanner.h"
+#include <pci/foundation/LayerIdentity.h>
+#include <pci/raster/RasterTileSource.h>
+#include <pci/rendering/planning/RasterLodPlanner.h>
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
 #include <memory>
+#include <optional>
 #include <utility>
 
 namespace {
@@ -32,6 +35,16 @@ private:
     pci::RasterLayerMetadata metadata_;
 };
 
+struct PlannerRasterLayer {
+    pci::SceneLayerId id;
+    pci::RasterLayerDataPtr data;
+    pci::RasterLayerStyle style;
+    pci::RasterElevationStatus elevationStatus =
+        pci::RasterElevationStatus::NotApplicable;
+    std::optional<pci::RasterElevationRange> exactElevationRange;
+    pci::RasterDatasetDescriptor descriptor;
+};
+
 [[nodiscard]] pci::RasterLevel makeLevel(const std::uint32_t width,
                                          const std::uint32_t height,
                                          const std::uint32_t baseWidth,
@@ -50,7 +63,7 @@ private:
 
 // Deliberately non-power-of-two reductions, so nothing downstream can assume a
 // 2^L pyramid.
-[[nodiscard]] pci::RasterLayer plannerLayer(const double pixelSize = 1.0)
+[[nodiscard]] PlannerRasterLayer plannerLayer(const double pixelSize = 1.0)
 {
     pci::RasterLayerMetadata metadata;
     metadata.width = 2048;
@@ -64,18 +77,19 @@ private:
         makeLevel(228, 228, 2048, 2048),
     };
 
-    pci::RasterLayer layer;
+    PlannerRasterLayer layer;
     layer.id = pci::SceneLayerId{1};
     layer.data = std::make_shared<pci::RasterLayerData>(pci::RasterLayerData{
         .sourceId = pci::nextRasterSourceId(),
         .source = std::make_shared<PlannerRasterSource>(std::move(metadata)),
     });
+    layer.descriptor = layer.data->descriptor();
     return layer;
 }
 
-[[nodiscard]] pci::RasterLayer surfaceLayer()
+[[nodiscard]] PlannerRasterLayer surfaceLayer()
 {
-    pci::RasterLayer layer = plannerLayer();
+    PlannerRasterLayer layer = plannerLayer();
     pci::RasterLayerMetadata metadata = layer.data->metadata();
     metadata.elevation.available = true;
     metadata.elevation.anchor = 0.0;
@@ -83,6 +97,7 @@ private:
         .sourceId = pci::nextRasterSourceId(),
         .source = std::make_shared<PlannerRasterSource>(std::move(metadata)),
     });
+    layer.descriptor = layer.data->descriptor();
     layer.style.renderMode = pci::RasterRenderMode::Surface;
     layer.elevationStatus = pci::RasterElevationStatus::Ready;
     layer.exactElevationRange =
@@ -119,12 +134,15 @@ private:
     return camera;
 }
 
-[[nodiscard]] pci::RasterLodPlanInput planInput(const pci::RasterLayer &layer,
+[[nodiscard]] pci::RasterLodPlanInput planInput(const PlannerRasterLayer &layer,
                                                 const pci::FrameCamera &camera)
 {
-    pci::RasterLodPlanInput input;
-    input.layer = layer;
-    input.camera = camera;
+    pci::RasterLodPlanInput input{
+        pci::RasterLodLayerView{layer.descriptor.metadata,
+                                layer.style,
+                                layer.elevationStatus,
+                                layer.exactElevationRange},
+        camera};
     input.cpuResident = [](pci::RasterTileKey) {
         return false;
     };
@@ -134,10 +152,33 @@ private:
     return input;
 }
 
+[[nodiscard]] pci::RasterLodLayerView layerView(const PlannerRasterLayer &layer)
+{
+    return {
+        layer.descriptor.metadata,
+        layer.style,
+        layer.elevationStatus,
+        layer.exactElevationRange,
+    };
+}
+
+TEST_CASE("raster LOD planning needs only immutable document metadata",
+          "[renderer][raster][lod][architecture]")
+{
+    PlannerRasterLayer layer = plannerLayer();
+    layer.data.reset();
+
+    const pci::RasterLodPlan plan =
+        pci::planRasterTiles(planInput(layer, overheadCamera(700.0)));
+
+    CHECK_FALSE(plan.selected.empty());
+    CHECK_FALSE(plan.requests.empty());
+}
+
 TEST_CASE("raster planner selects nothing when the layer is off screen",
           "[renderer][raster][lod]")
 {
-    const pci::RasterLayer layer = plannerLayer();
+    const PlannerRasterLayer layer = plannerLayer();
     pci::FrameCamera camera = overheadCamera(2000.0);
     // Point the camera away from the raster entirely.
     camera.eye = {1024.0, -1024.0, -2000.0};
@@ -160,7 +201,7 @@ TEST_CASE("raster planner selects nothing when the layer is off screen",
 TEST_CASE("raster planner refines as the camera approaches",
           "[renderer][raster][lod]")
 {
-    const pci::RasterLayer layer = plannerLayer();
+    const PlannerRasterLayer layer = plannerLayer();
 
     const pci::RasterLodPlan far =
         pci::planRasterTiles(planInput(layer, overheadCamera(4000.0)));
@@ -188,7 +229,7 @@ TEST_CASE("raster planner honours the smaller of the two caps",
 {
     // Five-centimetre pixels, so the whole raster resolves to level 0 from a
     // height that still sees all of it: many tiles selected at once.
-    const pci::RasterLayer layer = plannerLayer(0.05);
+    const PlannerRasterLayer layer = plannerLayer(0.05);
     const pci::FrameCamera camera = overheadCamera(150.0, 51.2, -51.2);
 
     pci::RasterLodPlanInput input = planInput(layer, camera);
@@ -216,7 +257,7 @@ TEST_CASE("raster planner honours the smaller of the two caps",
 TEST_CASE("raster planner is stable across identical frames",
           "[renderer][raster][lod]")
 {
-    const pci::RasterLayer layer = plannerLayer();
+    const PlannerRasterLayer layer = plannerLayer();
     const pci::FrameCamera camera = overheadCamera(600.0);
 
     const pci::RasterLodPlan first =
@@ -235,7 +276,7 @@ TEST_CASE("raster planner is stable across identical frames",
 TEST_CASE("raster planner does not oscillate across a level boundary",
           "[renderer][raster][lod]")
 {
-    const pci::RasterLayer layer = plannerLayer();
+    const PlannerRasterLayer layer = plannerLayer();
 
     // Sweep across both level transitions, feeding each frame's selection into
     // the next. Level 1 becomes adequate above about 3200 and level 0 becomes
@@ -270,7 +311,7 @@ TEST_CASE("raster planner does not oscillate across a level boundary",
 TEST_CASE("raster planner falls back to a resident coarse ancestor",
           "[renderer][raster][lod]")
 {
-    const pci::RasterLayer layer = plannerLayer();
+    const PlannerRasterLayer layer = plannerLayer();
     const pci::FrameCamera camera = overheadCamera(300.0);
 
     // Only the coarsest level is resident, which is the state right after a
@@ -301,7 +342,7 @@ TEST_CASE("raster planner falls back to a resident coarse ancestor",
 TEST_CASE("raster planner reuploads decoded target tiles without rereading",
           "[renderer][raster][lod][residency]")
 {
-    const pci::RasterLayer layer = plannerLayer();
+    const PlannerRasterLayer layer = plannerLayer();
     pci::RasterLodPlanInput input = planInput(layer, overheadCamera(300.0));
     input.cpuResident = [](const pci::RasterTileKey key) {
         return key.levelIndex == 0;
@@ -320,7 +361,7 @@ TEST_CASE("raster planner reuploads decoded target tiles without rereading",
 TEST_CASE("raster planner keeps a resident fallback while reuploading detail",
           "[renderer][raster][lod][residency]")
 {
-    const pci::RasterLayer layer = plannerLayer();
+    const PlannerRasterLayer layer = plannerLayer();
     pci::RasterLodPlanInput input = planInput(layer, overheadCamera(300.0));
     input.cpuResident = [](const pci::RasterTileKey key) {
         return key.levelIndex == 0;
@@ -346,7 +387,7 @@ TEST_CASE(
     "raster planner reuploads the nearest decoded arbitrary-ratio ancestor",
     "[renderer][raster][lod][residency]")
 {
-    const pci::RasterLayer layer = plannerLayer();
+    const PlannerRasterLayer layer = plannerLayer();
     pci::RasterLodPlanInput input = planInput(layer, overheadCamera(300.0));
     input.cpuResident = [](const pci::RasterTileKey key) {
         return key.levelIndex == 1;
@@ -366,7 +407,7 @@ TEST_CASE(
 TEST_CASE("raster planner draws a resident ancestor beyond a decoded fallback",
           "[renderer][raster][lod][residency]")
 {
-    const pci::RasterLayer layer = plannerLayer();
+    const PlannerRasterLayer layer = plannerLayer();
     pci::RasterLodPlanInput input = planInput(layer, overheadCamera(300.0));
     input.cpuResident = [](const pci::RasterTileKey key) {
         return key.levelIndex == 1;
@@ -390,7 +431,7 @@ TEST_CASE("raster planner draws a resident ancestor beyond a decoded fallback",
 TEST_CASE("raster planner requests coarse coverage before detail",
           "[renderer][raster][lod]")
 {
-    const pci::RasterLayer layer = plannerLayer();
+    const PlannerRasterLayer layer = plannerLayer();
     pci::RasterLodPlanInput input = planInput(layer, overheadCamera(700.0));
     const pci::RasterLodPlan plan = pci::planRasterTiles(input);
     REQUIRE(plan.requests.size() > 1);
@@ -423,12 +464,13 @@ TEST_CASE("raster planner bounds enumeration across an enormous overview gap",
         makeLevel(1, 1, metadata.width, metadata.height),
     };
 
-    pci::RasterLayer layer;
+    PlannerRasterLayer layer;
     layer.id = pci::SceneLayerId{7};
     layer.data = std::make_shared<pci::RasterLayerData>(pci::RasterLayerData{
         .sourceId = pci::nextRasterSourceId(),
         .source = std::make_shared<PlannerRasterSource>(std::move(metadata)),
     });
+    layer.descriptor = layer.data->descriptor();
 
     pci::RasterLodPlanInput input =
         planInput(layer, overheadCamera(1000.0, 500.0, -500.0));
@@ -455,12 +497,13 @@ TEST_CASE("raster generated root keeps a 10k raster fully covered",
     pci::appendGeneratedRasterCoverageLevels(
         metadata.levels, metadata.width, metadata.height);
 
-    pci::RasterLayer layer;
+    PlannerRasterLayer layer;
     layer.id = pci::SceneLayerId{8};
     layer.data = std::make_shared<pci::RasterLayerData>(pci::RasterLayerData{
         .sourceId = pci::nextRasterSourceId(),
         .source = std::make_shared<PlannerRasterSource>(std::move(metadata)),
     });
+    layer.descriptor = layer.data->descriptor();
 
     pci::RasterLodPlanInput input =
         planInput(layer, overheadCamera(10000.0, 5000.0, -5000.0));
@@ -487,7 +530,7 @@ TEST_CASE("raster generated root keeps a 10k raster fully covered",
 TEST_CASE("raster planner bypasses a failed generated coverage tile",
           "[renderer][raster][lod][failure]")
 {
-    pci::RasterLayer layer = plannerLayer();
+    PlannerRasterLayer layer = plannerLayer();
     pci::RasterLayerMetadata metadata = layer.data->metadata();
     metadata.levels.resize(1);
     pci::appendGeneratedRasterCoverageLevels(
@@ -496,6 +539,7 @@ TEST_CASE("raster planner bypasses a failed generated coverage tile",
         .sourceId = pci::nextRasterSourceId(),
         .source = std::make_shared<PlannerRasterSource>(std::move(metadata)),
     });
+    layer.descriptor = layer.data->descriptor();
 
     const std::uint32_t root =
         static_cast<std::uint32_t>(layer.data->metadata().levels.size() - 1);
@@ -526,15 +570,17 @@ TEST_CASE("raster planner clips a rotated footprint to its visible region",
     metadata.levels = {makeLevel(2048, 2048, 2048, 2048),
                        makeLevel(683, 683, 2048, 2048)};
 
-    pci::RasterLayer layer;
+    PlannerRasterLayer layer;
     layer.id = pci::SceneLayerId{2};
     layer.data = std::make_shared<pci::RasterLayerData>(pci::RasterLayerData{
         .sourceId = pci::nextRasterSourceId(),
         .source = std::make_shared<PlannerRasterSource>(std::move(metadata)),
     });
+    layer.descriptor = layer.data->descriptor();
 
     const std::vector<std::array<double, 2>> polygon =
-        pci::rasterVisiblePixelPolygon(layer, overheadCamera(3000.0));
+        pci::rasterVisiblePixelPolygon(layerView(layer),
+                                       overheadCamera(3000.0));
     REQUIRE(polygon.size() >= 3);
     // The mapped polygon stays inside the raster's own pixel domain; a
     // negative or out-of-range coordinate would become a huge unsigned tile
@@ -550,7 +596,7 @@ TEST_CASE("raster planner clips a rotated footprint to its visible region",
 TEST_CASE("surface planning includes frustum corners contained by the prism",
           "[renderer][raster][lod][surface]")
 {
-    const pci::RasterLayer layer = surfaceLayer();
+    const PlannerRasterLayer layer = surfaceLayer();
     pci::FrameCamera camera;
     camera.eye = {1024.0, -1024.0, 0.0};
     camera.forward = {1.0, 0.0, 0.0};
@@ -575,7 +621,8 @@ TEST_CASE("surface planning includes frustum corners contained by the prism",
     // six prism faces yields no vertices. Its corners must contribute the
     // bounded visible subregion instead of losing the Surface or falling back
     // to the entire 2048-square source.
-    const auto polygon = pci::rasterVisiblePixelPolygon(layer, camera);
+    const auto polygon =
+        pci::rasterVisiblePixelPolygon(layerView(layer), camera);
     REQUIRE(polygon.size() >= 3);
     double minimumX = std::numeric_limits<double>::max();
     double maximumX = std::numeric_limits<double>::lowest();
@@ -592,7 +639,7 @@ TEST_CASE("surface planning includes frustum corners contained by the prism",
 TEST_CASE("raster projected texel size scales with distance",
           "[renderer][raster][lod]")
 {
-    const pci::RasterLayer layer = plannerLayer();
+    const PlannerRasterLayer layer = plannerLayer();
     const pci::RasterLayerMetadata &metadata = layer.data->metadata();
 
     const double near = pci::rasterProjectedTexelPixels(metadata,

@@ -1,4 +1,4 @@
-#include "renderer/rhi/RhiResource.h"
+#include <pci/rendering/rhi/RhiResource.h>
 
 #include <catch2/catch_test_macros.hpp>
 

@@ -7,7 +7,7 @@ layout(std140, binding = 0) uniform BlockData {
     vec4 reserved;
     float pointSize;
     int colorSource;
-    int colorMap;
+    int reservedColorMap;
     float scalarOffset;
     float scalarStep;
     int idBase;

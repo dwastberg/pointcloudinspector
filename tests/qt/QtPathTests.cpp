@@ -1,4 +1,4 @@
-#include "platform/QtPath.h"
+#include <pci/adapters/platform/QtPath.h>
 
 #include <catch2/catch_test_macros.hpp>
 

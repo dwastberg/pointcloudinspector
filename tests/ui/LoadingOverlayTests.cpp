@@ -1,4 +1,4 @@
-#include "app/LoadingOverlay.h"
+#include <pci/desktop/ui/LoadingOverlay.h>
 
 #include <catch2/catch_test_macros.hpp>
 

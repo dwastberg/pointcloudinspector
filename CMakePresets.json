@@ -234,7 +234,7 @@
       "configurePreset": "tsan",
       "configuration": "Debug",
       "environment": {
-        "TSAN_OPTIONS": "halt_on_error=1:second_deadlock_stack=1"
+        "TSAN_OPTIONS": "halt_on_error=1:abort_on_error=0:second_deadlock_stack=1"
       },
       "execution": {
         "noTestsAction": "error"
@@ -254,6 +254,17 @@
         "include": {
           "label": "gpu"
         }
+      }
+    },
+    {
+      "name": "clang-tidy",
+      "configurePreset": "clang-tidy",
+      "configuration": "Debug",
+      "execution": {
+        "noTestsAction": "error"
+      },
+      "output": {
+        "outputOnFailure": true
       }
     }
   ]

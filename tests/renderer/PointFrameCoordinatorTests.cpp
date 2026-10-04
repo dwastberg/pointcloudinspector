@@ -1,5 +1,6 @@
-#include "pointcloud/GpuPoint.h"
-#include "renderer/planning/PointFrameCoordinator.h"
+#include <pci/pointcloud/GpuPoint.h>
+#include <pci/rendering/planning/PointFrameCoordinator.h>
+#include <pci/runtime/point/PointDatasetRuntime.h>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -24,11 +25,30 @@ pci::PointBlockPtr flatBlock(const std::size_t pointCount)
 }
 
 pci::PointFrameLayer flatLayer(const std::uint64_t layerId,
-                               const pci::PointCloudScenePtr &scene,
-                               const pci::PointCloudSceneSnapshot &snapshot)
+                               const pci::PointDatasetRuntimePtr &scene,
+                               const pci::PointDatasetRuntimeSnapshot &snapshot)
 {
     return {
-        .layer = {.id = pci::PointCloudLayerId{layerId}, .scene = scene},
+        .layerId = pci::PointCloudLayerId{layerId},
+        .sourceId = scene->sourceId(),
+        .bindingGeneration = pci::BindingGeneration{layerId},
+        .sourceBounds = snapshot.bounds,
+        .residency = scene->residencyView(),
+        .snapshot = &snapshot,
+    };
+}
+
+pci::PointFrameLayer
+hierarchyLayer(const std::uint64_t layerId,
+               const pci::PointDatasetRuntimePtr &scene,
+               const pci::PointDatasetRuntimeSnapshot &snapshot)
+{
+    return {
+        .layerId = pci::PointCloudLayerId{layerId},
+        .sourceId = scene->sourceId(),
+        .bindingGeneration = pci::BindingGeneration{layerId},
+        .sourceBounds = snapshot.bounds,
+        .residency = scene->residencyView(),
         .snapshot = &snapshot,
     };
 }
@@ -79,8 +99,11 @@ public:
     [[nodiscard]] pci::PointCloudNodePayloadPtr
     loadNode(pci::PointCloudNodeId, std::stop_token) const override
     {
+        ++loadCount;
         throw std::runtime_error("fixture hierarchy failed");
     }
+
+    mutable std::atomic_uint64_t loadCount = 0;
 };
 
 pci::PointCloudNodePayloadPtr hierarchyRootPayload()
@@ -96,12 +119,15 @@ TEST_CASE("point frame coordinator owns flat assembly and cache reuse",
           "[unit][renderer-planning][point-frame][golden]")
 {
     auto scene =
-        std::make_shared<pci::PointCloudScene>(pci::PointCloudMetadata{});
+        std::make_shared<pci::PointDatasetRuntime>(pci::PointCloudMetadata{});
     scene->addBlock(flatBlock(100));
     scene->markLoadingComplete();
-    const pci::PointCloudSceneSnapshot snapshot = scene->snapshot();
+    const pci::PointDatasetRuntimeSnapshot snapshot = scene->snapshot();
     const auto input = [&] {
         return pci::PointFrameInput{
+            .sessionGeneration = pci::SessionGeneration{1},
+            .documentGeneration = pci::DocumentGeneration{2},
+            .documentRevision = 3,
             .layers = {flatLayer(7, scene, snapshot)},
             .camera = visibleCamera(),
             .cameraRevision = 3,
@@ -132,20 +158,29 @@ TEST_CASE("point frame coordinator owns flat assembly and cache reuse",
     const pci::PointFrameResult second = coordinator.plan(input());
     CHECK(second.reused);
     CHECK(second.plan == first.plan);
+    CHECK(second.execution.serial > first.execution.serial);
+    CHECK(second.execution.sessionGeneration == pci::SessionGeneration{1});
+    CHECK(second.execution.documentGeneration == pci::DocumentGeneration{2});
 
     pci::PointFrameInput changed = input();
     ++changed.cameraRevision;
     CHECK_FALSE(coordinator.plan(changed).reused);
+
+    pci::PointFrameInput replacement = input();
+    replacement.layers.front().sourceId =
+        pci::PointCloudSourceId{scene->sourceId().value() + 100};
+    replacement.layers.front().bindingGeneration = pci::BindingGeneration{8};
+    CHECK_FALSE(coordinator.plan(replacement).reused);
 }
 
 TEST_CASE("point frame coordinator owns flat budget settlement",
           "[unit][renderer-planning][point-frame][budget]")
 {
     auto scene =
-        std::make_shared<pci::PointCloudScene>(pci::PointCloudMetadata{});
+        std::make_shared<pci::PointDatasetRuntime>(pci::PointCloudMetadata{});
     scene->addBlock(flatBlock(100));
     scene->markLoadingComplete();
-    const pci::PointCloudSceneSnapshot snapshot = scene->snapshot();
+    const pci::PointDatasetRuntimeSnapshot snapshot = scene->snapshot();
     const std::vector layers{flatLayer(1, scene, snapshot)};
 
     pci::PointFrameCoordinator coordinator;
@@ -162,13 +197,13 @@ TEST_CASE("point frame coordinator owns flat budget settlement",
 TEST_CASE("hierarchical documents recover the interactive bootstrap budget",
           "[unit][renderer-planning][point-frame][budget][regression]")
 {
-    pci::PointCloudSceneSnapshot snapshot{
+    pci::PointDatasetRuntimeSnapshot snapshot{
         .hierarchical = true,
         .loadingComplete = true,
         .sourcePointCount = 25'000'000,
     };
     const std::vector<pci::PointFrameLayer> layers{{
-        .layer = {.id = pci::PointCloudLayerId{1}},
+        .layerId = pci::PointCloudLayerId{1},
         .snapshot = &snapshot,
     }};
 
@@ -188,13 +223,13 @@ TEST_CASE("hierarchical documents recover the interactive bootstrap budget",
 TEST_CASE("completed small hierarchies retain a stable total-point budget",
           "[unit][renderer-planning][point-frame][budget][regression]")
 {
-    pci::PointCloudSceneSnapshot snapshot{
+    pci::PointDatasetRuntimeSnapshot snapshot{
         .hierarchical = true,
         .loadingComplete = true,
         .sourcePointCount = 19'000'000,
     };
     const std::vector<pci::PointFrameLayer> layers{{
-        .layer = {.id = pci::PointCloudLayerId{1}},
+        .layerId = pci::PointCloudLayerId{1},
         .snapshot = &snapshot,
     }};
 
@@ -211,6 +246,67 @@ TEST_CASE("completed small hierarchies retain a stable total-point budget",
     CHECK(*gpuLimited.current == 1'000'000);
 }
 
+TEST_CASE("point frame planning records effects without executing runtime work",
+          "[unit][renderer-planning][point-frame][architecture]")
+{
+    pci::PointCloudMetadata metadata;
+    metadata.sourcePointCount = 80;
+    metadata.sourceBounds = {
+        .minimum = {-1.0, -1.0, -1.0},
+        .maximum = {1.0, 1.0, 1.0},
+    };
+    auto source = std::make_shared<FailingHierarchySource>();
+    auto scene = std::make_shared<pci::PointDatasetRuntime>(
+        metadata, source, hierarchyRootPayload(), 1024 * 1024);
+    scene->markLoadingComplete();
+    const pci::PointDatasetRuntimeSnapshot snapshot = scene->snapshot();
+    const pci::PointDatasetRuntimeMetrics before = scene->hierarchyMetrics();
+
+    pci::PointFrameCoordinator coordinator;
+    const pci::PointFrameResult frame = coordinator.plan({
+        .layers = {hierarchyLayer(1, scene, snapshot)},
+        .camera = visibleCamera(),
+        .framePointBudget = 100,
+        .gpuByteBudget = 100 * sizeof(pci::GpuPoint),
+        .resident =
+            [](const pci::PointFrameBlockKey &) {
+                return true;
+            },
+    });
+
+    REQUIRE(frame.plan);
+    REQUIRE(frame.plan->nodeRequests.size() == 1);
+    CHECK_FALSE(frame.plan->nodeRequests.front().nodes.empty());
+    CHECK(frame.plan->nodeRequests.front().target.sourceId ==
+          scene->sourceId());
+    CHECK(frame.plan->nodeRequests.front().target.bindingGeneration ==
+          pci::BindingGeneration{1});
+    REQUIRE(frame.plan->trimRequests.size() == 1);
+    CHECK_FALSE(frame.plan->trimRequests.front().protectedNodes.empty());
+    const pci::PointDatasetRuntimeMetrics after = scene->hierarchyMetrics();
+    CHECK(after.decodeRequestsQueued == before.decodeRequestsQueued);
+    CHECK(after.decodeRequestsStarted == before.decodeRequestsStarted);
+    CHECK(after.cache.hits == before.cache.hits);
+    CHECK(after.cache.misses == before.cache.misses);
+    CHECK(after.cache.evictions == before.cache.evictions);
+    CHECK(source->loadCount.load() == 0);
+
+    REQUIRE_FALSE(frame.plan->decodedLookupEffects.empty());
+    const auto residentLookups = static_cast<std::uint64_t>(
+        std::ranges::count(frame.plan->decodedLookupEffects,
+                           true,
+                           &pci::PointFrameDecodedLookupEffect::resident));
+    for (const pci::PointFrameDecodedLookupEffect &effect :
+         frame.plan->decodedLookupEffects) {
+        scene->applyDecodedLookupEffect(effect.nodeId, effect.resident);
+    }
+    const pci::PointDatasetRuntimeMetrics applied = scene->hierarchyMetrics();
+    CHECK(applied.cache.hits == before.cache.hits + residentLookups);
+    CHECK(applied.cache.misses == before.cache.misses +
+                                      frame.plan->decodedLookupEffects.size() -
+                                      residentLookups);
+}
+
 TEST_CASE("point frame coordinator isolates a failed hierarchy layer",
           "[unit][renderer-planning][point-frame][failure]")
 {
@@ -220,18 +316,17 @@ TEST_CASE("point frame coordinator isolates a failed hierarchy layer",
         .minimum = {-1.0, -1.0, -1.0},
         .maximum = {1.0, 1.0, 1.0},
     };
-    auto failedScene = std::make_shared<pci::PointCloudScene>(
+    auto failedScene = std::make_shared<pci::PointDatasetRuntime>(
         metadata,
         std::make_shared<FailingHierarchySource>(),
         hierarchyRootPayload(),
         1024 * 1024);
     failedScene->markLoadingComplete();
-    const pci::PointCloudSceneSnapshot coarseSnapshot = failedScene->snapshot();
+    const pci::PointDatasetRuntimeSnapshot coarseSnapshot =
+        failedScene->snapshot();
     pci::PointFrameCoordinator coarseCoordinator;
     const pci::PointFrameResult coarseFrame = coarseCoordinator.plan({
-        .layers = {{.layer = {.id = pci::PointCloudLayerId{1},
-                              .scene = failedScene},
-                    .snapshot = &coarseSnapshot}},
+        .layers = {hierarchyLayer(1, failedScene, coarseSnapshot)},
         .camera = visibleCamera(),
         .framePointBudget = 100,
         .gpuByteBudget = 100 * sizeof(pci::GpuPoint),
@@ -250,20 +345,21 @@ TEST_CASE("point frame coordinator isolates a failed hierarchy layer",
         std::chrono::steady_clock::now() + std::chrono::seconds(1);
     while (failedScene->hierarchyError().empty() &&
            std::chrono::steady_clock::now() < deadline) {
+        failedScene->drainDecodeCompletions();
         std::this_thread::yield();
     }
     REQUIRE(failedScene->hierarchyError() == "fixture hierarchy failed");
 
     auto healthyScene =
-        std::make_shared<pci::PointCloudScene>(pci::PointCloudMetadata{});
+        std::make_shared<pci::PointDatasetRuntime>(pci::PointCloudMetadata{});
     healthyScene->addBlock(flatBlock(10));
     healthyScene->markLoadingComplete();
-    const pci::PointCloudSceneSnapshot failedSnapshot = failedScene->snapshot();
-    const pci::PointCloudSceneSnapshot healthySnapshot =
+    const pci::PointDatasetRuntimeSnapshot failedSnapshot =
+        failedScene->snapshot();
+    const pci::PointDatasetRuntimeSnapshot healthySnapshot =
         healthyScene->snapshot();
     const std::vector<pci::PointFrameLayer> layers{
-        {.layer = {.id = pci::PointCloudLayerId{1}, .scene = failedScene},
-         .snapshot = &failedSnapshot},
+        hierarchyLayer(1, failedScene, failedSnapshot),
         flatLayer(2, healthyScene, healthySnapshot),
     };
 

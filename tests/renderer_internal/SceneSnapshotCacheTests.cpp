@@ -1,4 +1,6 @@
-#include "renderer/rhi/SceneSnapshotCache.h"
+#include <pci/document/SceneDocument.h>
+#include <pci/rendering/SceneSnapshotCache.h>
+#include <pci/runtime/point/PointDatasetRuntime.h>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -25,19 +27,28 @@ pci::PointBlockPtr onePointBlock(const double x)
 
 struct PointDocument {
     pci::SceneDocumentSnapshotPtr snapshot;
-    pci::PointCloudScenePtr scene;
+    pci::SceneRuntimeSnapshotPtr runtime;
+    pci::PointDatasetRuntimePtr scene;
     pci::PointCloudLayerId layerId;
 };
 
 PointDocument pointDocument(const double x)
 {
     auto scene =
-        std::make_shared<pci::PointCloudScene>(pci::PointCloudMetadata{});
+        std::make_shared<pci::PointDatasetRuntime>(pci::PointCloudMetadata{});
     scene->addBlock(onePointBlock(x));
     auto document = std::make_shared<pci::SceneDocument>();
-    const pci::PointCloudLayerId layerId = document->addLayer(scene);
+    const pci::PointCloudLayerId layerId =
+        document->addLayer(scene->datasetView());
+    const auto layer = document->layer(layerId);
+    REQUIRE(layer);
+    pci::SceneRuntime runtime;
+    REQUIRE(runtime.attachPoint({.descriptor = layer->descriptor,
+                                 .runtime = scene,
+                                 .generation = layer->bindingGeneration}));
     return {
         .snapshot = document->snapshot(),
+        .runtime = runtime.snapshot(),
         .scene = std::move(scene),
         .layerId = layerId,
     };
@@ -48,7 +59,11 @@ TEST_CASE("scene snapshot cache reconciles membership and stable layer ids",
 {
     pci::SceneSnapshotCache cache;
     PointDocument first = pointDocument(1.0);
-    cache.setDocument(first.snapshot, true);
+    pci::SceneRuntime missingRuntime;
+    CHECK_THROWS_AS(
+        cache.setDocument(first.snapshot, missingRuntime.snapshot(), true),
+        std::invalid_argument);
+    cache.setDocument(first.snapshot, first.runtime, true);
 
     CHECK_FALSE(cache.snapshot(first.layerId));
     CHECK(cache.refresh().invalidatedRootPayloads.empty());
@@ -65,7 +80,9 @@ TEST_CASE("scene snapshot cache reconciles membership and stable layer ids",
     CHECK(unchanged.removed.empty());
 
     auto emptyDocument = std::make_shared<pci::SceneDocument>();
-    cache.setDocument(emptyDocument->snapshot(), false);
+    pci::SceneRuntime emptyRuntime;
+    cache.setDocument(
+        emptyDocument->snapshot(), emptyRuntime.snapshot(), false);
     CHECK(cache.refresh().invalidatedRootPayloads.empty());
     CHECK_FALSE(cache.snapshot(first.layerId));
     const auto removed =
@@ -90,7 +107,7 @@ TEST_CASE("scene snapshot cache coalesces wakes and ignores stale callbacks",
         });
 
     PointDocument first = pointDocument(1.0);
-    cache.setDocument(first.snapshot, true);
+    cache.setDocument(first.snapshot, first.runtime, true);
     static_cast<void>(cache.refresh());
     first.scene->addBlock(onePointBlock(2.0));
     first.scene->addBlock(onePointBlock(3.0));
@@ -108,7 +125,7 @@ TEST_CASE("scene snapshot cache coalesces wakes and ignores stale callbacks",
     // retired scene.
     PointDocument replacement = pointDocument(10.0);
     REQUIRE(replacement.layerId == first.layerId);
-    cache.setDocument(replacement.snapshot, false);
+    cache.setDocument(replacement.snapshot, replacement.runtime, false);
     dispatched.back()();
     CHECK(wakes == 1);
 
@@ -130,7 +147,7 @@ TEST_CASE("scene snapshot cache retries a rejected wake dispatch",
                            return false;
                        });
     PointDocument document = pointDocument(1.0);
-    cache.setDocument(document.snapshot, true);
+    cache.setDocument(document.snapshot, document.runtime, true);
     static_cast<void>(cache.refresh());
 
     document.scene->addBlock(onePointBlock(2.0));
@@ -142,13 +159,20 @@ TEST_CASE("scene snapshot cache reports color-generation invalidation",
           "[unit][renderer-internal][snapshot-cache][colorize]")
 {
     auto scene =
-        std::make_shared<pci::PointCloudScene>(pci::PointCloudMetadata{});
+        std::make_shared<pci::PointDatasetRuntime>(pci::PointCloudMetadata{});
     scene->addBlock(onePointBlock(1.0));
     auto document = std::make_shared<pci::SceneDocument>();
-    const pci::PointCloudLayerId layerId = document->addLayer(scene);
+    const pci::PointCloudLayerId layerId =
+        document->addLayer(scene->datasetView());
+    const auto layer = document->layer(layerId);
+    REQUIRE(layer);
+    pci::SceneRuntime runtime;
+    REQUIRE(runtime.attachPoint({.descriptor = layer->descriptor,
+                                 .runtime = scene,
+                                 .generation = layer->bindingGeneration}));
 
     pci::SceneSnapshotCache cache;
-    cache.setDocument(document->snapshot(), true);
+    cache.setDocument(document->snapshot(), runtime.snapshot(), true);
     static_cast<void>(cache.refresh());
     REQUIRE(cache.snapshot(layerId));
 
@@ -157,12 +181,12 @@ TEST_CASE("scene snapshot cache reports color-generation invalidation",
         {.rasterSourceId = pci::nextRasterSourceId(),
          .rasterSourcePath = "colors.tif",
          .decode = std::make_shared<pci::RasterDecodeParameters>()}));
-    cache.setDocument(document->snapshot(), false);
+    cache.setDocument(document->snapshot(), runtime.snapshot(), false);
     const pci::SceneSnapshotCache::RefreshResult changed = cache.refresh();
     CHECK(changed.invalidatedColors == std::vector{layerId});
     CHECK(changed.invalidatedRootPayloads.empty());
 
-    cache.setDocument(document->snapshot(), false);
+    cache.setDocument(document->snapshot(), runtime.snapshot(), false);
     CHECK(cache.refresh().invalidatedColors.empty());
 }
 

@@ -1,6 +1,6 @@
-#include "app/ApplicationConfig.h"
-#include "app/ApplicationOptions.h"
-#include "app/MemoryBudgetPolicy.h"
+#include <pci/desktop/config/ApplicationConfig.h>
+#include <pci/desktop/config/ApplicationOptions.h>
+#include <pci/desktop/config/MemoryBudgetPolicy.h>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -240,7 +240,7 @@ TEST_CASE("memory and cache resolution are deterministic",
     CHECK(rasterHeavyBudget.pointByteBudget < automaticBudget.pointByteBudget);
 
     CHECK(pci::pointPageCacheDirectory(QStringLiteral("/cache/pcinspector")) ==
-          std::filesystem::path("/cache/pcinspector/point-pages-v2"));
+          std::filesystem::path("/cache/pcinspector/point-pages-v3"));
     CHECK(pci::pointPageCacheDirectory({}).empty());
     CHECK(pci::pointPageCacheConfigurationDirectory(
               QStringLiteral("/config/pcinspector")) ==

@@ -1,10 +1,10 @@
 #include "fixtures/GdalRasterFixtureFactory.h"
-#include "import/gdal/GdalRasterDataset.h"
-#include "import/gdal/GdalRasterLoader.h"
-#include "import/gdal/GdalRasterSource.h"
-#include "import/gdal/GdalRuntime.h"
-#include "import/gdal/GdalSpatialReferenceComparator.h"
-#include "raster/RasterPointSampler.h"
+#include <pci/adapters/gdal/GdalRasterDataset.h>
+#include <pci/adapters/gdal/GdalRasterLoader.h>
+#include <pci/adapters/gdal/GdalRasterSource.h>
+#include <pci/adapters/gdal/GdalSpatialReferenceComparator.h>
+#include <pci/adapters/gdal/runtime/GdalRuntime.h>
+#include <pci/raster/RasterPointSampler.h>
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -632,6 +632,15 @@ TEST_CASE("raster import reports a missing source with the driver message",
           "[component][gdal]")
 {
     CHECK_THROWS_AS(load("no-such-raster-file.tif"), pci::RasterImportError);
+    try {
+        static_cast<void>(load("no-such-raster-file.tif"));
+        FAIL("expected the missing raster source to fail");
+    } catch (const pci::RasterImportError &error) {
+        CHECK(
+            std::string(error.what())
+                .starts_with(
+                    "Could not open raster source 'no-such-raster-file.tif'"));
+    }
 }
 
 TEST_CASE("raster import compares CRS without reprojecting",
@@ -973,4 +982,11 @@ TEST_CASE("this build can open the catalog it was given",
               .empty());
     CHECK(pci::openRasterDataset(fixtures().catalog) != nullptr);
     CHECK(pci::openRasterDataset(fixtures().vrtMosaic) != nullptr);
+
+    pci::GdalDatasetOpenResult raster =
+        pci::tryOpenGdalDataset(fixtures().rgb, pci::GdalDatasetKind::Raster);
+    REQUIRE(raster.dataset);
+    pci::GdalDatasetOpenResult vector =
+        pci::tryOpenGdalDataset(fixtures().rgb, pci::GdalDatasetKind::Vector);
+    CHECK_FALSE(vector.dataset);
 }
