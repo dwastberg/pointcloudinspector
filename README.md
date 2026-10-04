@@ -1,249 +1,162 @@
 # Point Cloud Inspector
 
-Point Cloud Inspector is a cross-platform desktop viewer for point-cloud data.
-It is built with C++23, Qt 6, PDAL, and GDAL.
+Point Cloud Inspector is a desktop application for viewing and inspecting point
+clouds alongside raster imagery, elevation data, and vector overlays on Linux,
+Windows, and macOS.
 
 ## Features
 
-- Open mixed batches of point clouds, vector layers, and raster layers from a
-  file dialog, the command line, or by dragging files onto the window.
-- Navigate large datasets with GPU-accelerated rendering and bounded CPU and
-  GPU caches.
-- Color points by stored RGB, coordinates, intensity, classification, or
-  return information using the included CPT color maps.
-- Inspect layer metadata and point-cloud statistics, filter LAS
-  classifications, and adjust point size and eye-dome lighting.
-- Measure 3D, horizontal, and vertical distances between rendered points.
-- Import GDAL/OGR-readable point, line, and polygon layers as styled planar
-  overlays. Vector data is not reprojected or draped over the point cloud.
-- Import GDAL-readable raster imagery and terrain as georeferenced planar
-  layers with adjustable opacity and elevation. Rasters are not reprojected,
-  not draped, not lit by eye-dome lighting, and not pickable. Display quality
-  depends on the overviews the dataset provides; add them with `gdaladdo`.
+- Explore large point clouds with GPU rendering and on-demand loading.
+- Color points by RGB, coordinates, intensity, classification, or return
+  information, with built-in color maps and LAS classification filters.
+- Inspect layer metadata and point-cloud statistics, adjust point size, and
+  improve depth perception with eye-dome lighting (**Depth enhancement**).
+- Navigate in 3D, switch between perspective and orthographic views, or use a
+  locked top-down **2D Map View**.
+- Measure 3D, horizontal, and vertical distances between visible points.
+- Display raster imagery and styled vector overlays alongside point clouds.
+- View eligible elevation rasters as 3D surfaces with vertical exaggeration,
+  surface shading, and adjustable color ramps.
+- Transfer a raster's displayed colors to a point cloud and restore the original
+  colors when needed.
 
-## Disk storage cleanup
+## Getting started
 
-Open **Settings → Disk Storage** to see estimated file sizes for point-cloud
-caches, temporary working files, and legacy storage. **Refresh** rescans usage;
-**Open Folder** shows each storage location.
+1. Choose **File → Open Files…**, drag files onto the window, or pass filenames
+   on the command line. You can open several files of different types together.
+2. Select a layer to inspect its properties and adjust its appearance. Use the
+   layer controls to show, hide, isolate, or remove layers.
+3. Press **F** to fit all visible layers. Left-drag to orbit, right-drag to pan,
+   and scroll to zoom toward the cursor. Double-click to set the orbit pivot.
+4. Press **M** to measure: hover to snap to a visible point, then click two
+   endpoints. **Escape** clears the measurement; **N** returns to navigation.
 
-**Clean unused files** runs in the background and keeps files used by open
-datasets, imports, colorization, or another app instance. Source datasets and
-settings are preserved. Cleanup takes effect immediately; cancelling Settings
-does not restore deleted files. Clearing a reusable cache makes the next import
-rebuild it.
+In 3D, **W/A/S/D** move the camera and **Q/E** move down/up. Hold **Shift** for
+faster movement or **Alt** for fine movement. Press **7** for a top-down view.
+In **2D Map View**, left-drag pans and the camera stays top-down.
+Open **Help → Viewport Controls** for the controls reference.
 
-**Clean legacy files…** handles older storage that cannot always identify its
-owner. Close other app instances and check the confirmation before cleaning it.
-Known active files are still protected. Errors and incomplete scans are shown
-in the dialog; reported sizes estimate file contents, not physical disk blocks.
+### Supported data
 
-New point caches use `point-pages-v3` so older app versions cannot bypass the
-cleanup ownership protocol. Existing `point-pages-v2` caches remain visible as
-legacy storage; the first import in the new version rebuilds its cache.
+| Data | Supported sources |
+|---|---|
+| Point clouds | LAS, LAZ, COPC (`.copc.laz`), and EPT (`ept.json`) |
+| Vectors | GeoPackage, GeoJSON/JSON, Shapefile, KML, GML, FlatGeobuf, and DXF |
+| Rasters | TIFF/GeoTIFF/COG, VRT, GTI tile catalogs, IMG, JPEG 2000, PNG, and JPEG |
 
-## Building
+Format support depends on the PDAL and GDAL/OGR drivers available in the build.
+GeoPackage files open as vector data, including `.gti.gpkg`; raster catalog
+routing recognizes `.gti`, `.gti.fgb`, and `.gti.shp`.
 
-### Requirements
+Layers use their source coordinates without automatic reprojection. Use matching
+coordinate systems for aligned overlays and raster colorization. Vector points,
+lines, and polygons appear as styled planar overlays and do not follow terrain.
+Measurements snap to rendered point-cloud points, not raster or vector layers.
 
-- CMake 3.24 or newer
-- clang-format 22.1.8 for formatting checks (format targets reject a different version)
-- A C++23 compiler: GCC 12+, Clang 16+, AppleClang 15+, or MSVC 19.33+
-- Qt 6.7 or newer, including its private GUI headers and ShaderTools
-- PDAL 2.10 or newer
-- GDAL 3.9 or newer, built with the GTI raster tile-index driver and at least
-  one index format (GeoPackage, FlatGeobuf, or ESRI Shapefile)
+### Raster imagery and terrain
 
-A version floor is not a driver guarantee, so check what a given build actually
-has rather than inferring it from the version:
+Select a raster layer to change opacity and elevation offset. Continuous
+single-band rasters also offer a display range and color ramp. Eligible elevation
+rasters expose **Terrain rendering → Mode → Surface (true elevation)**, with
+controls for vertical exaggeration and surface shading when supported by the
+graphics device. The raster remains flat while its exact elevation range is
+being analyzed.
 
-```sh
-pcinspector --gdal-capabilities
-```
+Elevation values are used without implicit unit conversion. For meaningful
+relief, use a projected coordinate system with horizontal and vertical units that
+agree. Imagery is displayed on a plane; it is not draped over other layers.
 
-It prints the GDAL version and each raster driver's availability, and exits
-non-zero when catalog import is unavailable. The packaging jobs run it against
-the built application for exactly that reason: a package ships its own GDAL,
-not the developer machine's.
+Raster tiles load as you navigate. When suitable source overviews are missing,
+the application uses an automatic low-resolution preview. Adding overviews to
+the source improves zoomed-out display and navigation.
 
-Clone the repository and initialize its submodules:
+### Color a point cloud from a raster
 
-```sh
-git clone https://github.com/dwastberg/pointcloudinspector.git
-cd pointcloudinspector
-git submodule update --init --recursive
-```
+Open both layers, select the point cloud, and choose **Layer → Colorize from
+Raster…**. Select the raster and review the memory and temporary-disk estimate
+before starting. The operation uses the raster's displayed colors; only opaque
+pixels change points, and unmatched points retain their source colors.
+Use **Revert to Source Colors** to restore the original colors.
 
-Configure and build a development version, then run the tests:
+## Performance and disk storage
 
-```sh
-cmake --preset development
-cmake --build --preset development --parallel
-ctest --preset development
-```
+Open **Settings** to adjust point and raster memory budgets. Automatic point CPU
+memory budgeting is enabled by default. Point buffers, raster tiles, and GDAL's
+own raster cache have separate budgets; these are not a cap on total application
+memory. Raster worker-count changes take effect after restarting the application.
 
-Build an optimized version without the test suite:
+LAS/LAZ files loaded through the persistent page cache, along with native COPC
+and EPT hierarchies, retain all source points regardless of the maximum-points
+setting. Their decoded pages and GPU buffers load on demand within the configured
+budgets. Reusable disk caches speed up later imports.
 
-```sh
-cmake --preset release
-cmake --build --preset release --parallel
-```
+Under **Settings → Disk Storage**, **Refresh** rescans estimated usage and
+**Open Folder** opens a storage location. **Clean unused files** removes unused
+caches and working files in the background, protecting active files, source
+datasets, and settings. Removed caches are rebuilt when needed.
 
-Optionally install it to a local directory:
-
-```sh
-cmake --install build/release --config Release --prefix dist
-```
-
-If CMake cannot find a dependency, provide its installation prefix through
-`CMAKE_PREFIX_PATH`, `Qt6_ROOT`, or `PDAL_ROOT`.
-
-## Architecture and validation
-
-Register modules with `pci_add_module(directory target)` in `src/CMakeLists.txt`.
-That registry supplies architecture and public-header checks. Dependency policies
-remain independently declared in `cmake/PciArchitecture.cmake`.
-
-See the [ownership and extension guide](docs/refactor-architecture.md) for module
-boundaries, operation lifetimes, cache eviction and admitted colorization scratch.
-The [refactor progress ledger](PCI_REFACTOR_PROGRESS.md) records executed checks
-and remaining qualification limitations.
-
-```sh
-cmake --build --preset development --target header-self-containment format-check
-ctest --preset development -L architecture --output-on-failure --no-tests=error
-ctest --preset development -R 'qualification' --output-on-failure --no-tests=error
-cmake -DPCINSPECTOR_LOCAL_CHECK_JOBS=4 -P cmake/RunFullChecks.cmake
-```
-
-Native GPU tests use the `native-gpu` preset on a host with a working native
-graphics/display environment. Remote Linux/Windows/macOS CI execution is separate
-from locally passing checks.
-
-CI and packaging batch ordinary Catch2 cases by executable and run three CTest
-workers (two for ASan/UBSan and TSan). Console failures still name the case;
-case-level JUnit reports are written to `build/<preset>/Testing/Reports/` and
-uploaded with CTest diagnostics. Batch CTest names and labels identify the
-executable, so `ctest --preset ci -R pcinspector_document_tests` selects that
-suite. Use `ctest --preset ci --rerun-failed` to rerun failed suites, or run a
-test executable directly with a case name or Catch2 tag, for example:
-
-```sh
-build/ci/tests/pcinspector_document_tests '[snapshot]'
-```
-
-The development preset retains individual case discovery and tag labels. Set
-`-DPCINSPECTOR_BATCH_TESTS=OFF` when configuring another preset to use the same
-granular CTest filtering. GPU and raster scale cases always use separate
-processes; long stress cases also run serially. Sanitizer default builds omit
-duplicate header self-containment compilation; the explicit
-`header-self-containment` target remains available.
-
-Long stress tests are **off by default in CI and packaging**. Ordinary CI keeps
-smaller multi-tile raster bake/cancellation tests and the inexpensive catalog
-and benchmark smoke tests. Full-scale catalog churn, sparse BigTIFF streaming,
-million-point bakes and the large residency benchmark carry the `long-stress`
-label. Enable **Run workflow → run_long_stress_tests** in GitHub Actions to run
-them on all CI configurations; Linux must still pass before Windows starts,
-and Windows must pass before macOS starts. The qualification checks run once
-within each configuration's CTest suite.
-
-Development retains long stress coverage. `RunFullChecks.cmake` reuses existing
-builds and runs ordinary checks by default. Set
-`-DPCINSPECTOR_LOCAL_CHECK_CLEAN=ON` for fresh builds and
-`-DPCINSPECTOR_LOCAL_CHECK_LONG_STRESS=ON` to include long stress tests.
-To run just that coverage locally, or enable it for a sanitizer build:
-
-```sh
-cmake --preset development
-cmake --build --preset development --parallel 3
-ctest --preset long-stress
-
-cmake --preset asan-ubsan -DPCINSPECTOR_ENABLE_LONG_STRESS_TESTS=ON
-cmake --build --preset asan-ubsan --parallel 3
-ctest --preset asan-ubsan -L '^long-stress$'
-```
-
-With `PCINSPECTOR_ENABLE_LONG_STRESS_TESTS=OFF`, the long cases are not registered
-with CTest and the large benchmark fixture is not generated. Running a test
-executable directly bypasses CTest selection; use `'~[long-stress]'` to exclude
-long cases when invoking the raster stress executable yourself.
-
-### Developer tools
-
-With `PCINSPECTOR_BUILD_TOOLS=ON`, default builds include the residency and
-multi-file benchmarks used by CTest, plus `pci_qualification_diff` for comparing
-reports. `pci_load_bench` and `pci_raster_colorize_bench` are manual profiling
-targets; build them explicitly when needed. The optimized `profiling` build
-preset builds the application and all five tools:
-
-```sh
-cmake --preset profiling
-cmake --build --preset profiling --parallel 3
-```
-
-### CLion formatting
-
-Use external **clang-format 22.1.8** and the repository `.clang-format`. That version
-is pinned in CI dependency environments and is available for Linux, Windows and
-macOS in the [conda-forge package files](https://anaconda.org/channels/conda-forge/packages/clang-format/files).
-Set `PCINSPECTOR_CLANG_FORMAT_EXECUTABLE` when the pinned executable is not first
-on PATH; on the current macOS development host it is
-`/opt/homebrew/bin/clang-format`.
-
-In CLion Settings, enable ClangFormat under Editor → Code Style → C/C++, select
-the external executable under the ClangFormat tool settings, and use the project
-configuration file. Under Tools → Actions on Save, enable Reformat code for C/C++
-and select the whole file rather than changed lines. Verify the selected binary
-with `clang-format --version`; the bundled IDE formatter may be a different
-version. Reload the CMake project after module moves. Run `format-check` to verify
-that IDE formatting agrees with CI.
+Cleanup takes effect immediately; cancelling Settings does not undo it. For
+**Clean legacy files…**, close other app instances and review the confirmation,
+since older storage cannot always identify its owner.
 
 ## Command line
 
-```text
-pcinspector [options] [files...]
+```sh
+pcinspector survey.copc.laz imagery.tif boundaries.gpkg
+pcinspector "tiles/*.laz"
 ```
 
-`files` may mix supported point-cloud, vector, and raster sources. Multiple
-files and wildcard patterns (`*`, `?`, and `[set]`) are supported. GeoPackage
-sources are opened as vector data in the initial unified workflow.
+Pass one or more filenames to open them together. You can mix supported point
+clouds, rasters, and vectors, and use wildcard patterns (`*`, `?`, and `[set]`) in
+filenames.
 
-| Argument | Description | Default |
-|---|---|---:|
-| `-h`, `--help` | Show command-line help. | |
-| `--help-all` | Show application and Qt command-line options. | |
-| `-v`, `--version` | Show the application version. | |
-| `-p`, `--points <count>` | Create a synthetic point cube with the requested number of points. | off |
-| `--max-points <count>` | Maximum points retained for a non-paged point-cloud source. Paged and hierarchical sources retain all points. | `10000000` |
-| `--cpu-cache-mb <MiB\|auto>` | CPU budget shared by retained previews and decoded hierarchy pages. | `auto` |
-| `--gpu-cache-mb <MiB>` | GPU point-buffer residency budget. | `512` |
-| `--raster-cpu-cache-mb <MiB>` | Decoded raster tile budget, separate from the point caches. | `256` |
-| `--raster-gpu-cache-mb <MiB>` | Raster tile texture budget on the graphics device. | `256` |
-| `--gdal-cache-mb <MiB>` | GDAL block cache, the third allocator holding raster pixels. | `128` |
-| `--raster-workers <count>` | Raster tile read threads, 1-8. Applies at startup. | `2` |
-| `--graphics-api <api>` | Select `auto`, `metal`, `vulkan`, `d3d11`, `d3d12`, or `opengl`. | `auto` |
-| `--gdal-capabilities` | Print this build's GDAL version and raster driver availability, then exit. | |
-| `--smoke-test` | Exit after three rendered frames. | off |
+| Option | Purpose |
+|---|---|
+| `-h`, `--help` | Show command-line help. |
+| `-v`, `--version` | Show the application version. |
 
-Example:
+## Building from source
+
+To build the application yourself, you need:
+
+- CMake 3.24 or newer.
+- A C++23 compiler: GCC 12+, Clang 16+, AppleClang 15+, or MSVC 19.33+, with a
+  standard library supporting `std::expected`, `std::jthread`, and `std::stop_token`.
+- Qt 6.7 or newer, including Widgets, private GUI headers, and ShaderTools.
+- PDAL 2.10 or newer and GDAL 3.9 or newer. Raster catalogs require GDAL's GTI
+  driver and a suitable index driver, such as FlatGeobuf or ESRI Shapefile.
 
 ```sh
-pcinspector --cpu-cache-mb auto --gpu-cache-mb 1024 \
-  survey.copc.laz
+git clone --recurse-submodules https://github.com/dwastberg/pointcloudinspector.git
+cd pointcloudinspector
+cmake --preset release
+cmake --build --preset release --parallel
+cmake --install build/release --config Release --prefix dist
 ```
 
-LAS/LAZ files routed through the persistent page cache, and native COPC/EPT
-hierarchies, preserve their complete source regardless of `--max-points`.
-Their decoded CPU and GPU working sets remain bounded by the cache options.
+The release preset builds the optimized application without tests or developer
+tools. The local installation places the executable in `dist/bin` on Linux and
+Windows, or `Point Cloud Inspector.app` in `dist` on macOS. It does not bundle
+runtime dependencies; keep the required libraries available. The application
+must run with the same Qt build it was compiled against.
 
-Builds configured with `PCINSPECTOR_ENABLE_DIAGNOSTIC_UI=ON` also provide:
+If dependencies are not found, supply their installation prefixes through
+`CMAKE_PREFIX_PATH`, `Qt6_ROOT`, or `PDAL_ROOT`. Build requirements and presets
+are defined in [CMakeLists.txt](CMakeLists.txt) and
+[CMakePresets.json](CMakePresets.json).
 
-| Argument | Description |
-|---|---|
-| `--gpu-validation` | Enable the graphics backend debug or validation layer. |
-| `--qualification-report <path>` | Write load and rendering qualification metrics as JSON after the display is ready. |
-| `--qualification-exit` | Exit after writing the qualification report. Requires `--qualification-report`. |
+## Architecture overview
+
+The C++23 application uses Qt Widgets for its desktop interface. A session
+coordinates scene metadata, layer controls, and background operations. Separate
+point, raster, and scene runtimes manage streamed data and caches; frame planning
+and rendering use Qt's QRhi graphics abstraction. PDAL handles point-cloud input,
+GDAL/OGR handle raster and vector input, and local storage adapters manage caches
+and temporary files.
+
+The current module layout is listed in [src/CMakeLists.txt](src/CMakeLists.txt),
+with dependency boundaries in
+[cmake/PciArchitecture.cmake](cmake/PciArchitecture.cmake).
 
 ## License
 
