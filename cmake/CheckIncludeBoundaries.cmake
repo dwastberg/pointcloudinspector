@@ -978,12 +978,14 @@ foreach(source IN LISTS project_sources)
                relative STREQUAL
                    "tests/component/GdalRasterImportTests.cpp" OR
                relative STREQUAL
+                   "tests/component/GdalRuntimeTests.cpp" OR
+               relative STREQUAL
                    "tests/stress/RasterLargeSourceTests.cpp")
                 set(allowed TRUE)
             endif()
             if(NOT allowed)
                 list(APPEND violations
-                     "${relative}: GDAL/OGR include is outside the OGR adapter")
+                     "${relative}: GDAL/OGR include is outside GDAL/OGR adapters and approved tests")
             endif()
         endif()
 
