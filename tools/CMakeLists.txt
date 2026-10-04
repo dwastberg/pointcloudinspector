@@ -1,5 +1,5 @@
 # Decode-only profiling helper. Build in Release for meaningful measurements.
-add_executable(pci_load_bench pci_load_bench.cpp)
+add_executable(pci_load_bench EXCLUDE_FROM_ALL pci_load_bench.cpp)
 target_link_libraries(pci_load_bench PRIVATE
         pcinspector::app_config
         pcinspector::import_pdal pcinspector::operations
@@ -34,7 +34,7 @@ pci_configure_target(pci_multifile_bench)
 
 # Named, non-default release acceptance for raster-to-point colorization. The
 # default invocation processes 22.9M stored hierarchy samples.
-add_executable(pci_raster_colorize_bench pci_raster_colorize_bench.cpp)
+add_executable(pci_raster_colorize_bench EXCLUDE_FROM_ALL pci_raster_colorize_bench.cpp)
 target_link_libraries(pci_raster_colorize_bench PRIVATE
         pcinspector::operation_local
         pcinspector::operations)

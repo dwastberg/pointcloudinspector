@@ -1241,6 +1241,7 @@ TEST_CASE("PDAL mapping rounds RGB channels at byte conversion boundaries",
     constexpr std::array<std::uint32_t, 5> colors{
         0xff000000U, 0xff000000U, 0xff010101U, 0xff808080U, 0xffffffffU};
     std::vector<pci::test::FixturePoint> points;
+    points.reserve(channels.size());
     for (std::size_t index = 0; index < channels.size(); ++index) {
         points.push_back({1000.0 + static_cast<double>(index),
                           2000.0,
@@ -1344,12 +1345,16 @@ TEST_CASE("local page sorting merges multiple runs without losing points",
 {
     const FixtureDirectory fixture;
     std::vector<pci::test::FixturePoint> points;
+    points.reserve(256);
     for (std::uint32_t index = 0; index < 256; ++index) {
         // An odd multiplier permutes all 256 grid indices.
         const auto value = (index * 73U) % 256U;
-        points.push_back({1000.0 + value % 8U,
-                          2000.0 + (value / 8U) % 8U,
-                          10.0 + value / 64U,
+        const auto gridX = value % 8U;
+        const auto gridY = (value / 8U) % 8U;
+        const auto gridZ = value / 64U;
+        points.push_back({1000.0 + static_cast<double>(gridX),
+                          2000.0 + static_cast<double>(gridY),
+                          10.0 + static_cast<double>(gridZ),
                           65535,
                           65535,
                           65535,
@@ -1420,6 +1425,7 @@ TEST_CASE("PDAL statistics detect an isolated point in an asymmetric source",
 {
     const FixtureDirectory fixture;
     std::vector<pci::test::FixturePoint> points;
+    points.reserve(21);
     for (int index = 0; index < 20; ++index) {
         points.push_back(
             {static_cast<double>(index), 0, 0, 0, 0, 0, 0, 0, 1, 1});

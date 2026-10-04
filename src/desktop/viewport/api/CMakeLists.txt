@@ -13,6 +13,5 @@ target_link_libraries(pcinspector_viewport_api INTERFACE
         pcinspector::document
         pcinspector::project_options
         pcinspector::scene_runtime
-        Qt6::Core)
-
-target_link_libraries(pcinspector_viewport_api INTERFACE pcinspector::renderer_planning)
+        Qt6::Core
+        pcinspector::renderer_planning)

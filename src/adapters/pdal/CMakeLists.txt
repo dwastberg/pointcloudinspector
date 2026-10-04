@@ -33,11 +33,6 @@ target_link_libraries(pcinspector_import_pdal
         pcinspector::secure_storage
         PRIVATE
         Qt6::Core
-        PDAL::pdalcpp)
+        PDAL::pdalcpp
+        pcinspector::platform)
 pci_configure_target(pcinspector_import_pdal)
-
-# The single owner of the GDAL::GDAL edge. Both the raster and OGR adapters
-# reach GDAL through this target so driver registration, error capture, and the
-# process-global block cache have exactly one home.
-
-target_link_libraries(pcinspector_import_pdal PRIVATE pcinspector::platform)

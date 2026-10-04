@@ -47,7 +47,7 @@ legacy storage; the first import in the new version rebuilds its cache.
 ### Requirements
 
 - CMake 3.24 or newer
-- clang-format 22.1.8 for formatting checks (CMake rejects a different detected version)
+- clang-format 22.1.8 for formatting checks (format targets reject a different version)
 - A C++23 compiler: GCC 12+, Clang 16+, AppleClang 15+, or MSVC 19.33+
 - Qt 6.7 or newer, including its private GUI headers and ShaderTools
 - PDAL 2.10 or newer
@@ -100,6 +100,10 @@ If CMake cannot find a dependency, provide its installation prefix through
 
 ## Architecture and validation
 
+Register modules with `pci_add_module(directory target)` in `src/CMakeLists.txt`.
+That registry supplies architecture and public-header checks. Dependency policies
+remain independently declared in `cmake/PciArchitecture.cmake`.
+
 See the [ownership and extension guide](docs/refactor-architecture.md) for module
 boundaries, operation lifetimes, cache eviction and admitted colorization scratch.
 The [refactor progress ledger](PCI_REFACTOR_PROGRESS.md) records executed checks
@@ -107,9 +111,8 @@ and remaining qualification limitations.
 
 ```sh
 cmake --build --preset development --target header-self-containment format-check
-cmake -DBUILD_DIR=build/development -DCTEST_CONFIGURATION=Debug -P tests/cmake/CheckQualificationTestRegistration.cmake
 ctest --preset development -L architecture --output-on-failure --no-tests=error
-ctest --preset development -R '^qualification_diff_' --output-on-failure --no-tests=error
+ctest --preset development -R 'qualification' --output-on-failure --no-tests=error
 cmake -DPCINSPECTOR_LOCAL_CHECK_JOBS=4 -P cmake/RunFullChecks.cmake
 ```
 
@@ -145,8 +148,11 @@ them on all CI configurations; Linux must still pass before Windows starts,
 and Windows must pass before macOS starts. The qualification checks run once
 within each configuration's CTest suite.
 
-Development and `RunFullChecks.cmake` retain long stress coverage. To run just
-that coverage locally, or enable it for a sanitizer build:
+Development retains long stress coverage. `RunFullChecks.cmake` reuses existing
+builds and runs ordinary checks by default. Set
+`-DPCINSPECTOR_LOCAL_CHECK_CLEAN=ON` for fresh builds and
+`-DPCINSPECTOR_LOCAL_CHECK_LONG_STRESS=ON` to include long stress tests.
+To run just that coverage locally, or enable it for a sanitizer build:
 
 ```sh
 cmake --preset development
@@ -162,6 +168,19 @@ With `PCINSPECTOR_ENABLE_LONG_STRESS_TESTS=OFF`, the long cases are not register
 with CTest and the large benchmark fixture is not generated. Running a test
 executable directly bypasses CTest selection; use `'~[long-stress]'` to exclude
 long cases when invoking the raster stress executable yourself.
+
+### Developer tools
+
+With `PCINSPECTOR_BUILD_TOOLS=ON`, default builds include the residency and
+multi-file benchmarks used by CTest, plus `pci_qualification_diff` for comparing
+reports. `pci_load_bench` and `pci_raster_colorize_bench` are manual profiling
+targets; build them explicitly when needed. The optimized `profiling` build
+preset builds the application and all five tools:
+
+```sh
+cmake --preset profiling
+cmake --build --preset profiling --parallel 3
+```
 
 ### CLion formatting
 

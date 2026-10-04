@@ -85,7 +85,6 @@ pci_add_catch_test_target(pcinspector_document_tests
         unit/SceneDocumentTests.cpp
         unit/SceneDocumentVectorTests.cpp
         unit/SceneDocumentRasterTests.cpp
-        INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}"
         LIBRARIES
         pcinspector::document
         Qt6::Core)
@@ -102,7 +101,6 @@ pci_add_catch_test_target(pcinspector_operations_tests
                 unit/StatisticsOperationTests.cpp
                 unit/StorageMaintenanceOperationTests.cpp
                 unit/PointDatasetIngestionTests.cpp
-        INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}"
         LIBRARIES
         pcinspector::operations
         Qt6::Core)
@@ -151,7 +149,6 @@ pci_add_catch_test_target(pcinspector_runtime_resources_tests
         SOURCES
         unit/CompletionExecutorTests.cpp
         unit/RuntimeResourcesTests.cpp
-        INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}"
         LIBRARIES pcinspector::runtime_resources)
 
 pci_add_catch_test_target(pcinspector_operation_api_tests
@@ -216,8 +213,6 @@ pci_add_catch_test_target(pcinspector_import_pdal_tests
         SOURCES
         fixtures/PdalFixtureFactory.cpp
         component/PdalImportTests.cpp
-        INCLUDE_DIRECTORIES
-        "${CMAKE_CURRENT_SOURCE_DIR}"
         LIBRARIES
         pcinspector::import_pdal
         pcinspector::operations
@@ -235,8 +230,6 @@ pci_add_catch_test_target(pcinspector_import_gdal_tests
         SOURCES
         fixtures/GdalRasterFixtureFactory.cpp
         component/GdalRasterImportTests.cpp
-        INCLUDE_DIRECTORIES
-        "${CMAKE_CURRENT_SOURCE_DIR}"
         LIBRARIES
         pcinspector::import_gdal
         GDAL::GDAL
@@ -253,8 +246,6 @@ pci_add_catch_test_target(pcinspector_raster_stress_tests
         fixtures/GdalRasterFixtureFactory.cpp
         stress/RasterLargeSourceTests.cpp
         stress/RasterPointColorizeScaleTests.cpp
-        INCLUDE_DIRECTORIES
-        "${CMAKE_CURRENT_SOURCE_DIR}"
         LIBRARIES
         pcinspector::platform
         pcinspector::import_gdal
@@ -275,37 +266,37 @@ pci_add_catch_test_target(pcinspector_import_ogr_tests
         SOURCES
         fixtures/OgrFixtureFactory.cpp
         component/OgrVectorImportTests.cpp
-        INCLUDE_DIRECTORIES
-        "${CMAKE_CURRENT_SOURCE_DIR}"
         LIBRARIES
         pcinspector::import_ogr
         pcinspector::gdal_runtime
         GDAL::GDAL
         Qt6::Core)
 
-add_executable(pcinspector_fixture_generator
-        fixtures/PdalFixtureFactory.cpp
-        generate_pdal_fixtures.cpp)
-target_include_directories(pcinspector_fixture_generator PRIVATE
-        "${CMAKE_CURRENT_SOURCE_DIR}")
-target_link_libraries(pcinspector_fixture_generator PRIVATE
-        PDAL::pdalcpp)
-set_target_properties(pcinspector_fixture_generator PROPERTIES
-        FOLDER Tests)
-pci_configure_target(pcinspector_fixture_generator)
+if(TARGET pci_residency_bench OR TARGET pci_multifile_bench OR PCINSPECTOR_ENABLE_GPU_TESTS)
+    add_executable(pcinspector_fixture_generator
+            fixtures/PdalFixtureFactory.cpp
+            generate_pdal_fixtures.cpp)
+    target_include_directories(pcinspector_fixture_generator PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(pcinspector_fixture_generator PRIVATE
+            PDAL::pdalcpp)
+    set_target_properties(pcinspector_fixture_generator PROPERTIES
+            FOLDER Tests)
+    pci_configure_target(pcinspector_fixture_generator)
 
-set(PCINSPECTOR_TEST_DATA_DIR "${CMAKE_CURRENT_BINARY_DIR}/data")
-set(pcinspector_fixture_arguments "${PCINSPECTOR_TEST_DATA_DIR}")
-if(PCINSPECTOR_ENABLE_LONG_STRESS_TESTS)
-    list(APPEND pcinspector_fixture_arguments --long-stress)
+    set(PCINSPECTOR_TEST_DATA_DIR "${CMAKE_CURRENT_BINARY_DIR}/data")
+    set(pcinspector_fixture_arguments "${PCINSPECTOR_TEST_DATA_DIR}")
+    if(PCINSPECTOR_ENABLE_LONG_STRESS_TESTS)
+        list(APPEND pcinspector_fixture_arguments --long-stress)
+    endif()
+    add_test(NAME generate_pdal_fixtures
+            COMMAND $<TARGET_FILE:pcinspector_fixture_generator>
+                    ${pcinspector_fixture_arguments})
+    unset(pcinspector_fixture_arguments)
+    set_tests_properties(generate_pdal_fixtures PROPERTIES
+            FIXTURES_SETUP pdal_point_files
+            LABELS "component;pdal")
 endif()
-add_test(NAME generate_pdal_fixtures
-        COMMAND $<TARGET_FILE:pcinspector_fixture_generator>
-                ${pcinspector_fixture_arguments})
-unset(pcinspector_fixture_arguments)
-set_tests_properties(generate_pdal_fixtures PROPERTIES
-        FIXTURES_SETUP phase1_point_files
-        LABELS "component;pdal")
 
 if(TARGET pci_residency_bench)
     add_test(NAME residency_bench_fixture_smoke
@@ -315,7 +306,7 @@ if(TARGET pci_residency_bench)
                     --passes 1
                     "${PCINSPECTOR_TEST_DATA_DIR}/fixture.copc.laz")
     set_tests_properties(residency_bench_fixture_smoke PROPERTIES
-            FIXTURES_REQUIRED phase1_point_files
+            FIXTURES_REQUIRED pdal_point_files
             PASS_REGULAR_EXPRESSION
                 "RESIDENCY_RESULT status=insufficient_hierarchy.*bounded=1"
             LABELS "benchmark;component;hierarchy;stress"
@@ -330,7 +321,7 @@ if(TARGET pci_residency_bench)
                         --minimum-working-set-multiple 10
                         "${PCINSPECTOR_TEST_DATA_DIR}/residency-stress.copc.laz")
         set_tests_properties(residency_bench_local_hierarchy_stress PROPERTIES
-                FIXTURES_REQUIRED phase1_point_files
+                FIXTURES_REQUIRED pdal_point_files
                 PASS_REGULAR_EXPRESSION
                     "RESIDENCY_RESULT status=ok.*bounded=1.*cache_evictions=[1-9][0-9]*"
                 LABELS "benchmark;component;hierarchy;residency;stress;long-stress"
@@ -351,138 +342,32 @@ if(TARGET pci_multifile_bench)
                     "${PCINSPECTOR_TEST_DATA_DIR}/fixture.las"
                     "${PCINSPECTOR_TEST_DATA_DIR}/fixture.laz")
     set_tests_properties(multifile_bench_local_las_laz_smoke PROPERTIES
-            FIXTURES_REQUIRED phase1_point_files
+            FIXTURES_REQUIRED pdal_point_files
             PASS_REGULAR_EXPRESSION
                 "MULTIFILE_RESULT status=ok sources=2 previews=2.*bounded=1"
             LABELS "benchmark;component;local-pages;multi-file;stress"
             TIMEOUT 45)
 endif()
 
+pci_add_catch_test_target(pcinspector_qualification_tests
+        WITH_MAIN
+        SOURCES
+        unit/QualificationDiffTests.cpp
+        "${PROJECT_SOURCE_DIR}/tools/qualification/QualificationDiff.cpp"
+        INCLUDE_DIRECTORIES "${PROJECT_SOURCE_DIR}/tools"
+        LIBRARIES pcinspector::platform Qt6::Core)
+target_compile_definitions(pcinspector_qualification_tests PRIVATE
+        PCI_QUALIFICATION_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data/qualification")
+
 if(TARGET pci_qualification_diff)
-    set(pcinspector_qualification_directory
-        "${CMAKE_CURRENT_SOURCE_DIR}/data/qualification")
-    set(pcinspector_qualification_tolerances
-        "${pcinspector_qualification_directory}/tolerances.json")
-    set(pcinspector_qualification_runner
-        "${CMAKE_CURRENT_SOURCE_DIR}/cmake/RunQualificationDiffCheck.cmake")
-    set(pcinspector_qualification_registration_guard
-        "${CMAKE_CURRENT_SOURCE_DIR}/cmake/CheckQualificationTestRegistration.cmake")
-    set(pcinspector_qualification_registration_guard_test
-        "${CMAKE_CURRENT_SOURCE_DIR}/cmake/TestQualificationRegistrationGuard.cmake")
-    set(QUALIFICATION_FIXTURE_DIR "${pcinspector_qualification_directory}")
-    set(QUALIFICATION_RUNNER "${pcinspector_qualification_runner}")
-    set(QUALIFICATION_REGISTRATION_GUARD
-        "${pcinspector_qualification_registration_guard}")
-    set(QUALIFICATION_REGISTRATION_GUARD_TEST
-        "${pcinspector_qualification_registration_guard_test}")
-    include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/CheckQualificationTestInputs.cmake")
-    unset(QUALIFICATION_FIXTURE_DIR)
-    unset(QUALIFICATION_RUNNER)
-    unset(QUALIFICATION_REGISTRATION_GUARD)
-    unset(QUALIFICATION_REGISTRATION_GUARD_TEST)
-    foreach(report IN ITEMS
-            release-h-local-two-file.json
-            release-h-local-two-file-reopen.json
-            release-h-native-metal-final.json)
-        string(REPLACE ".json" "" report_name "${report}")
-        add_test(
-            NAME "qualification_diff_${report_name}_self"
+    add_test(NAME qualification_diff_cli_smoke
             COMMAND $<TARGET_FILE:pci_qualification_diff>
-                    "${pcinspector_qualification_directory}/${report}"
-                    "${pcinspector_qualification_directory}/${report}"
-                    "${pcinspector_qualification_tolerances}")
-        set_tests_properties(
-            "qualification_diff_${report_name}_self"
-            PROPERTIES LABELS "qualification;tools")
-    endforeach()
-
-    foreach(check IN ITEMS ignored regression mismatch missing)
-        if(check STREQUAL "ignored")
-            set(expected_exit 0)
-            set(expected_output "PASS first_point_any")
-        elseif(check STREQUAL "regression")
-            set(expected_exit 5)
-            set(expected_output "REGRESSION sampled_frame_p95")
-        elseif(check STREQUAL "mismatch")
-            set(expected_exit 4)
-            set(expected_output "WORKLOAD_MISMATCH gpu_budget_bytes")
-        else()
-            set(expected_exit 3)
-            set(expected_output "SCHEMA_ERROR candidate: required field 'frame_ms_p95'")
-        endif()
-        add_test(
-            NAME "qualification_diff_${check}_self_check"
-            COMMAND "${CMAKE_COMMAND}"
-                    "-DQUALIFICATION_DIFF=$<TARGET_FILE:pci_qualification_diff>"
-                    "-DBASELINE=${pcinspector_qualification_directory}/release-h-native-metal-final.json"
-                    "-DTOLERANCES=${pcinspector_qualification_tolerances}"
-                    "-DMODE=${check}"
-                    "-DOUTPUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/qualification-candidates/$<CONFIG>/${check}"
-                    "-DEXPECTED_EXIT=${expected_exit}"
-                    "-DEXPECTED_OUTPUT=${expected_output}"
-                    -P
-                    "${pcinspector_qualification_runner}")
-        set_tests_properties(
-            "qualification_diff_${check}_self_check"
-            PROPERTIES LABELS "qualification;tools")
-    endforeach()
-
-    add_test(
-        NAME qualification_test_registration
-        COMMAND "${CMAKE_COMMAND}"
-                "-DBUILD_DIR=${PROJECT_BINARY_DIR}"
-                "-DCTEST_CONFIGURATION=$<CONFIG>"
-                "-DCTEST_EXECUTABLE=${CMAKE_CTEST_COMMAND}"
-                -P "${pcinspector_qualification_registration_guard}")
-    set_tests_properties(
-        qualification_test_registration
-        PROPERTIES LABELS "qualification;tools")
-
-    foreach(guard_mode IN ITEMS valid zero missing unexpected disabled)
-        add_test(
-            NAME "qualification_registration_guard_${guard_mode}"
-            COMMAND "${CMAKE_COMMAND}"
-                    "-DMODE=${guard_mode}"
-                    "-DCHECK_SCRIPT=${pcinspector_qualification_registration_guard}"
-                    "-DCTEST_EXECUTABLE=${CMAKE_CTEST_COMMAND}"
-                    "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/qualification-registration-guard/$<CONFIG>"
-                    -P
-                    "${pcinspector_qualification_registration_guard_test}")
-        set_tests_properties(
-            "qualification_registration_guard_${guard_mode}"
-            PROPERTIES LABELS "qualification;tools;cmake")
-    endforeach()
-
-    foreach(missing_fixture IN ITEMS
-            tolerances.json
-            release-h-local-two-file.json
-            release-h-local-two-file-reopen.json
-            release-h-native-metal-final.json)
-        string(REPLACE ".json" "" missing_fixture_name
-               "${missing_fixture}")
-        add_test(
-            NAME "qualification_inputs_missing_${missing_fixture_name}"
-            COMMAND "${CMAKE_COMMAND}"
-                    "-DVALIDATOR=${CMAKE_CURRENT_SOURCE_DIR}/cmake/CheckQualificationTestInputs.cmake"
-                    "-DSOURCE_FIXTURE_DIR=${pcinspector_qualification_directory}"
-                    "-DRUNNER=${pcinspector_qualification_runner}"
-                    "-DREGISTRATION_GUARD=${pcinspector_qualification_registration_guard}"
-                    "-DREGISTRATION_GUARD_TEST=${pcinspector_qualification_registration_guard_test}"
-                    "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/qualification-inputs/$<CONFIG>"
-                    "-DMISSING_FILE=${missing_fixture}"
-                    -P
-                    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/TestQualificationInputs.cmake")
-        set_tests_properties(
-            "qualification_inputs_missing_${missing_fixture_name}"
-            PROPERTIES LABELS "qualification;tools;cmake")
-    endforeach()
-    unset(expected_exit)
-    unset(expected_output)
-    unset(pcinspector_qualification_runner)
-    unset(pcinspector_qualification_registration_guard)
-    unset(pcinspector_qualification_registration_guard_test)
-    unset(pcinspector_qualification_directory)
-    unset(pcinspector_qualification_tolerances)
+                    "${CMAKE_CURRENT_SOURCE_DIR}/data/qualification/native.json"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/data/qualification/native.json"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/data/qualification/tolerances.json")
+    set_tests_properties(qualification_diff_cli_smoke PROPERTIES
+            LABELS "qualification;tools"
+            PASS_REGULAR_EXPRESSION "PASS sampled_frame_p95")
 endif()
 
 pci_add_catch_test_target(pcinspector_qt_async_tests
@@ -589,8 +474,6 @@ pci_add_catch_test_target(pcinspector_renderer_internal_ui_tests
         renderer_internal/SceneSnapshotCacheTests.cpp
         renderer_internal/RenderViewportWidgetTests.cpp
         renderer_internal/RhiResourceTests.cpp
-        INCLUDE_DIRECTORIES
-        "${CMAKE_CURRENT_SOURCE_DIR}"
         LIBRARIES
         pcinspector::development_support
         pcinspector::navigation
@@ -672,7 +555,7 @@ if(PCINSPECTOR_ENABLE_GPU_TESTS)
                         --max-points 8
                         "${PCINSPECTOR_TEST_DATA_DIR}/${point_file}")
         set_tests_properties("renderer_smoke_${smoke_name}" PROPERTIES
-                FIXTURES_REQUIRED phase1_point_files
+                FIXTURES_REQUIRED pdal_point_files
                 PASS_REGULAR_EXPRESSION "Loaded .*: 8 / 8 points"
                 LABELS "gpu;smoke"
                 RUN_SERIAL TRUE

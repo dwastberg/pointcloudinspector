@@ -1,3 +1,4 @@
+# Owns GDAL registration, error capture, and the process-global block cache.
 add_library(pcinspector_gdal_runtime STATIC
         src/GdalRuntime.cpp
         include/pci/adapters/gdal/runtime/GdalRuntime.h)

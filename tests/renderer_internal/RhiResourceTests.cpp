@@ -48,10 +48,12 @@ TEST_CASE("RHI release deleter uses the resource release contract",
           "[unit][renderer][resource]")
 {
     bool released = false;
+    // A pooled resource outlives the handle that returns it via release().
+    ReleasedResource backingResource(released);
     {
         std::unique_ptr<ReleasedResource,
                         pci::RhiReleaseDeleter<ReleasedResource>>
-            resource(new ReleasedResource(released));
+            resource(&backingResource);
         CHECK_FALSE(released);
     }
     CHECK(released);

@@ -183,7 +183,15 @@
     {
       "name": "profiling",
       "configurePreset": "profiling",
-      "configuration": "Release"
+      "configuration": "Release",
+      "targets": [
+        "pcinspector",
+        "pci_load_bench",
+        "pci_residency_bench",
+        "pci_multifile_bench",
+        "pci_raster_colorize_bench",
+        "pci_qualification_diff"
+      ]
     }
   ],
   "testPresets": [

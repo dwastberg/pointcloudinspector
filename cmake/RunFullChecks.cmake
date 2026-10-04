@@ -35,6 +35,14 @@ if(NOT DEFINED PCINSPECTOR_LOCAL_CHECK_TSAN)
     set(PCINSPECTOR_LOCAL_CHECK_TSAN ON)
 endif()
 
+# Reuse existing builds unless a full rebuild is explicitly requested.
+if(NOT DEFINED PCINSPECTOR_LOCAL_CHECK_CLEAN)
+    set(PCINSPECTOR_LOCAL_CHECK_CLEAN OFF)
+endif()
+if(NOT DEFINED PCINSPECTOR_LOCAL_CHECK_LONG_STRESS)
+    set(PCINSPECTOR_LOCAL_CHECK_LONG_STRESS OFF)
+endif()
+
 function(pcinspector_run_step description)
     message(STATUS "${description}")
     execute_process(
@@ -47,13 +55,19 @@ function(pcinspector_run_step description)
 endfunction()
 
 function(pcinspector_configure_and_build preset)
+    set(configure_options)
+    set(build_options)
+    if(PCINSPECTOR_LOCAL_CHECK_CLEAN)
+        list(APPEND configure_options --fresh)
+        list(APPEND build_options --clean-first)
+    endif()
     pcinspector_run_step(
         "Configuring ${preset}"
-        "${CMAKE_COMMAND}" --fresh --preset "${preset}"
-        -DPCINSPECTOR_ENABLE_LONG_STRESS_TESTS=ON)
+        "${CMAKE_COMMAND}" ${configure_options} --preset "${preset}"
+        "-DPCINSPECTOR_ENABLE_LONG_STRESS_TESTS=${PCINSPECTOR_LOCAL_CHECK_LONG_STRESS}")
     pcinspector_run_step(
-        "Building ${preset} from scratch"
-        "${CMAKE_COMMAND}" --build --preset "${preset}" --clean-first
+        "Building ${preset}"
+        "${CMAKE_COMMAND}" --build --preset "${preset}" ${build_options}
         --parallel "${PCINSPECTOR_LOCAL_CHECK_JOBS}")
 endfunction()
 
