@@ -16,6 +16,9 @@ function(pci_add_header_self_containment module target)
 
     set(check_target "pcinspector_${module}_header_self_containment")
     add_library("${check_target}" OBJECT ${translation_units})
+    if(NOT PCINSPECTOR_CHECK_HEADERS)
+        set_target_properties("${check_target}" PROPERTIES EXCLUDE_FROM_ALL TRUE)
+    endif()
     target_link_libraries("${check_target}" PRIVATE "${target}")
     pci_configure_target("${check_target}")
     set_property(GLOBAL APPEND PROPERTY

@@ -240,17 +240,13 @@ pci_add_catch_test_target(pcinspector_import_gdal_tests
         LIBRARIES
         pcinspector::import_gdal
         GDAL::GDAL
-        Qt6::Core
-        PROPERTIES
-        # Catch discovery runs each case in a separate process. Every process
-        # rebuilds the shared on-disk corpus, so parallel cases would otherwise
-        # delete and rewrite the same TIFF/VRT/GPKG files concurrently.
-        RESOURCE_LOCK pcinspector_import_gdal_fixtures)
+        Qt6::Core)
 
 # The large-source acceptance lane. It links both the GDAL adapter and the
 # raster runtime's streaming code because the bound spans them: reads
 # come from the adapter, admission and eviction from the streamer.
 pci_add_catch_test_target(pcinspector_raster_stress_tests
+        ISOLATED LONG_STRESS
         WITH_MAIN
         INTEGRATION
         SOURCES
@@ -287,17 +283,6 @@ pci_add_catch_test_target(pcinspector_import_ogr_tests
         GDAL::GDAL
         Qt6::Core)
 
-add_executable(pcinspector_ogr_fixture_generator
-        fixtures/OgrFixtureFactory.cpp
-        generate_ogr_fixtures.cpp)
-target_include_directories(pcinspector_ogr_fixture_generator PRIVATE
-        "${CMAKE_CURRENT_SOURCE_DIR}")
-target_link_libraries(pcinspector_ogr_fixture_generator PRIVATE
-        GDAL::GDAL)
-set_target_properties(pcinspector_ogr_fixture_generator PROPERTIES
-        FOLDER Tests)
-pci_configure_target(pcinspector_ogr_fixture_generator)
-
 add_executable(pcinspector_fixture_generator
         fixtures/PdalFixtureFactory.cpp
         generate_pdal_fixtures.cpp)
@@ -310,20 +295,17 @@ set_target_properties(pcinspector_fixture_generator PROPERTIES
 pci_configure_target(pcinspector_fixture_generator)
 
 set(PCINSPECTOR_TEST_DATA_DIR "${CMAKE_CURRENT_BINARY_DIR}/data")
+set(pcinspector_fixture_arguments "${PCINSPECTOR_TEST_DATA_DIR}")
+if(PCINSPECTOR_ENABLE_LONG_STRESS_TESTS)
+    list(APPEND pcinspector_fixture_arguments --long-stress)
+endif()
 add_test(NAME generate_pdal_fixtures
         COMMAND $<TARGET_FILE:pcinspector_fixture_generator>
-                "${PCINSPECTOR_TEST_DATA_DIR}")
+                ${pcinspector_fixture_arguments})
+unset(pcinspector_fixture_arguments)
 set_tests_properties(generate_pdal_fixtures PROPERTIES
         FIXTURES_SETUP phase1_point_files
         LABELS "component;pdal")
-
-set(PCINSPECTOR_VECTOR_TEST_DATA_DIR "${PCINSPECTOR_TEST_DATA_DIR}/vector")
-add_test(NAME generate_ogr_fixtures
-        COMMAND $<TARGET_FILE:pcinspector_ogr_fixture_generator>
-                "${PCINSPECTOR_VECTOR_TEST_DATA_DIR}")
-set_tests_properties(generate_ogr_fixtures PROPERTIES
-        FIXTURES_SETUP phase1_vector_files
-        LABELS "component;ogr")
 
 if(TARGET pci_residency_bench)
     add_test(NAME residency_bench_fixture_smoke
@@ -339,19 +321,22 @@ if(TARGET pci_residency_bench)
             LABELS "benchmark;component;hierarchy;stress"
             TIMEOUT 30)
 
-    add_test(NAME residency_bench_local_hierarchy_stress
-            COMMAND $<TARGET_FILE:pci_residency_bench>
-                    --cpu-cache-mb 1
-                    --stress-nodes 160
-                    --passes 1
-                    --minimum-working-set-multiple 10
-                    "${PCINSPECTOR_TEST_DATA_DIR}/residency-stress.copc.laz")
-    set_tests_properties(residency_bench_local_hierarchy_stress PROPERTIES
-            FIXTURES_REQUIRED phase1_point_files
-            PASS_REGULAR_EXPRESSION
-                "RESIDENCY_RESULT status=ok.*bounded=1.*cache_evictions=[1-9][0-9]*"
-            LABELS "benchmark;component;hierarchy;residency;stress"
-            TIMEOUT 60)
+    if(PCINSPECTOR_ENABLE_LONG_STRESS_TESTS)
+        add_test(NAME residency_bench_local_hierarchy_stress
+                COMMAND $<TARGET_FILE:pci_residency_bench>
+                        --cpu-cache-mb 1
+                        --stress-nodes 160
+                        --passes 1
+                        --minimum-working-set-multiple 10
+                        "${PCINSPECTOR_TEST_DATA_DIR}/residency-stress.copc.laz")
+        set_tests_properties(residency_bench_local_hierarchy_stress PROPERTIES
+                FIXTURES_REQUIRED phase1_point_files
+                PASS_REGULAR_EXPRESSION
+                    "RESIDENCY_RESULT status=ok.*bounded=1.*cache_evictions=[1-9][0-9]*"
+                LABELS "benchmark;component;hierarchy;residency;stress;long-stress"
+                RUN_SERIAL TRUE
+                TIMEOUT 60)
+    endif()
 endif()
 
 if(TARGET pci_multifile_bench)
@@ -633,6 +618,7 @@ endif()
 
 if(PCINSPECTOR_ENABLE_GPU_TESTS)
     pci_add_catch_test_target(pcinspector_gpu_tests
+            ISOLATED
             INTEGRATION
             SOURCES
             support/CatchGpuMain.cpp

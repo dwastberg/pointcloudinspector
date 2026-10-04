@@ -5,15 +5,6 @@
 
 namespace {
 
-TEST_CASE("default camera framing is the normalized cube", "[unit][navigation]")
-{
-    pci::NavigationCamera camera;
-    camera.frameScene();
-    CHECK(camera.position() == pci::Vec3d{0.0, -4.0, 0.0});
-    CHECK(camera.pivot() == pci::Vec3d{});
-    CHECK(camera.sceneDiameter() == 2.0);
-}
-
 TEST_CASE("scene bounds reposition framing and scale speed",
           "[unit][navigation]")
 {

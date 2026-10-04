@@ -117,6 +117,52 @@ Native GPU tests use the `native-gpu` preset on a host with a working native
 graphics/display environment. Remote Linux/Windows/macOS CI execution is separate
 from locally passing checks.
 
+CI and packaging batch ordinary Catch2 cases by executable and run three CTest
+workers (two for ASan/UBSan and TSan). Console failures still name the case;
+case-level JUnit reports are written to `build/<preset>/Testing/Reports/` and
+uploaded with CTest diagnostics. Batch CTest names and labels identify the
+executable, so `ctest --preset ci -R pcinspector_document_tests` selects that
+suite. Use `ctest --preset ci --rerun-failed` to rerun failed suites, or run a
+test executable directly with a case name or Catch2 tag, for example:
+
+```sh
+build/ci/tests/pcinspector_document_tests '[snapshot]'
+```
+
+The development preset retains individual case discovery and tag labels. Set
+`-DPCINSPECTOR_BATCH_TESTS=OFF` when configuring another preset to use the same
+granular CTest filtering. GPU and raster scale cases always use separate
+processes; long stress cases also run serially. Sanitizer default builds omit
+duplicate header self-containment compilation; the explicit
+`header-self-containment` target remains available.
+
+Long stress tests are **off by default in CI and packaging**. Ordinary CI keeps
+smaller multi-tile raster bake/cancellation tests and the inexpensive catalog
+and benchmark smoke tests. Full-scale catalog churn, sparse BigTIFF streaming,
+million-point bakes and the large residency benchmark carry the `long-stress`
+label. Enable **Run workflow → run_long_stress_tests** in GitHub Actions to run
+them on all CI configurations; Linux must still pass before Windows starts,
+and Windows must pass before macOS starts. The qualification checks run once
+within each configuration's CTest suite.
+
+Development and `RunFullChecks.cmake` retain long stress coverage. To run just
+that coverage locally, or enable it for a sanitizer build:
+
+```sh
+cmake --preset development
+cmake --build --preset development --parallel 3
+ctest --preset long-stress
+
+cmake --preset asan-ubsan -DPCINSPECTOR_ENABLE_LONG_STRESS_TESTS=ON
+cmake --build --preset asan-ubsan --parallel 3
+ctest --preset asan-ubsan -L '^long-stress$'
+```
+
+With `PCINSPECTOR_ENABLE_LONG_STRESS_TESTS=OFF`, the long cases are not registered
+with CTest and the large benchmark fixture is not generated. Running a test
+executable directly bypasses CTest selection; use `'~[long-stress]'` to exclude
+long cases when invoking the raster stress executable yourself.
+
 ### CLion formatting
 
 Use external **clang-format 22.1.8** and the repository `.clang-format`. That version

@@ -92,3 +92,10 @@ jobs:
             dist/*.dmg.sha256
           compression-level: 0
           if-no-files-found: error
+
+      - name: Retain test diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: package-macos-tests
+          path: build/package/Testing/

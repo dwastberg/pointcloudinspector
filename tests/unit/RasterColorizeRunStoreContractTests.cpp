@@ -2,11 +2,14 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <array>
+#include <limits>
 
 TEST_CASE("operation run-store codec preserves its independent byte contract",
           "[unit][operation-api][colorize][golden]")
 {
+    STATIC_REQUIRE(sizeof(pci::RasterSortRecord) == 16);
     const pci::RasterSortRecord record{
         .address = 0x0807060504030201ULL,
         .destination = 0x0c0b0a09U,
@@ -30,4 +33,14 @@ TEST_CASE("operation run-store codec preserves its independent byte contract",
     STATIC_REQUIRE(encoded.size() == 12);
     CHECK(encoded == expected);
     CHECK(pci::deserializeRasterSortRecord(expected) == record);
+
+    const pci::RasterSortRecord maximum{
+        .address = std::numeric_limits<std::uint64_t>::max(),
+        .destination = std::numeric_limits<std::uint32_t>::max(),
+    };
+    const auto maximumBytes = pci::serializeRasterSortRecord(maximum);
+    CHECK(std::ranges::all_of(maximumBytes, [](const std::byte value) {
+        return value == std::byte{0xff};
+    }));
+    CHECK(pci::deserializeRasterSortRecord(maximumBytes) == maximum);
 }

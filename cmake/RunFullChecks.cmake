@@ -49,7 +49,8 @@ endfunction()
 function(pcinspector_configure_and_build preset)
     pcinspector_run_step(
         "Configuring ${preset}"
-        "${CMAKE_COMMAND}" --fresh --preset "${preset}")
+        "${CMAKE_COMMAND}" --fresh --preset "${preset}"
+        -DPCINSPECTOR_ENABLE_LONG_STRESS_TESTS=ON)
     pcinspector_run_step(
         "Building ${preset} from scratch"
         "${CMAKE_COMMAND}" --build --preset "${preset}" --clean-first

@@ -28,6 +28,12 @@ include(GNUInstallDirs)
 
 option(PCINSPECTOR_BUILD_TOOLS
        "Build developer profiling and diagnostic tools" OFF)
+option(PCINSPECTOR_BATCH_TESTS
+       "Run ordinary Catch2 suites in one process per executable" OFF)
+option(PCINSPECTOR_ENABLE_LONG_STRESS_TESTS
+       "Register expensive full-scale stress tests" OFF)
+option(PCINSPECTOR_CHECK_HEADERS
+       "Include public header self-containment checks in the default build" ON)
 option(PCINSPECTOR_ENABLE_DIAGNOSTIC_UI
        "Expose profiling, residency, and renderer diagnostics in the UI" OFF)
 option(PCINSPECTOR_WARNINGS_AS_ERRORS

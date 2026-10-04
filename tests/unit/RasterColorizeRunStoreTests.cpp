@@ -124,40 +124,6 @@ recordingFileFactory(const std::shared_ptr<RecordingFileState> &state)
     };
 }
 
-TEST_CASE("raster colorize run records have an exact little-endian format",
-          "[unit][scene][colorize]")
-{
-    static_assert(sizeof(pci::RasterSortRecord) == 16);
-    const pci::RasterSortRecord record{
-        .address = std::numeric_limits<std::uint64_t>::max(),
-        .destination = std::numeric_limits<std::uint32_t>::max(),
-    };
-    const auto bytes = pci::serializeRasterSortRecord(record);
-    static_assert(bytes.size() == 12);
-    CHECK(std::ranges::all_of(bytes, [](const std::byte value) {
-        return value == std::byte{0xff};
-    }));
-    CHECK(pci::deserializeRasterSortRecord(bytes) == record);
-
-    const pci::RasterSortRecord patterned{
-        .address = 0x0807060504030201ULL,
-        .destination = 0x0c0b0a09U,
-    };
-    CHECK(pci::serializeRasterSortRecord(patterned) ==
-          std::array<std::byte, 12>{std::byte{0x01},
-                                    std::byte{0x02},
-                                    std::byte{0x03},
-                                    std::byte{0x04},
-                                    std::byte{0x05},
-                                    std::byte{0x06},
-                                    std::byte{0x07},
-                                    std::byte{0x08},
-                                    std::byte{0x09},
-                                    std::byte{0x0a},
-                                    std::byte{0x0b},
-                                    std::byte{0x0c}});
-}
-
 TEST_CASE("raster colorize run store merges runs and cleans files",
           "[unit][scene][colorize]")
 {

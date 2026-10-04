@@ -130,7 +130,7 @@ void reconcile(pci::RasterTileStreamer &streamer,
 }
 
 TEST_CASE("a huge catalog plans and reads a bounded amount of work",
-          "[component][raster][stress]")
+          "[component][raster][stress][long-stress]")
 {
     constexpr std::uint64_t cpuBudget = 64ULL * 1024 * 1024;
     constexpr std::uint64_t gdalBudget = 32ULL * 1024 * 1024;
@@ -305,7 +305,7 @@ TEST_CASE("zooming into a catalog member reaches its native pixels",
 }
 
 TEST_CASE("a sparse BigTIFF costs its tiles, not its extent",
-          "[component][raster][stress]")
+          "[component][raster][stress][long-stress]")
 {
     // 100000 squared, BigTIFF, sparse on disk and without overviews: the other
     // shape of "enormous", where the pixels are real rather than assembled

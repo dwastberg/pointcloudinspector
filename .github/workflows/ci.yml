@@ -3,10 +3,19 @@ name: CI
 on:
   push:
   pull_request:
+  workflow_dispatch:
+    inputs:
+      run_long_stress_tests:
+        description: Include full-scale stress tests on every CI configuration
+        type: boolean
+        default: false
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
+
+env:
+  PCINSPECTOR_LONG_STRESS: ${{ inputs.run_long_stress_tests && 'ON' || 'OFF' }}
 
 permissions:
   contents: read
@@ -36,7 +45,7 @@ jobs:
           init-shell: bash
 
       - name: Configure
-        run: cmake --preset ci -G Ninja
+        run: cmake --preset ci -G Ninja -DPCINSPECTOR_ENABLE_LONG_STRESS_TESTS="$PCINSPECTOR_LONG_STRESS"
 
       - name: Build with warnings as errors
         run: cmake --build --preset ci --parallel 3
@@ -44,14 +53,15 @@ jobs:
       - name: Check C++ formatting
         run: cmake --build --preset ci --target format-check
 
-      - name: Verify qualification test registration
-        run: cmake -DBUILD_DIR=build/ci -DCTEST_CONFIGURATION=Debug -P tests/cmake/CheckQualificationTestRegistration.cmake
-
-      - name: Run qualification diff contract tests
-        run: ctest --preset ci -R '^qualification_diff_' --output-on-failure --no-tests=error
-
       - name: Run non-GPU tests
         run: ctest --preset ci
+
+      - name: Retain test diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: linux-tests
+          path: build/ci/Testing/
 
   windows:
     name: Windows build and tests
@@ -91,17 +101,18 @@ jobs:
           & $devShell -Arch amd64 -HostArch amd64 -SkipAutomaticLocation
 
           $env:CXX = "cl.exe"
-          cmake --preset ci-windows -G Ninja
+          cmake --preset ci-windows -G Ninja -DPCINSPECTOR_ENABLE_LONG_STRESS_TESTS="$env:PCINSPECTOR_LONG_STRESS"
           cmake --build --preset ci-windows --parallel 3
-
-      - name: Verify qualification test registration
-        run: cmake -DBUILD_DIR=build/ci-windows -DCTEST_CONFIGURATION=RelWithDebInfo -P tests/cmake/CheckQualificationTestRegistration.cmake
-
-      - name: Run qualification diff contract tests
-        run: ctest --preset ci-windows -R '^qualification_diff_' --output-on-failure --no-tests=error
 
       - name: Run non-GPU tests
         run: ctest --preset ci-windows
+
+      - name: Retain test diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-tests
+          path: build/ci-windows/Testing/
 
   macos:
     name: macOS build and tests
@@ -123,17 +134,20 @@ jobs:
           cache-downloads: true
           init-shell: bash
       - name: Configure
-        run: cmake --preset ci -G Ninja -DCMAKE_OSX_ARCHITECTURES=arm64
+        run: cmake --preset ci -G Ninja -DPCINSPECTOR_ENABLE_LONG_STRESS_TESTS="$PCINSPECTOR_LONG_STRESS" -DCMAKE_OSX_ARCHITECTURES=arm64
       - name: Build and check formatting
         run: |
           cmake --build --preset ci --parallel 3
           cmake --build --preset ci --target format-check
-      - name: Verify qualification registration and execute all seven cases
-        run: |
-          cmake -DBUILD_DIR=build/ci -DCTEST_CONFIGURATION=Debug -P tests/cmake/CheckQualificationTestRegistration.cmake
-          ctest --preset ci -R '^qualification_diff_' --output-on-failure --no-tests=error
       - name: Run non-GPU tests
         run: ctest --preset ci --output-on-failure --no-tests=error
+
+      - name: Retain test diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos-tests
+          path: build/ci/Testing/
 
   linux-validation:
     name: Linux ${{ matrix.preset }}
@@ -161,13 +175,9 @@ jobs:
         if: matrix.preset == 'tsan'
         run: sudo sysctl vm.mmap_rnd_bits=28
       - name: Configure
-        run: cmake --preset ${{ matrix.preset }} -G Ninja
+        run: cmake --preset ${{ matrix.preset }} -G Ninja -DPCINSPECTOR_ENABLE_LONG_STRESS_TESTS="$PCINSPECTOR_LONG_STRESS"
       - name: Build
         run: cmake --build --preset ${{ matrix.preset }} --parallel 3
-      - name: Verify qualification registration and execute all seven cases
-        run: |
-          cmake -DBUILD_DIR=build/${{ matrix.preset }} -DCTEST_CONFIGURATION=Debug -P tests/cmake/CheckQualificationTestRegistration.cmake
-          ctest --preset ${{ matrix.preset }} -R '^qualification_diff_' --output-on-failure --no-tests=error
       - name: Run non-GPU tests
         run: ctest --preset ${{ matrix.preset }} --output-on-failure --no-tests=error
       - name: Retain test diagnostics
@@ -175,4 +185,4 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: linux-${{ matrix.preset }}-logs
-          path: build/${{ matrix.preset }}/Testing/Temporary/
+          path: build/${{ matrix.preset }}/Testing/

@@ -82,9 +82,14 @@ modules:
 
   - name: point-cloud-inspector
     buildsystem: cmake-ninja
+    build-options:
+      env:
+        CTEST_PARALLEL_LEVEL: "3"
     config-opts:
       - -DCMAKE_BUILD_TYPE=Release
       - -DBUILD_TESTING=ON
+      - -DPCINSPECTOR_BATCH_TESTS=ON
+      - -DPCINSPECTOR_ENABLE_LONG_STRESS_TESTS=OFF
       - -DPCINSPECTOR_BUILD_TOOLS=OFF
       - -DPCINSPECTOR_ENABLE_DIAGNOSTIC_UI=OFF
       - -DPCINSPECTOR_ENABLE_GPU_TESTS=OFF

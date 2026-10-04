@@ -15,6 +15,7 @@ TEST_CASE("navigation camera defaults and framing are predictable",
     const pci::Vec3d expectedRight{1.0, 0.0, 0.0};
     const pci::Vec3d expectedUp{0.0, 0.0, 1.0};
     pci::NavigationCamera camera;
+    CHECK(camera.sceneDiameter() == 2.0);
     CHECK(camera.position() == expectedPosition);
     CHECK(camera.forward() == expectedForward);
     CHECK(camera.right() == expectedRight);

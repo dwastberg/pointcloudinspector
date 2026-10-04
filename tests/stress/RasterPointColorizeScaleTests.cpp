@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <filesystem>
 #include <future>
 #include <memory>
@@ -43,6 +44,10 @@ private:
 };
 
 struct RasterCounters {
+    bool pauseReads = false;
+    std::atomic_bool enteredRead = false;
+    std::promise<void> readStarted;
+    std::condition_variable_any readWake;
     std::atomic_uint64_t displayReads = 0;
     std::atomic_uint64_t detachedReads = 0;
     std::atomic_uint32_t detachedMaximumHandles = 0;
@@ -85,6 +90,16 @@ public:
              const std::stop_token stop) const override
     {
         if (stop.stop_requested()) {
+            throw pci::RasterReadCancelled();
+        }
+        if (counters_->pauseReads) {
+            if (!counters_->enteredRead.exchange(true)) {
+                counters_->readStarted.set_value();
+            }
+            std::unique_lock lock(counters_->keysMutex);
+            counters_->readWake.wait(lock, stop, [] {
+                return false;
+            });
             throw pci::RasterReadCancelled();
         }
         const std::uint32_t active = counters_->activeReads.fetch_add(1) + 1;
@@ -137,10 +152,10 @@ private:
 };
 
 [[nodiscard]] std::shared_ptr<pci::PointDatasetRuntime>
-makeScaleScene(const std::uint32_t copies)
+makeScaleScene(const std::uint32_t copies,
+               const std::uint32_t width,
+               const std::uint32_t height)
 {
-    constexpr std::uint32_t width = 2000;
-    constexpr std::uint32_t height = 1000;
     constexpr std::uint32_t blockCount = 64;
     const std::uint64_t total =
         static_cast<std::uint64_t>(width) * height * copies;
@@ -188,15 +203,18 @@ struct ScaleOutcome {
 
 [[nodiscard]] ScaleOutcome bake(const std::uint32_t copies,
                                 const std::uint32_t rasterSize,
-                                const std::filesystem::path &temporaryDirectory)
+                                const std::filesystem::path &temporaryDirectory,
+                                const std::uint32_t width,
+                                const std::uint32_t height,
+                                const std::uint32_t scatterRecords)
 {
-    auto scene = makeScaleScene(copies);
+    auto scene = makeScaleScene(copies, width, height);
     auto raster = std::make_shared<ScaleRasterSource>(rasterSize);
     auto budget =
         std::make_shared<pci::PointMemoryBudget>(512ULL * 1024 * 1024);
     pci::RasterColorizeOptions options{
         .workerCount = 4,
-        .maximumScatterRecords = 100'000,
+        .maximumScatterRecords = scatterRecords,
         .temporaryDirectory = temporaryDirectory,
     };
     auto target = scene->rasterPointColorizeTarget();
@@ -242,42 +260,52 @@ struct ScaleOutcome {
                 raster->counters()->detachedMaximumHandles.load()};
 }
 
-TEST_CASE("four-million-point raster bake remains footprint bounded",
-          "[integration][stress][scale][colorize]")
+void checkBoundedBake(const std::uint32_t width,
+                      const std::uint32_t height,
+                      const std::uint32_t scatterRecords,
+                      const std::uint32_t expectedHandles)
 {
     TemporaryDirectory directory;
-    const ScaleOutcome twoMillion = bake(1, 5000, directory.path());
+    const auto first =
+        bake(1, 5000, directory.path(), width, height, scatterRecords);
     CHECK(directory.empty());
-    const ScaleOutcome fourMillion = bake(2, 5000, directory.path());
+    const auto doubled =
+        bake(2, 5000, directory.path(), width, height, scatterRecords);
     CHECK(directory.empty());
-    const ScaleOutcome sparseExtent = bake(1, 100'000, directory.path());
+    const auto sparseExtent =
+        bake(1, 100'000, directory.path(), width, height, scatterRecords);
     CHECK(directory.empty());
 
-    CHECK(twoMillion.statistics.pointsConsidered == 2'000'000);
-    CHECK(fourMillion.statistics.pointsConsidered == 4'000'000);
-    CHECK(fourMillion.statistics.pointsColored == 4'000'000);
-    CHECK(twoMillion.distinctTiles == fourMillion.distinctTiles);
-    CHECK(sparseExtent.distinctTiles == twoMillion.distinctTiles);
+    const std::uint64_t pointCount = static_cast<std::uint64_t>(width) * height;
+    CHECK(first.statistics.pointsConsidered == pointCount);
+    CHECK(first.statistics.pointsColored == pointCount);
+    CHECK(doubled.statistics.pointsConsidered == pointCount * 2);
+    CHECK(doubled.statistics.pointsColored == pointCount * 2);
+    CHECK(sparseExtent.statistics.pointsColored == pointCount);
+    CHECK(first.distinctTiles > 1);
+    CHECK(first.distinctTiles == doubled.distinctTiles);
+    CHECK(sparseExtent.distinctTiles == first.distinctTiles);
     const auto checkTileReadsBounded = [](const ScaleOutcome &outcome) {
         CHECK(outcome.statistics.tileReads >= outcome.distinctTiles);
         CHECK(outcome.statistics.tileReads <=
               outcome.distinctTiles * pci::rasterColorizeTileReadOverheadBound);
     };
-    checkTileReadsBounded(twoMillion);
-    checkTileReadsBounded(fourMillion);
+    checkTileReadsBounded(first);
+    checkTileReadsBounded(doubled);
     checkTileReadsBounded(sparseExtent);
-    CHECK(twoMillion.displayReads == 0);
-    CHECK(fourMillion.displayReads == 0);
+    CHECK(first.displayReads == 0);
+    CHECK(doubled.displayReads == 0);
     CHECK(sparseExtent.displayReads == 0);
-    CHECK(fourMillion.detachedMaximumHandles == 1);
+    CHECK(doubled.detachedMaximumHandles == expectedHandles);
 }
 
-TEST_CASE("four-million-point raster bake cancels promptly and cleans runs",
-          "[integration][stress][scale][colorize][cancellation]")
+void checkCancellation(const std::uint32_t width, const std::uint32_t height)
 {
     TemporaryDirectory directory;
-    auto scene = makeScaleScene(2);
+    auto scene = makeScaleScene(2, width, height);
     auto raster = std::make_shared<ScaleRasterSource>(5000);
+    raster->counters()->pauseReads = true;
+    auto enteredFuture = raster->counters()->readStarted.get_future();
     auto budget =
         std::make_shared<pci::PointMemoryBudget>(512ULL * 1024 * 1024);
     pci::RasterColorizeOptions options{
@@ -290,17 +318,13 @@ TEST_CASE("four-million-point raster bake cancels promptly and cleans runs",
     pci::RasterColorizePreflight preflight = pci::preflightRasterPointColorize(
         std::move(*target), raster->metadata(), options);
     std::stop_source stop;
-    std::promise<void> entered;
-    auto enteredFuture = entered.get_future();
     auto future = std::async(
         std::launch::async,
         [preflight = std::move(preflight),
          raster,
          budget,
          options,
-         stopToken = stop.get_token(),
-         entered = std::move(entered)]() mutable {
-            entered.set_value();
+         stopToken = stop.get_token()]() mutable {
             return pci::colorizePointCloudFromRaster(
                 preflight,
                 raster,
@@ -315,16 +339,42 @@ TEST_CASE("four-million-point raster bake cancels promptly and cleans runs",
                 stopToken,
                 {});
         });
-    enteredFuture.wait();
-    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    // Stop only after sampling has started, even on a fast machine. Always
+    // release the worker before asserting so a failure cannot hang its future.
+    const auto entered = enteredFuture.wait_for(std::chrono::seconds(60));
     const auto cancelledAt = std::chrono::steady_clock::now();
     stop.request_stop();
     const auto result = future.get();
     const auto elapsed = std::chrono::steady_clock::now() - cancelledAt;
+    REQUIRE(entered == std::future_status::ready);
     CHECK_FALSE(result.has_value());
     CHECK(elapsed < std::chrono::milliseconds(500));
     CHECK(budget->reservedBytes() == 0);
     CHECK(directory.empty());
+}
+
+TEST_CASE("raster bake remains bounded across multiple tiles and runs",
+          "[integration][raster][colorize]")
+{
+    checkBoundedBake(512, 256, 8192, 2);
+}
+
+TEST_CASE("raster bake cancellation during sampling releases runs and memory",
+          "[integration][raster][colorize][cancellation]")
+{
+    checkCancellation(512, 256);
+}
+
+TEST_CASE("four-million-point raster bake remains footprint bounded",
+          "[integration][stress][long-stress][scale][colorize]")
+{
+    checkBoundedBake(2000, 1000, 100'000, 1);
+}
+
+TEST_CASE("four-million-point raster bake cancels promptly and cleans runs",
+          "[integration][stress][long-stress][scale][colorize][cancellation]")
+{
+    checkCancellation(2000, 1000);
 }
 
 } // namespace
