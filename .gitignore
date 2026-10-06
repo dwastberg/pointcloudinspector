@@ -79,6 +79,8 @@ vcpkg_installed/
 # test output & cache
 Testing/
 .cache/
+__pycache__/
+*.pyc
 /cmake-build-debug/
 
 # In-source CMake, Ninja, Qt, coverage, and crash output

@@ -1,0 +1,28 @@
+# False positives reproduced independently of application code with prebuilt
+# conda-forge PDAL 2.10.2, PROJ 9.9.0, and Qt 6.12.0 on Linux ARM64
+# (Clang TSan 22.1.8).
+# Revisit these exclusions when upgrading or instrumenting those dependencies.
+# https://github.com/google/sanitizers/wiki/ThreadSanitizerCppManual#non-instrumented-code
+# https://github.com/google/sanitizers/wiki/ThreadSanitizerSuppressions
+
+# LAS previews share a function-local static const dimension table. TSan sees
+# its allocation and later copies but misses the prebuilt library's atomic
+# initialization guard. Initializing before worker creation removes the report.
+# https://github.com/PDAL/PDAL/blob/2.10.2/io/private/las/Utils.cpp
+race:pdal::las::pdrfDims
+
+# Parsing equivalent WKT parameter names initializes a function-local static
+# const set. Concurrent parsing with independent PROJ contexts reproduces the
+# report; initialization before creating workers removes it. TSan misses the
+# prebuilt library's initialization guard, just as with PDAL's table above.
+# https://github.com/OSGeo/PROJ/blob/9.9.0/src/iso19111/operation/oputils.cpp
+race:osgeo::proj::operation::areEquivalentParameters
+
+# Qt protects its event queue with atomic/futex synchronization that TSan
+# cannot see in this prebuilt library. Concurrent postEvent calls reproduce
+# reports in QPostEventList::addEvent and QArrayData::reallocateUnaligned.
+# Some stacks omit addEvent, so a function-specific rule is insufficient.
+# Exclude intercepted accesses originating in Linux QtCore only; application
+# code stays instrumented. This also reduces detection inside QtCore itself.
+# https://github.com/qt/qtbase/blob/v6.12.0/src/corelib/kernel/qcoreapplication.cpp
+called_from_lib:libQt6Core.so

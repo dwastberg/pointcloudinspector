@@ -44,17 +44,8 @@ jobs:
           cache-downloads: true
           init-shell: bash
 
-      - name: Configure
-        run: cmake --preset ci -G Ninja -DPCINSPECTOR_ENABLE_LONG_STRESS_TESTS="$PCINSPECTOR_LONG_STRESS"
-
-      - name: Build with warnings as errors
-        run: cmake --build --preset ci --parallel 3
-
-      - name: Check C++ formatting
-        run: cmake --build --preset ci --target format-check
-
-      - name: Run non-GPU tests
-        run: ctest --preset ci
+      - name: Configure, build, check formatting, and test
+        run: bash scripts/run-linux-ci.sh ci
 
       - name: Retain test diagnostics
         if: always()
@@ -175,12 +166,8 @@ jobs:
       - name: Configure supported TSan address layout
         if: matrix.preset == 'tsan'
         run: sudo sysctl vm.mmap_rnd_bits=28
-      - name: Configure
-        run: cmake --preset ${{ matrix.preset }} -G Ninja -DPCINSPECTOR_ENABLE_LONG_STRESS_TESTS="$PCINSPECTOR_LONG_STRESS"
-      - name: Build
-        run: cmake --build --preset ${{ matrix.preset }} --parallel 3
-      - name: Run non-GPU tests
-        run: ctest --preset ${{ matrix.preset }} --output-on-failure --no-tests=error
+      - name: Configure, build, and test
+        run: bash scripts/run-linux-ci.sh ${{ matrix.preset }}
       - name: Retain test diagnostics
         if: always()
         uses: actions/upload-artifact@v7
