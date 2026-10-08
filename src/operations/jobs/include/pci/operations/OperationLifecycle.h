@@ -39,8 +39,8 @@ public:
         stop.request_stop();
         if (task != TaskId{})
             static_cast<void>(scheduler.cancel(task));
-        for (auto task : tasks)
-            static_cast<void>(scheduler.cancel(task));
+        for (auto taskId : tasks)
+            static_cast<void>(scheduler.cancel(taskId));
     }
 
 private:

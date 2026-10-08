@@ -5,8 +5,8 @@
 namespace {
 
 struct TrackedResource {
-    explicit TrackedResource(bool &destroyed)
-        : destroyed(destroyed)
+    explicit TrackedResource(bool &destroyedFlag)
+        : destroyed(destroyedFlag)
     {
     }
 
@@ -19,8 +19,8 @@ struct TrackedResource {
 };
 
 struct ReleasedResource {
-    explicit ReleasedResource(bool &released)
-        : released(released)
+    explicit ReleasedResource(bool &releasedFlag)
+        : released(releasedFlag)
     {
     }
 

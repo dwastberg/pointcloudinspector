@@ -690,29 +690,30 @@ VectorImportOperation::jobRows(const std::optional<LoadJobId> only) const
                 title = operationPath(source);
             }
         }
-        const std::size_t selected = state.summary.selected.size();
+        const std::size_t selectedCount = state.summary.selected.size();
         const std::size_t succeeded = state.summary.successful.size();
         const std::size_t failed = state.summary.failed.size();
         std::string detail = state.detail;
         if (state.phase == VectorLoadJobPhase::Ready) {
-            detail = failed == 0
-                         ? std::format("Loaded {0} of {1}", succeeded, selected)
-                         : std::format("Loaded {0} of {1} · {2} failed "
-                                       "— Retry failed sublayers",
-                                       succeeded,
-                                       selected,
-                                       failed);
+            detail =
+                failed == 0
+                    ? std::format("Loaded {0} of {1}", succeeded, selectedCount)
+                    : std::format("Loaded {0} of {1} · {2} failed "
+                                  "— Retry failed sublayers",
+                                  succeeded,
+                                  selectedCount,
+                                  failed);
         } else if (state.phase == VectorLoadJobPhase::Failed) {
             detail = std::format("No sublayers loaded · {0} failed", failed);
         } else if (state.phase == VectorLoadJobPhase::Cancelled) {
             detail = std::format(
                 "Cancelled after {0} of {1} · loaded layers retained",
                 succeeded,
-                selected);
+                selectedCount);
         } else if (state.phase == VectorLoadJobPhase::Reading) {
             detail = std::format("Reading {0} of {1} · {2} failed",
                                  succeeded + failed,
-                                 selected,
+                                 selectedCount,
                                  failed);
         }
         const bool terminal = state.phase == VectorLoadJobPhase::Ready ||
@@ -720,10 +721,10 @@ VectorImportOperation::jobRows(const std::optional<LoadJobId> only) const
                               state.phase == VectorLoadJobPhase::Cancelled;
         const double completion =
             terminal ? 1.0
-            : selected == 0
+            : selectedCount == 0
                 ? 0.0
                 : std::clamp(static_cast<double>(succeeded + failed) /
-                                 static_cast<double>(selected),
+                                 static_cast<double>(selectedCount),
                              0.0,
                              1.0);
         rows.push_back({

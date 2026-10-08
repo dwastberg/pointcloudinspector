@@ -413,8 +413,8 @@ std::uint64_t HierarchyResidencyCoordinator::participantByteBudget(
 
     std::uint64_t allocation = requested->second.retainedRootBytes;
     std::uint64_t residencyBudget = memoryBudget_->availableBytes();
-    for (const auto &[id, participant] : participants_) {
-        static_cast<void>(id);
+    for (const auto &[participantId, participant] : participants_) {
+        static_cast<void>(participantId);
         if (participant.sharesResidencyBudget) {
             residencyBudget =
                 saturatingAdd(residencyBudget, participant.reservedRootBytes);

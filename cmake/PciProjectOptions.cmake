@@ -78,6 +78,7 @@ else()
             -Wall
             -Wextra
             -Wpedantic
+            -Wshadow
             $<$<CXX_COMPILER_ID:GNU>:-Wmissing-field-initializers>
             $<$<CXX_COMPILER_ID:AppleClang,Clang>:-Wmissing-designated-field-initializers>)
     if(PCINSPECTOR_WARNINGS_AS_ERRORS)
