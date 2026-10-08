@@ -1,0 +1,53 @@
+name: CI Linux
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_long_stress_tests:
+        description: Include full-scale stress tests
+        type: boolean
+        default: false
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PCINSPECTOR_LONG_STRESS: ${{ inputs.run_long_stress_tests && 'ON' || 'OFF' }}
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    name: Linux build and tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash -el {0}
+
+    steps:
+      - name: Check out source and test dependencies
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          submodules: recursive
+
+      - name: Install build dependencies
+        uses: mamba-org/setup-micromamba@v3
+        with:
+          environment-file: .github/ci-environment.yml
+          cache-environment: true
+          cache-downloads: true
+          init-shell: bash
+
+      - name: Configure, build, check formatting, and test
+        run: bash scripts/run-linux-ci.sh ci
+
+      - name: Retain test diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: linux-tests
+          path: build/ci/Testing/

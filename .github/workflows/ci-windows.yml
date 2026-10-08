@@ -1,0 +1,70 @@
+name: CI Windows
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_long_stress_tests:
+        description: Include full-scale stress tests
+        type: boolean
+        default: false
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PCINSPECTOR_LONG_STRESS: ${{ inputs.run_long_stress_tests && 'ON' || 'OFF' }}
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    name: Windows build and tests
+    runs-on: windows-2022
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      - name: Check out source and test dependencies
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          submodules: recursive
+
+      - name: Install build dependencies
+        uses: mamba-org/setup-micromamba@v3
+        with:
+          environment-file: .github/ci-environment.yml
+          cache-environment: true
+          cache-downloads: true
+          init-shell: powershell
+
+      - name: Configure and build with MSVC
+        run: |
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+          $installationPath = & $vswhere -latest -products "*" `
+            -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+            -property installationPath
+          if (-not $installationPath) {
+            throw "A Visual Studio installation with the MSVC x64 tools was not found."
+          }
+
+          $devShell = Join-Path $installationPath "Common7\Tools\Launch-VsDevShell.ps1"
+          & $devShell -Arch amd64 -HostArch amd64 -SkipAutomaticLocation
+
+          $env:CXX = "cl.exe"
+          cmake --preset ci-windows -G Ninja -DPCINSPECTOR_ENABLE_LONG_STRESS_TESTS="$env:PCINSPECTOR_LONG_STRESS"
+          cmake --build --preset ci-windows --parallel 3
+
+      - name: Run non-GPU tests
+        run: ctest --preset ci-windows
+
+      - name: Retain test diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-tests
+          path: build/ci-windows/Testing/

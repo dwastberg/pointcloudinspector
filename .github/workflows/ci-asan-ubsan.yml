@@ -1,0 +1,47 @@
+name: CI ASan/UBSan
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_long_stress_tests:
+        description: Include full-scale stress tests
+        type: boolean
+        default: false
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PCINSPECTOR_LONG_STRESS: ${{ inputs.run_long_stress_tests && 'ON' || 'OFF' }}
+
+permissions:
+  contents: read
+
+jobs:
+  linux-validation:
+    name: Linux asan-ubsan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash -el {0}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          submodules: recursive
+      - uses: mamba-org/setup-micromamba@v3
+        with:
+          environment-file: .github/validation-environment-linux.yml
+          cache-environment: true
+          cache-downloads: true
+          init-shell: bash
+      - name: Configure, build, and test
+        run: bash scripts/run-linux-ci.sh asan-ubsan
+      - name: Retain test diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: linux-asan-ubsan-logs
+          path: build/asan-ubsan/Testing/

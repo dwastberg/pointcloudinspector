@@ -1,0 +1,54 @@
+name: CI macOS
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_long_stress_tests:
+        description: Include full-scale stress tests
+        type: boolean
+        default: false
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PCINSPECTOR_LONG_STRESS: ${{ inputs.run_long_stress_tests && 'ON' || 'OFF' }}
+
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    name: macOS build and tests
+    runs-on: macos-15
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash -el {0}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          submodules: recursive
+      - uses: mamba-org/setup-micromamba@v3
+        with:
+          environment-file: .github/package-environment-macos.yml
+          cache-environment: true
+          cache-downloads: true
+          init-shell: bash
+      - name: Configure
+        run: cmake --preset ci -G Ninja -DPCINSPECTOR_ENABLE_LONG_STRESS_TESTS="$PCINSPECTOR_LONG_STRESS" -DCMAKE_OSX_ARCHITECTURES=arm64
+      - name: Build and check formatting
+        run: |
+          cmake --build --preset ci --parallel 3
+          cmake --build --preset ci --target format-check
+      - name: Run non-GPU tests
+        run: ctest --preset ci --output-on-failure --no-tests=error
+
+      - name: Retain test diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos-tests
+          path: build/ci/Testing/
