@@ -321,7 +321,10 @@ void validateWindowsEntry(const std::filesystem::path &path,
         }
         if ((mask & dangerous) != 0 && !authorized(sid)) {
             throw PrivateStorageError(
-                "private storage is writable by another Windows principal");
+                "private storage is writable by another Windows principal: " +
+                pathToQString(path).toStdString() + "; principal=" +
+                sidText(sid) + "; access_mask=" + std::to_string(mask) +
+                "; ace_flags=" + std::to_string(header->AceFlags));
         }
     }
 }

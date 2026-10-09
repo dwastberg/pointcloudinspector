@@ -336,14 +336,14 @@ if(TARGET pci_residency_bench)
 endif()
 
 if(TARGET pci_multifile_bench)
+    # Use the benchmark's private temporary cache. Checkout ancestors may have
+    # shared-write ACLs and are not suitable for private persistent storage.
     add_test(NAME multifile_bench_local_las_laz_smoke
             COMMAND $<TARGET_FILE:pci_multifile_bench>
                     --cpu-cache-mb 32
                     --local-page-threshold 1
                     --revisit-passes 2
                     --timeout-seconds 30
-                    --cache-dir
-                    "${PCINSPECTOR_TEST_DATA_DIR}/multifile-page-cache"
                     "${PCINSPECTOR_TEST_DATA_DIR}/fixture.las"
                     "${PCINSPECTOR_TEST_DATA_DIR}/fixture.laz")
     set_tests_properties(multifile_bench_local_las_laz_smoke PROPERTIES
