@@ -435,10 +435,25 @@ TEST_CASE("task row lookup does not rescan unchanged rows",
         for (std::uint64_t i = 1; i <= count; ++i)
             rows.push_back(
                 {.key = {pci::LoadJobKind::Raster, pci::LoadJobId{i}}});
-        const auto key = rows.back().key;
         model.setRows(std::move(rows));
+        // Equality comparisons include hash collisions and differ between
+        // standard libraries. Bound average work instead of assuming one probe.
+        for (int pass = 0; pass < 2; ++pass) {
+            CAPTURE(count, pass);
+            pci::TaskListModelTestAccess::reset(model);
+            for (std::uint64_t i = 1; i <= count; ++i) {
+                CHECK(model.rowForKey(
+                          {pci::LoadJobKind::Raster, pci::LoadJobId{i}}) ==
+                      static_cast<int>(i - 1));
+            }
+            const auto inspections =
+                pci::TaskListModelTestAccess::inspections(model);
+            CHECK(inspections >= count);
+            CHECK(inspections <= 8 * count);
+        }
         pci::TaskListModelTestAccess::reset(model);
-        CHECK(model.rowForKey(key) == static_cast<int>(count - 1));
-        CHECK(pci::TaskListModelTestAccess::inspections(model) == 1);
+        CHECK_FALSE(model.rowForKey(
+            {pci::LoadJobKind::Raster, pci::LoadJobId{count + 1}}));
+        CHECK(pci::TaskListModelTestAccess::inspections(model) <= 8);
     }
 }

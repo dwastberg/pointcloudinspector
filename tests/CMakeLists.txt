@@ -62,6 +62,9 @@ pci_add_catch_test_target(pcinspector_secure_storage_tests
         WITH_MAIN
         SOURCES unit/SecureStorageTests.cpp
         LIBRARIES pcinspector::secure_storage)
+if(WIN32)
+    target_link_libraries(pcinspector_secure_storage_tests PRIVATE Advapi32)
+endif()
 
 pci_add_catch_test_target(pcinspector_color_tests
         WITH_MAIN

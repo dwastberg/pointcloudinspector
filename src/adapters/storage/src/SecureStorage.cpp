@@ -23,6 +23,7 @@
 
 #ifdef _WIN32
 #include <aclapi.h>
+#include <sddl.h>
 #include <windows.h>
 #else
 #include <sys/stat.h>
@@ -144,6 +145,65 @@ wellKnownSid(const WELL_KNOWN_SID_TYPE type)
            EqualSid(left, const_cast<std::byte *>(right.data()));
 }
 
+[[nodiscard]] std::string sidText(PSID sid)
+{
+    LPSTR raw = nullptr;
+    if (sid == nullptr || !ConvertSidToStringSidA(sid, &raw)) {
+        return "<unavailable>";
+    }
+    const std::unique_ptr<char, decltype(&LocalFree)> text(raw, &LocalFree);
+    return text.get();
+}
+
+// Only called for the empty QTemporaryFile we just created. Windows can use
+// a group as the token's default owner, even though our private files must
+// belong to TokenUser. Never repair ownership of an existing published key.
+void setNewAuthenticationFileOwner(const std::filesystem::path &path)
+{
+    const UniqueHandle handle(
+        CreateFileW(path.c_str(),
+                    FILE_READ_ATTRIBUTES | WRITE_OWNER,
+                    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                    nullptr,
+                    OPEN_EXISTING,
+                    FILE_FLAG_OPEN_REPARSE_POINT,
+                    nullptr));
+    if (handle.get() == INVALID_HANDLE_VALUE) {
+        const DWORD error = GetLastError();
+        throw PrivateStorageError("could not open new authentication file for "
+                                  "ownership assignment: " +
+                                  pathToQString(path).toStdString() +
+                                  " (Windows error " + std::to_string(error) +
+                                  ")");
+    }
+    FILE_ATTRIBUTE_TAG_INFO attributes{};
+    if (!GetFileInformationByHandleEx(handle.get(),
+                                      FileAttributeTagInfo,
+                                      &attributes,
+                                      sizeof(attributes)) ||
+        (attributes.FileAttributes &
+         (FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_DIRECTORY)) != 0) {
+        throw PrivateStorageError(
+            "new authentication file has an unsafe Windows file type: " +
+            pathToQString(path).toStdString());
+    }
+    std::vector<std::byte> user = currentUserSid();
+    const DWORD result = SetSecurityInfo(handle.get(),
+                                         SE_FILE_OBJECT,
+                                         OWNER_SECURITY_INFORMATION,
+                                         user.data(),
+                                         nullptr,
+                                         nullptr,
+                                         nullptr);
+    if (result != ERROR_SUCCESS) {
+        throw PrivateStorageError("could not assign new authentication file "
+                                  "owner: " +
+                                  pathToQString(path).toStdString() +
+                                  " (Windows error " + std::to_string(result) +
+                                  ")");
+    }
+}
+
 [[nodiscard]] PSID objectAceSid(const ACCESS_ALLOWED_OBJECT_ACE &ace)
 {
     const auto *cursor = reinterpret_cast<const std::byte *>(&ace.ObjectType);
@@ -219,7 +279,15 @@ void validateWindowsEntry(const std::filesystem::path &path,
     if ((requireCurrentOwner && !sidEquals(owner, user)) ||
         (!requireCurrentOwner && !authorizedOwner(owner))) {
         throw PrivateStorageError(
-            "private storage has an unsafe Windows owner");
+            "private storage has an unsafe Windows owner: " +
+            pathToQString(path).toStdString() + "; actual=" + sidText(owner) +
+            "; expected=" + sidText(const_cast<std::byte *>(user.data())) +
+            (requireCurrentOwner
+                 ? std::string{}
+                 : " or " + sidText(const_cast<std::byte *>(system.data())) +
+                       " or " +
+                       sidText(
+                           const_cast<std::byte *>(administrators.data()))));
     }
 
     constexpr DWORD dangerous =
@@ -480,6 +548,11 @@ readAuthenticationKey(const std::filesystem::path &path)
         throw PrivateStorageError(
             "could not create temporary point-page authentication key");
     }
+    const auto temporaryPath = qStringToPath(temporary.fileName());
+#ifdef _WIN32
+    setNewAuthenticationFileOwner(temporaryPath);
+#endif
+    validatePrivateFile(temporaryPath);
     if (temporary.write(reinterpret_cast<const char *>(generated.data()),
                         static_cast<qint64>(generated.size())) !=
             static_cast<qint64>(generated.size()) ||
@@ -489,8 +562,8 @@ readAuthenticationKey(const std::filesystem::path &path)
     }
     temporary.close();
     if (temporary.rename(pathToQString(path))) {
-        temporary.setAutoRemove(false);
         validatePrivateFile(path);
+        temporary.setAutoRemove(false);
         return generated;
     }
 

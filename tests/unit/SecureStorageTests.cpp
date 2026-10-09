@@ -5,8 +5,18 @@
 
 #include <atomic>
 #include <filesystem>
+#include <fstream>
 #include <future>
+#include <iterator>
+#include <memory>
 #include <thread>
+#include <vector>
+
+#ifdef _WIN32
+#include <aclapi.h>
+#include <sddl.h>
+#include <windows.h>
+#endif
 
 namespace {
 
@@ -28,6 +38,78 @@ private:
     pci::PrivateTemporaryDirectory owner_;
     std::filesystem::path path_;
 };
+
+[[nodiscard]] std::string fileContents(const std::filesystem::path &path)
+{
+    std::ifstream file(path, std::ios::binary);
+    REQUIRE(file.is_open());
+    return {std::istreambuf_iterator<char>(file),
+            std::istreambuf_iterator<char>()};
+}
+
+#ifdef _WIN32
+using LocalAllocation = std::unique_ptr<void, decltype(&LocalFree)>;
+
+[[nodiscard]] LocalAllocation fileSecurity(const std::filesystem::path &path)
+{
+    PSECURITY_DESCRIPTOR raw = nullptr;
+    const DWORD result = GetNamedSecurityInfoW(path.c_str(),
+                                               SE_FILE_OBJECT,
+                                               OWNER_SECURITY_INFORMATION |
+                                                   DACL_SECURITY_INFORMATION,
+                                               nullptr,
+                                               nullptr,
+                                               nullptr,
+                                               nullptr,
+                                               &raw);
+    LocalAllocation security(raw, &LocalFree);
+    REQUIRE(result == ERROR_SUCCESS);
+    return security;
+}
+
+[[nodiscard]] std::string securityText(const std::filesystem::path &path)
+{
+    const auto security = fileSecurity(path);
+    LPSTR raw = nullptr;
+    const BOOL converted = ConvertSecurityDescriptorToStringSecurityDescriptorA(
+        security.get(),
+        SDDL_REVISION_1,
+        OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
+        &raw,
+        nullptr);
+    const std::unique_ptr<char, decltype(&LocalFree)> text(raw, &LocalFree);
+    REQUIRE(converted);
+    return text.get();
+}
+
+[[nodiscard]] std::vector<std::byte>
+tokenInformation(TOKEN_INFORMATION_CLASS informationClass)
+{
+    HANDLE raw = nullptr;
+    REQUIRE(OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &raw));
+    const std::unique_ptr<void, decltype(&CloseHandle)> token(raw,
+                                                              &CloseHandle);
+    DWORD bytes = 0;
+    GetTokenInformation(token.get(), informationClass, nullptr, 0, &bytes);
+    REQUIRE(bytes > 0);
+    std::vector<std::byte> buffer(bytes);
+    REQUIRE(GetTokenInformation(
+        token.get(), informationClass, buffer.data(), bytes, &bytes));
+    return buffer;
+}
+
+void checkKeyOwner(const std::filesystem::path &path)
+{
+    const auto security = fileSecurity(path);
+    PSID owner = nullptr;
+    BOOL defaulted = FALSE;
+    REQUIRE(GetSecurityDescriptorOwner(security.get(), &owner, &defaulted));
+    const auto buffer = tokenInformation(TokenUser);
+    const auto *user = reinterpret_cast<const TOKEN_USER *>(buffer.data());
+    INFO(securityText(path));
+    CHECK(EqualSid(owner, user->User.Sid));
+}
+#endif
 
 } // namespace
 
@@ -66,6 +148,12 @@ TEST_CASE("persistent cache contexts reuse a separately stored private key",
     const std::filesystem::path configuration = base.path() / "configuration";
     const auto first = pci::LocalPageCacheContext::createPersistent(
         base.path() / "cache-a", configuration);
+    const std::filesystem::path key =
+        configuration / "point-page-cache-auth-v1.key";
+    const auto originalContents = fileContents(key);
+#ifdef _WIN32
+    checkKeyOwner(key);
+#endif
     const auto second = pci::LocalPageCacheContext::createPersistent(
         base.path() / "cache-b", configuration);
 
@@ -73,12 +161,13 @@ TEST_CASE("persistent cache contexts reuse a separately stored private key",
     CHECK(second->persistent());
     CHECK(first->manifestAuthenticationKey() ==
           second->manifestAuthenticationKey());
-    const std::filesystem::path key =
-        configuration / "point-page-cache-auth-v1.key";
     REQUIRE(std::filesystem::is_regular_file(key));
     CHECK(std::filesystem::file_size(key) ==
           pci::manifestAuthenticationKeyBytes);
-#ifndef _WIN32
+    CHECK(fileContents(key) == originalContents);
+#ifdef _WIN32
+    checkKeyOwner(key);
+#else
     const auto permissions = std::filesystem::status(key).permissions();
     CHECK((permissions & std::filesystem::perms::group_all) ==
           std::filesystem::perms::none);
@@ -161,7 +250,97 @@ TEST_CASE("concurrent cache initialization publishes one authentication key",
     const auto secondContext = second.get();
     CHECK(firstContext->manifestAuthenticationKey() ==
           secondContext->manifestAuthenticationKey());
+    const auto reopened = pci::LocalPageCacheContext::createPersistent(
+        base.path() / "cache-c", configuration);
+    CHECK(reopened->manifestAuthenticationKey() ==
+          firstContext->manifestAuthenticationKey());
+#ifdef _WIN32
+    checkKeyOwner(configuration / "point-page-cache-auth-v1.key");
+#endif
 }
+
+TEST_CASE("persistent cache rejects an unsafe existing key without changing it",
+          "[unit][storage][security]")
+{
+    const TemporaryBase base;
+    const auto configuration = base.path() / "configuration";
+    const auto cache = base.path() / "cache";
+    const auto initial =
+        pci::LocalPageCacheContext::createPersistent(cache, configuration);
+    const auto key = configuration / "point-page-cache-auth-v1.key";
+    const auto originalContents = fileContents(key);
+#ifdef _WIN32
+    PSECURITY_DESCRIPTOR raw = nullptr;
+    const BOOL converted = ConvertStringSecurityDescriptorToSecurityDescriptorW(
+        L"D:P(A;;FA;;;WD)", SDDL_REVISION_1, &raw, nullptr);
+    const LocalAllocation unsafeSecurity(raw, &LocalFree);
+    REQUIRE(converted);
+    PACL dacl = nullptr;
+    BOOL present = FALSE;
+    BOOL defaulted = FALSE;
+    REQUIRE(GetSecurityDescriptorDacl(
+        unsafeSecurity.get(), &present, &dacl, &defaulted));
+    REQUIRE(present);
+    REQUIRE(SetNamedSecurityInfoW(const_cast<wchar_t *>(key.c_str()),
+                                  SE_FILE_OBJECT,
+                                  DACL_SECURITY_INFORMATION |
+                                      PROTECTED_DACL_SECURITY_INFORMATION,
+                                  nullptr,
+                                  nullptr,
+                                  dacl,
+                                  nullptr) == ERROR_SUCCESS);
+    const auto originalSecurity = securityText(key);
+#else
+    std::filesystem::permissions(key,
+                                 std::filesystem::perms::group_write,
+                                 std::filesystem::perm_options::add);
+    const auto originalPermissions = std::filesystem::status(key).permissions();
+#endif
+    CHECK_THROWS_AS(
+        pci::LocalPageCacheContext::createPersistent(cache, configuration),
+        pci::PrivateStorageError);
+    CHECK(fileContents(key) == originalContents);
+#ifdef _WIN32
+    CHECK(securityText(key) == originalSecurity);
+#else
+    CHECK(std::filesystem::status(key).permissions() == originalPermissions);
+#endif
+}
+
+#ifdef _WIN32
+TEST_CASE("persistent cache does not adopt a key owned by the token's group",
+          "[unit][storage][security]")
+{
+    const auto ownerBuffer = tokenInformation(TokenOwner);
+    const auto userBuffer = tokenInformation(TokenUser);
+    const auto *owner =
+        reinterpret_cast<const TOKEN_OWNER *>(ownerBuffer.data());
+    const auto *user = reinterpret_cast<const TOKEN_USER *>(userBuffer.data());
+    if (EqualSid(owner->Owner, user->User.Sid)) {
+        SKIP("Requires a Windows token with a group as its default owner");
+    }
+    const TemporaryBase base;
+    const auto configuration = base.path() / "configuration";
+    const auto cache = base.path() / "cache";
+    const auto initial =
+        pci::LocalPageCacheContext::createPersistent(cache, configuration);
+    const auto key = configuration / "point-page-cache-auth-v1.key";
+    REQUIRE(SetNamedSecurityInfoW(const_cast<wchar_t *>(key.c_str()),
+                                  SE_FILE_OBJECT,
+                                  OWNER_SECURITY_INFORMATION,
+                                  owner->Owner,
+                                  nullptr,
+                                  nullptr,
+                                  nullptr) == ERROR_SUCCESS);
+    const auto originalContents = fileContents(key);
+    const auto originalSecurity = securityText(key);
+    CHECK_THROWS_AS(
+        pci::LocalPageCacheContext::createPersistent(cache, configuration),
+        pci::PrivateStorageError);
+    CHECK(fileContents(key) == originalContents);
+    CHECK(securityText(key) == originalSecurity);
+}
+#endif
 
 #ifndef _WIN32
 TEST_CASE("persistent cache contexts reject linked and broadly writable roots",
