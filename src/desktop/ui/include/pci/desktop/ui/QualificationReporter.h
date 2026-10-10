@@ -36,6 +36,7 @@ public:
     // Drops load-time samples immediately before deterministic replay.
     void beginReplay();
     void record(const RenderMetrics &metrics);
+    [[nodiscard]] std::size_t recordedFrameCount() const noexcept;
     [[nodiscard]] QualificationWriteResult
     write(const QString &status,
           SceneSession &session,

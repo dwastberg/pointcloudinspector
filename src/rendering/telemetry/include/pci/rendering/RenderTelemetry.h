@@ -19,6 +19,10 @@ struct RenderFrameTelemetry {
     double framesPerSecond = 0.0;
     double frameMilliseconds = 0.0;
     double sampledFrameMilliseconds = 0.0;
+    // Wall-clock interval between consecutive continuous frames; unlike the
+    // GPU-timed sample above it includes presentation pacing. Zero when the
+    // frame did not continue a render sequence.
+    double sampledCpuIntervalMilliseconds = 0.0;
     int outputWidth = 0;
     int outputHeight = 0;
     std::uint64_t submittedFrameCount = 0;
@@ -140,6 +144,7 @@ struct RenderTelemetrySnapshot {
 
 struct RenderTelemetryFrameSample {
     std::chrono::duration<double, std::milli> frameTime{};
+    std::chrono::duration<double, std::milli> cpuInterval{};
     int outputWidth = 0;
     int outputHeight = 0;
     std::chrono::nanoseconds snapshotTime{};

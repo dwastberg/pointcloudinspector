@@ -41,6 +41,7 @@ void RenderTelemetryAccumulator::recordFrame(
                                          smoothing * sample.frameTime.count();
         latest_.frame.framesPerSecond = 1000.0 / smoothed;
     }
+    latest_.frame.sampledCpuIntervalMilliseconds = sample.cpuInterval.count();
     latest_.frame.outputWidth = sample.outputWidth;
     latest_.frame.outputHeight = sample.outputHeight;
     latest_.frame.submittedFrameCount =

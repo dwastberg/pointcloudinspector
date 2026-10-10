@@ -18,6 +18,10 @@ struct RenderMetrics {
     // the smoothed diagnostics value; qualification percentiles use this
     // unsmoothed sample.
     double sampledFrameMilliseconds = 0.0;
+    // Unsmoothed wall-clock interval since the previous continuous frame.
+    // Unlike sampledFrameMilliseconds (GPU-timed when available) it exposes
+    // presentation pacing. Zero when no continuous interval was measured.
+    double sampledCpuIntervalMilliseconds = 0.0;
     int outputWidth = 0;
     int outputHeight = 0;
     QString qualificationPhase;

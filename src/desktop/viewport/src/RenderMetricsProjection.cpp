@@ -15,6 +15,8 @@ RenderMetrics projectRenderMetrics(const RenderTelemetrySnapshot &telemetry)
         .framesPerSecond = telemetry.frame.framesPerSecond,
         .frameMilliseconds = telemetry.frame.frameMilliseconds,
         .sampledFrameMilliseconds = telemetry.frame.sampledFrameMilliseconds,
+        .sampledCpuIntervalMilliseconds =
+            telemetry.frame.sampledCpuIntervalMilliseconds,
         .outputWidth = telemetry.frame.outputWidth,
         .outputHeight = telemetry.frame.outputHeight,
         .qualificationPhase = {},

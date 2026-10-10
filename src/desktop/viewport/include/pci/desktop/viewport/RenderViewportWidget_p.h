@@ -268,6 +268,7 @@ private:
     bool continuousMetricsEnabled_ = false;
     std::optional<QualificationCameraPath> qualificationCameraPath_;
     std::chrono::steady_clock::time_point previousCpuFrame_;
+    std::chrono::duration<double, std::milli> lastCpuInterval_{};
     QElapsedTimer navigationTimer_;
 };
 

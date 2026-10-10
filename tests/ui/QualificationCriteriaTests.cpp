@@ -1,4 +1,5 @@
 #include <pci/desktop/ui/QualificationCriteria.h>
+#include <pci/desktop/ui/QualificationReporter.h>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -139,3 +140,26 @@ TEST_CASE("qualification criteria do not invent unavailable measurements",
 }
 
 } // namespace
+
+TEST_CASE("qualification reporter keeps replay frames without a timing sample",
+          "[ui][qualification]")
+{
+    pci::QualificationReporter reporter;
+    reporter.configure("report.json");
+    reporter.beginReplay();
+
+    // The first replay frame has no timing sample yet; dropping it made
+    // camera_path_complete see 359 of 360 frames in tiny scenes.
+    pci::RenderMetrics first = frame(0, 3, QStringLiteral("warmup"));
+    first.sampledFrameMilliseconds = 0.0;
+    first.frameMilliseconds = 0.0;
+    reporter.record(first);
+    reporter.record(frame(1, 3, QStringLiteral("warmup")));
+    reporter.record(frame(2, 3, QStringLiteral("dwell")));
+    CHECK(reporter.recordedFrameCount() == 3);
+
+    // Untimed non-replay samples remain excluded.
+    pci::RenderMetrics idle;
+    reporter.record(idle);
+    CHECK(reporter.recordedFrameCount() == 3);
+}

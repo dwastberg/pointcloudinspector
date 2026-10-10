@@ -868,6 +868,9 @@ RenderViewportWidget::frameDuration(QRhiCommandBuffer *commandBuffer)
     const auto elapsed =
         std::chrono::duration<double, std::milli>(now - previousCpuFrame_);
     previousCpuFrame_ = now;
+    lastCpuInterval_ = frameTimingContinuous_
+                           ? elapsed
+                           : std::chrono::duration<double, std::milli>{};
     if (!frameTimingContinuous_) {
         return {};
     }
@@ -1503,6 +1506,7 @@ void RenderViewportWidget::render(QRhiCommandBuffer *commandBuffer)
     }
     frameExecutor_.telemetry().recordFrame({
         .frameTime = duration,
+        .cpuInterval = lastCpuInterval_,
         .outputWidth = renderTarget()->pixelSize().width(),
         .outputHeight = renderTarget()->pixelSize().height(),
         .snapshotTime = snapshotTime,

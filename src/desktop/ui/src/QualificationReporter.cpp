@@ -8,10 +8,12 @@
 #include <QDateTime>
 #include <QDir>
 #include <QFileInfo>
+#include <QGuiApplication>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSaveFile>
+#include <QScreen>
 #include <QSysInfo>
 
 #include <algorithm>
@@ -54,10 +56,19 @@ void QualificationReporter::record(const RenderMetrics &metrics)
     const double frameMilliseconds = metrics.sampledFrameMilliseconds > 0.0
                                          ? metrics.sampledFrameMilliseconds
                                          : metrics.frameMilliseconds;
-    if (configured() && frameMilliseconds > 0.0 &&
+    // Replay frames are always kept: the first one has no timing sample yet,
+    // and dropping it breaks camera_path_complete. Timing statistics skip
+    // untimed frames separately.
+    if (configured() &&
+        (metrics.qualificationFrame || frameMilliseconds > 0.0) &&
         frameMetrics_.size() < 16'384) {
         frameMetrics_.push_back(metrics);
     }
+}
+
+std::size_t QualificationReporter::recordedFrameCount() const noexcept
+{
+    return frameMetrics_.size();
 }
 
 QualificationWriteResult
@@ -73,9 +84,12 @@ QualificationReporter::write(const QString &status,
     std::vector<double> frameTimes;
     frameTimes.reserve(frameMetrics_.size());
     for (const RenderMetrics &metrics : frameMetrics_) {
-        frameTimes.push_back(metrics.sampledFrameMilliseconds > 0.0
-                                 ? metrics.sampledFrameMilliseconds
-                                 : metrics.frameMilliseconds);
+        const double milliseconds = metrics.sampledFrameMilliseconds > 0.0
+                                        ? metrics.sampledFrameMilliseconds
+                                        : metrics.frameMilliseconds;
+        if (milliseconds > 0.0) {
+            frameTimes.push_back(milliseconds);
+        }
     }
     std::ranges::sort(frameTimes);
     const auto percentile = [&frameTimes](const double fraction) {
@@ -88,6 +102,42 @@ QualificationReporter::write(const QString &status,
                        static_cast<double>(frameTimes.size() - 1U)));
         return frameTimes[index];
     };
+
+    // Interacting-phase timing split by source. The GPU sample is execution
+    // time of an earlier command buffer; the CPU interval is the wall-clock
+    // cadence the user sees. Reporting both keeps presentation pacing from
+    // being mistaken for render cost.
+    const auto summarize = [this](const bool gpu) {
+        std::vector<double> values;
+        for (const RenderMetrics &metrics : frameMetrics_) {
+            if (metrics.qualificationPhase != QStringLiteral("interacting")) {
+                continue;
+            }
+            const double value =
+                gpu ? (metrics.timingSource == QStringLiteral("GPU")
+                           ? metrics.sampledFrameMilliseconds
+                           : 0.0)
+                    : metrics.sampledCpuIntervalMilliseconds;
+            if (value > 0.0) {
+                values.push_back(value);
+            }
+        }
+        std::ranges::sort(values);
+        const auto at = [&values](const double fraction) {
+            return values.empty()
+                       ? QJsonValue(QJsonValue::Null)
+                       : QJsonValue(values[static_cast<std::size_t>(
+                             fraction *
+                             static_cast<double>(values.size() - 1U))]);
+        };
+        return QJsonObject{
+            {QStringLiteral("samples"), static_cast<qint64>(values.size())},
+            {QStringLiteral("p50_ms"), at(0.5)},
+            {QStringLiteral("p95_ms"), at(0.95)},
+            {QStringLiteral("max_ms"), at(1.0)},
+        };
+    };
+    const QScreen *screen = QGuiApplication::primaryScreen();
 
     QJsonArray sources;
     for (const PointCloudLoadJobState &state : session.pointLoadJobStates()) {
@@ -186,6 +236,10 @@ QualificationReporter::write(const QString &status,
             {QStringLiteral("path_frame"),
              static_cast<qint64>(frame.qualificationFrameIndex)},
             {QStringLiteral("frame_ms"), frameMilliseconds},
+            {QStringLiteral("cpu_interval_ms"),
+             frame.sampledCpuIntervalMilliseconds > 0.0
+                 ? QJsonValue(frame.sampledCpuIntervalMilliseconds)
+                 : QJsonValue(QJsonValue::Null)},
             {QStringLiteral("gpu_frame_ms"),
              frame.timingSource == QStringLiteral("GPU")
                  ? QJsonValue(frameMilliseconds)
@@ -324,6 +378,14 @@ QualificationReporter::write(const QString &status,
          static_cast<qint64>(metrics.coveredLayerCount)},
         {QStringLiteral("frame_samples"),
          static_cast<qint64>(frameTimes.size())},
+        {QStringLiteral("interacting_gpu_timing"), summarize(true)},
+        {QStringLiteral("interacting_cpu_interval"), summarize(false)},
+        {QStringLiteral("display_refresh_hz"),
+         screen != nullptr ? QJsonValue(screen->refreshRate())
+                           : QJsonValue(QJsonValue::Null)},
+        {QStringLiteral("display_device_pixel_ratio"),
+         screen != nullptr ? QJsonValue(screen->devicePixelRatio())
+                           : QJsonValue(QJsonValue::Null)},
         {QStringLiteral("frame_ms_min"), percentile(0.0)},
         {QStringLiteral("frame_ms_p50"), percentile(0.5)},
         {QStringLiteral("frame_ms_p95"), percentile(0.95)},

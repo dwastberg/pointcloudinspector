@@ -22,6 +22,7 @@ TEST_CASE("portable render telemetry accumulates deterministic windows",
     telemetry.setPicking({4, 2, 400, 50});
     telemetry.recordFrame({
         .frameTime = 10ms,
+        .cpuInterval = 16ms,
         .outputWidth = 1280,
         .outputHeight = 800,
         .snapshotTime = 1ms,
@@ -41,6 +42,7 @@ TEST_CASE("portable render telemetry accumulates deterministic windows",
     });
     telemetry.recordFrame({
         .frameTime = 20ms,
+        .cpuInterval = 33ms,
         .outputWidth = 1280,
         .outputHeight = 800,
         .snapshotTime = 3ms,
@@ -64,6 +66,7 @@ TEST_CASE("portable render telemetry accumulates deterministic windows",
     CHECK(snapshot->frame.submittedFrameCount == 2);
     CHECK(snapshot->frame.frameMilliseconds == 11.0);
     CHECK(snapshot->frame.sampledFrameMilliseconds == 20.0);
+    CHECK(snapshot->frame.sampledCpuIntervalMilliseconds == 33.0);
     CHECK(snapshot->frame.outputWidth == 1280);
     CHECK(snapshot->frame.outputHeight == 800);
     CHECK(snapshot->frame.sceneSnapshotMilliseconds == 2.0);
