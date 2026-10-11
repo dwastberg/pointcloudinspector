@@ -140,6 +140,7 @@ TEST_CASE("decoded cache root preparation preserves complete state on "
     for (int scenario = 0; scenario < 3; ++scenario) {
         bool succeeded = false;
         for (std::size_t nth = 1; nth < 256 && !succeeded; ++nth) {
+            CAPTURE(scenario, nth);
             pci::DecodedPageCache cache(1024 * 1024);
             populate(cache);
             const auto lease = cache.peek(other, {});
@@ -183,6 +184,40 @@ TEST_CASE("decoded cache root preparation preserves complete state on "
     }
 }
 
+TEST_CASE("decoded cache abandoned root preparation preserves complete state",
+          "[cache][allocation][compatibility][unit]")
+{
+    for (int scenario = 0; scenario < 3; ++scenario) {
+        CAPTURE(scenario);
+        pci::DecodedPageCache cache(1024 * 1024);
+        populate(cache);
+        const auto child = pci::childNodeId({}, 0);
+        cache.setFrameProtection(std::array{pci::DecodedPageKey{other, child}});
+        const auto lease = cache.peek(other, {});
+        const auto replacement =
+            scenario == 0 ? cache.peek(source, {}) : page();
+        const auto id = scenario == 2 ? pci::PointCloudSourceId{3} : source;
+        const auto before = Access::state(cache);
+        const auto allocations = Access::allocations(cache);
+        {
+            auto prepared = cache.prepareSourceRoot(
+                id, replacement, std::array{pci::rootPointCloudNode});
+            REQUIRE(prepared);
+            Access::fail(cache, 1);
+        }
+        Access::fail(cache, 0);
+        CHECK(Access::state(cache) == before);
+        CHECK(Access::allocations(cache) == allocations);
+        CHECK(Access::consistent(cache));
+        CHECK(cache.peek(other, {}) == lease);
+        cache.removeSource(source);
+        cache.trim();
+        cache.clear();
+        CHECK(Access::consistent(cache));
+        CHECK(lease->blocks.size() == 1);
+    }
+}
+
 TEST_CASE("decoded cache ineligible traversal preserves recency and leases",
           "[cache][compatibility][unit]")
 {
@@ -209,10 +244,12 @@ TEST_CASE(
     for (int mutation = 0; mutation < 4; ++mutation) {
         bool succeeded = false;
         for (std::size_t nth = 1; nth < 128 && !succeeded; ++nth) {
+            CAPTURE(mutation, nth);
             pci::DecodedPageCache cache(1024 * 1024);
             populate(cache);
             const auto lease = cache.peek(other, {});
             const auto before = Access::state(cache);
+            const auto allocations = Access::allocations(cache);
             auto payload = page(mutation == 1 ? pci::rootPointCloudNode
                                               : pci::childNodeId({}, 1));
             Access::fail(cache, nth);
@@ -233,8 +270,11 @@ TEST_CASE(
             }
             Access::fail(cache, 0);
             CHECK(Access::consistent(cache));
-            if (failed)
+            if (failed) {
                 CHECK(Access::state(cache) == before);
+                if (mutation == 3)
+                    CHECK(Access::allocations(cache) == allocations);
+            }
             CHECK(cache.peek(other, {}) == lease);
             cache.setByteBudget(1);
             CHECK(Access::consistent(cache));

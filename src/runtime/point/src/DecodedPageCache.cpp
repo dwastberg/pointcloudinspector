@@ -153,7 +153,8 @@ void DecodedPageCache::setPinned(const PointCloudSourceId sourceId,
                                  const std::span<const PointCloudNodeId> nodes)
 {
     const std::scoped_lock lock(mutex_);
-    Keys next(pinned_);
+    // Allocator-extended copies avoid libc++ 22's node leak on copy failure.
+    Keys next(pinned_, pinned_.get_allocator());
     std::erase_if(next, [sourceId](const auto &key) {
         return key.sourceId == sourceId;
     });
@@ -207,13 +208,15 @@ struct DecodedPageCache::RootReplacement::State {
     std::uint64_t residentBytes;
     std::uint64_t residentPoints;
 
+    // Allocator-extended hash-container copies clean up on failure in
+    // libc++ 22.
     explicit State(DecodedPageCache &cache)
         : owner(cache)
         , lock(cache.mutex_)
         , recency(cache.recency_)
-        , entries(cache.entries_)
-        , pinned(cache.pinned_)
-        , sources(cache.sources_)
+        , entries(cache.entries_, cache.entries_.get_allocator())
+        , pinned(cache.pinned_, cache.pinned_.get_allocator())
+        , sources(cache.sources_, cache.sources_.get_allocator())
         , residentBytes(cache.residentBytes_)
         , residentPoints(cache.residentPoints_)
     {
