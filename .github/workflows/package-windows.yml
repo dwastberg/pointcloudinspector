@@ -54,7 +54,7 @@ jobs:
           # open catalogs.
           # WIN32_EXECUTABLE detaches from the console, so the exit code is
           # the gate here rather than the printed report.
-          & "build\package\src\pcinspector.exe" --gdal-capabilities
+          & ".\build\package\src\pcinspector.exe" --gdal-capabilities
           if ($LASTEXITCODE -ne 0) {
             throw "The packaged build cannot import raster catalogs."
           }
