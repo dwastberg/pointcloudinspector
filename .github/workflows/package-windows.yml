@@ -54,7 +54,12 @@ jobs:
           # open catalogs.
           # WIN32_EXECUTABLE detaches from the console, so the exit code is
           # the gate here rather than the printed report.
-          & ".\build\package\src\pcinspector.exe" --gdal-capabilities
+          # Qt's standard setup places Windows executables in the build root.
+          $application = Join-Path $PWD "build\package\pcinspector.exe"
+          if (-not (Test-Path -LiteralPath $application -PathType Leaf)) {
+            throw "Packaged application executable not found: $application"
+          }
+          & $application --gdal-capabilities
           if ($LASTEXITCODE -ne 0) {
             throw "The packaged build cannot import raster catalogs."
           }
