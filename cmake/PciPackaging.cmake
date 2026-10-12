@@ -11,6 +11,10 @@ set(CPACK_PACKAGE_CHECKSUM SHA256)
 set(CPACK_MONOLITHIC_INSTALL ON)
 
 if(WIN32)
+    # WiX converts UTF-8 .txt licenses to RTF; extensionless files are rejected.
+    configure_file("${PROJECT_SOURCE_DIR}/LICENSE"
+                   "${CMAKE_CURRENT_BINARY_DIR}/LICENSE.txt" COPYONLY)
+    set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_BINARY_DIR}/LICENSE.txt")
     set(CPACK_GENERATOR WIX)
     set(CPACK_PACKAGE_FILE_NAME
         "PointCloudInspector-${PROJECT_VERSION}-windows-x64")

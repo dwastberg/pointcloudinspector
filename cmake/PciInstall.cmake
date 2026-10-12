@@ -1,4 +1,7 @@
 if(WIN32 AND PCINSPECTOR_DEPLOY_RUNTIME_DEPENDENCIES)
+    if(POLICY CMP0207)
+        cmake_policy(SET CMP0207 NEW)
+    endif()
     install(TARGETS pcinspector
             RUNTIME_DEPENDENCY_SET pcinspector_runtime_dependencies
             BUNDLE DESTINATION .

@@ -72,6 +72,9 @@ jobs:
           $env:WIX = $wixDirectory
 
           cpack --config build/package/CPackConfig.cmake -G WIX -B dist
+          if ($LASTEXITCODE -ne 0) {
+            throw "CPack failed with exit code $LASTEXITCODE."
+          }
 
           $packages = @(Get-ChildItem dist -Filter *.msi)
           if ($packages.Count -ne 1) {
