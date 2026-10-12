@@ -1,0 +1,97 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate release version
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.version.outputs.value }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Test release validation and publication
+        run: python3 -m unittest discover -s scripts/tests -p test_release.py -v
+      - name: Check tag against CMake project version
+        id: version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          version="$(python3 scripts/release.py version --tag "$RELEASE_TAG")"
+          echo "value=$version" >> "$GITHUB_OUTPUT"
+
+  windows:
+    name: Windows package
+    needs: validate
+    uses: ./.github/workflows/package-windows.yml
+    with:
+      expected_version: ${{ needs.validate.outputs.version }}
+
+  macos:
+    name: macOS package
+    needs: validate
+    uses: ./.github/workflows/package-macos.yml
+    with:
+      expected_version: ${{ needs.validate.outputs.version }}
+
+  linux:
+    name: Linux package
+    needs: validate
+    uses: ./.github/workflows/package-linux-flatpak.yml
+    with:
+      expected_version: ${{ needs.validate.outputs.version }}
+
+  publish:
+    name: Verify assets and publish release
+    needs: [validate, windows, macos, linux]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Download Windows installer and checksum
+        uses: actions/download-artifact@v8
+        with:
+          name: PointCloudInspector-${{ needs.validate.outputs.version }}-windows-x64
+          path: dist/release
+      - name: Download macOS installer and checksum
+        uses: actions/download-artifact@v8
+        with:
+          name: PointCloudInspector-${{ needs.validate.outputs.version }}-macOS-arm64
+          path: dist/release
+      - name: Download Linux installer and checksum
+        uses: actions/download-artifact@v8
+        with:
+          name: PointCloudInspector-${{ needs.validate.outputs.version }}-linux-x86_64
+          path: dist/release
+      - name: Verify packages, upload draft assets, and publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_COMMIT: ${{ github.sha }}
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+        run: >-
+          python3 scripts/release.py publish
+          --tag "$RELEASE_TAG"
+          --commit "$RELEASE_COMMIT"
+          --expected-version "$RELEASE_VERSION"
+          --repo "$GITHUB_REPOSITORY"
+          --directory dist/release
