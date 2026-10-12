@@ -2,6 +2,13 @@ name: Package Linux Flatpak
 
 on:
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      expected_version:
+        description: CMake version required by the release workflow
+        type: string
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -14,11 +21,14 @@ jobs:
     container:
       image: ghcr.io/flathub-infra/flatpak-github-actions:kde-6.10
       options: --privileged
+    env:
+      EXPECTED_VERSION: ${{ inputs.expected_version }}
 
     steps:
       - name: Check out source and test dependencies
         uses: actions/checkout@v6
         with:
+          ref: ${{ github.sha }}
           persist-credentials: false
           submodules: recursive
 
@@ -26,8 +36,7 @@ jobs:
         id: version
         shell: bash
         run: |
-          version="$(sed -n '/project(pcinspector/,/LANGUAGES/{s/.*VERSION \([0-9][0-9.]*\).*/\1/p;}' CMakeLists.txt)"
-          test -n "$version"
+          version="$(python3 scripts/release.py version --expected-version "$EXPECTED_VERSION")"
           echo "value=$version" >> "$GITHUB_OUTPUT"
 
       - name: Build Flatpak and run non-GPU tests
@@ -56,6 +65,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: PointCloudInspector-${{ steps.version.outputs.value }}-linux-x86_64
+          overwrite: true
           path: |
             *.flatpak
             *.flatpak.sha256

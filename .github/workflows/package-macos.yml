@@ -2,6 +2,13 @@ name: Package macOS
 
 on:
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      expected_version:
+        description: CMake version required by the release workflow
+        type: string
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -14,11 +21,14 @@ jobs:
     defaults:
       run:
         shell: bash -el {0}
+    env:
+      EXPECTED_VERSION: ${{ inputs.expected_version }}
 
     steps:
       - name: Check out source and test dependencies
         uses: actions/checkout@v6
         with:
+          ref: ${{ github.sha }}
           persist-credentials: false
           submodules: recursive
 
@@ -37,6 +47,12 @@ jobs:
         run: >-
           cmake --preset package -G Ninja
           -DCMAKE_OSX_ARCHITECTURES=arm64
+
+      - name: Validate package version
+        run: >-
+          python3 scripts/release.py version
+          --version-file build/package/pcinspector-version.txt
+          --expected-version "$EXPECTED_VERSION"
 
       - name: Build with warnings as errors
         run: cmake --build --preset package --parallel 3
@@ -87,6 +103,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: PointCloudInspector-${{ steps.package.outputs.version }}-macOS-arm64
+          overwrite: true
           path: |
             dist/*.dmg
             dist/*.dmg.sha256
@@ -98,4 +115,5 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: package-macos-tests
+          overwrite: true
           path: build/package/Testing/

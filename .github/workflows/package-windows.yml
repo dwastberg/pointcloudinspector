@@ -2,6 +2,13 @@ name: Package Windows
 
 on:
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      expected_version:
+        description: CMake version required by the release workflow
+        type: string
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -14,11 +21,14 @@ jobs:
     defaults:
       run:
         shell: pwsh
+    env:
+      EXPECTED_VERSION: ${{ inputs.expected_version }}
 
     steps:
       - name: Check out source and test dependencies
         uses: actions/checkout@v6
         with:
+          ref: ${{ github.sha }}
           persist-credentials: false
           submodules: recursive
 
@@ -46,8 +56,13 @@ jobs:
 
           $env:CXX = "cl.exe"
           cmake --preset package -G Ninja
+          if ($LASTEXITCODE -ne 0) { throw "CMake configure failed." }
+          $version = python scripts/release.py version --version-file build/package/pcinspector-version.txt --expected-version "$env:EXPECTED_VERSION"
+          if ($LASTEXITCODE -ne 0) { throw "Package version validation failed." }
           cmake --build --preset package --parallel 3
+          if ($LASTEXITCODE -ne 0) { throw "CMake build failed." }
           ctest --preset package
+          if ($LASTEXITCODE -ne 0) { throw "Package tests failed." }
 
           # The packaged GDAL is not the developer machine's GDAL. A non-zero
           # exit here fails the job rather than shipping a build that cannot
@@ -66,8 +81,10 @@ jobs:
 
           $wixDirectory = Join-Path $PWD "build\wix"
           dotnet tool install --tool-path $wixDirectory wix --version 4.0.6
+          if ($LASTEXITCODE -ne 0) { throw "WiX installation failed." }
           $wix = Join-Path $wixDirectory "wix.exe"
           & $wix extension add --global WixToolset.UI.wixext/4.0.6
+          if ($LASTEXITCODE -ne 0) { throw "WiX extension installation failed." }
           $env:PATH = "$wixDirectory;$env:PATH"
           $env:WIX = $wixDirectory
 
@@ -80,13 +97,13 @@ jobs:
           if ($packages.Count -ne 1) {
             throw "Expected exactly one MSI package, found $($packages.Count)."
           }
-          $version = (Get-Content build/package/pcinspector-version.txt -Raw).Trim()
           "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
       - name: Upload MSI artifact
         uses: actions/upload-artifact@v7
         with:
           name: PointCloudInspector-${{ steps.package.outputs.version }}-windows-x64
+          overwrite: true
           path: |
             dist/*.msi
             dist/*.msi.sha256
@@ -98,4 +115,5 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: package-windows-tests
+          overwrite: true
           path: build/package/Testing/

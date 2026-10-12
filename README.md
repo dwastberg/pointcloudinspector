@@ -4,6 +4,10 @@ Point Cloud Inspector is a desktop application for viewing and inspecting point
 clouds alongside raster imagery, elevation data, and vector overlays on Linux,
 Windows, and macOS.
 
+**[Download the latest release](https://github.com/dwastberg/pointcloudinspector/releases/latest)**
+for Windows x64, macOS Apple silicon, or Linux x86_64. Each release includes
+installers, SHA-256 checksums, and installation instructions.
+
 ## Features
 
 - Explore large point clouds with GPU rendering and on-demand loading.
@@ -144,6 +148,13 @@ If dependencies are not found, supply their installation prefixes through
 `CMAKE_PREFIX_PATH`, `Qt6_ROOT`, or `PDAL_ROOT`. Build requirements and presets
 are defined in [CMakeLists.txt](CMakeLists.txt) and
 [CMakePresets.json](CMakePresets.json).
+
+## Releasing
+
+Pushing a matching `vX.Y.Z` tag builds and tests all three packages, verifies
+their checksums, and publishes a GitHub Release with download links. See the
+[release procedure](.github/RELEASING.md) for preparing a version and retrying
+an interrupted release.
 
 ## Architecture overview
 
