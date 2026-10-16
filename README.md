@@ -6,7 +6,7 @@ Windows, and macOS.
 
 **[Download the latest release](https://github.com/dwastberg/pointcloudinspector/releases/latest)**
 for Windows x64, macOS Apple silicon, or Linux x86_64. Each release includes
-installers, SHA-256 checksums, and installation instructions.
+installers, SHA-256 checksums, and release notes.
 
 ## Features
 

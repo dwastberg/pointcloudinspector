@@ -50,9 +50,8 @@ jobs:
 
       - name: Validate package version
         run: >-
-          python3 scripts/release.py version
-          --version-file build/package/pcinspector-version.txt
-          --expected-version "$EXPECTED_VERSION"
+          bash scripts/release.sh version "$EXPECTED_VERSION"
+          build/package/pcinspector-version.txt
 
       - name: Build with warnings as errors
         run: cmake --build --preset package --parallel 3

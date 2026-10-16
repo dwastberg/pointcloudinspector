@@ -57,8 +57,7 @@ jobs:
           $env:CXX = "cl.exe"
           cmake --preset package -G Ninja
           if ($LASTEXITCODE -ne 0) { throw "CMake configure failed." }
-          $version = python scripts/release.py version --version-file build/package/pcinspector-version.txt --expected-version "$env:EXPECTED_VERSION"
-          if ($LASTEXITCODE -ne 0) { throw "Package version validation failed." }
+          $version = & ./scripts/release-version.ps1 -VersionFile build/package/pcinspector-version.txt -ExpectedVersion "$env:EXPECTED_VERSION"
           cmake --build --preset package --parallel 3
           if ($LASTEXITCODE -ne 0) { throw "CMake build failed." }
           ctest --preset package

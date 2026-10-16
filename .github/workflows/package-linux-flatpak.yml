@@ -36,7 +36,7 @@ jobs:
         id: version
         shell: bash
         run: |
-          version="$(python3 scripts/release.py version --expected-version "$EXPECTED_VERSION")"
+          version="$(bash scripts/release.sh version "$EXPECTED_VERSION")"
           echo "value=$version" >> "$GITHUB_OUTPUT"
 
       - name: Build Flatpak and run non-GPU tests

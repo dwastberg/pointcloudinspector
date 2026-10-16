@@ -24,14 +24,13 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - name: Test release validation and publication
-        run: python3 -m unittest discover -s scripts/tests -p test_release.py -v
       - name: Check tag against CMake project version
         id: version
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          version="$(python3 scripts/release.py version --tag "$RELEASE_TAG")"
+          version="$(bash scripts/release.sh version "${RELEASE_TAG#v}")"
+          test "$RELEASE_TAG" = "v$version"
           echo "value=$version" >> "$GITHUB_OUTPUT"
 
   windows:
@@ -82,16 +81,10 @@ jobs:
         with:
           name: PointCloudInspector-${{ needs.validate.outputs.version }}-linux-x86_64
           path: dist/release
-      - name: Verify packages, upload draft assets, and publish
+      - name: Verify packages and publish
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
-          RELEASE_COMMIT: ${{ github.sha }}
-          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
         run: >-
-          python3 scripts/release.py publish
-          --tag "$RELEASE_TAG"
-          --commit "$RELEASE_COMMIT"
-          --expected-version "$RELEASE_VERSION"
-          --repo "$GITHUB_REPOSITORY"
-          --directory dist/release
+          bash scripts/release.sh publish
+          "$RELEASE_TAG" "$GITHUB_REPOSITORY" dist/release

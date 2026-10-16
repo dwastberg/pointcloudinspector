@@ -3,7 +3,8 @@
 The **Release** workflow starts when a `vX.Y.Z` tag is pushed. It builds and tests
 Windows x64 MSI, macOS ARM64 DMG, and Linux x86_64 Flatpak packages from the
 tagged commit, then publishes a release with a download table, generated release
-notes, installation instructions, and a SHA-256 checksum for each installer.
+notes, and a SHA-256 checksum for each installer. Release checks use Bash on
+macOS/Linux and PowerShell on Windows; the release process requires no Python.
 
 ## Prepare and release
 
@@ -23,9 +24,9 @@ notes, installation instructions, and a SHA-256 checksum for each installer.
    ```
 
 4. Follow **Actions → Release**. All three platform jobs must succeed before
-   publication. The publish job checks that the remote tag still points to the
-   build commit, verifies all six local files, uploads them to a draft, downloads
-   and verifies their contents, and then publishes automatically.
+   publication. The publish job verifies all three installers and their checksum
+   files, then creates and publishes the release using GitHub CLI. The tag must
+   already exist and match the CMake version.
 5. Check the release page: each of the three installer links and checksum links
    should download successfully, and the generated notes should describe the
    release. Smoke-test installation, application startup, and opening a point
@@ -43,19 +44,18 @@ manual actions, which create Actions artifacts without publishing a release.
   select **Re-run failed jobs** after resolving any transient cause. Re-run
   package jobs replace their own earlier installer and diagnostic artifacts so
   repeated uploads do not collide.
-- If uploading or verification fails, an unpublished draft may remain. Re-run
-  the failed jobs: the publish job reuses the draft and replaces its expected
-  assets before verifying them. Unexpected draft assets cause a failure and are
-  left untouched; remove unintended assets yourself before retrying.
-- If publication succeeded but the workflow was interrupted, re-running the
-  publish job only checks the published release against the original artifacts.
-  It never replaces published files or release notes.
+- If uploading fails, an unpublished draft may remain. Delete only that
+  unpublished draft from GitHub Releases, keeping the Git tag, then re-run the
+  failed jobs. Draft recovery is manual.
+- If the release already exists, publication fails without changing it. If
+  publication succeeded but the workflow was interrupted, check the release
+  page; there is no need to run publication again.
 - Keep the successful package jobs and their original Actions artifacts when
   retrying. Rebuilding can produce different installer bytes. Expired artifacts
   cannot be recovered by the publish job.
 - For a source or workflow fix, commit it, increment the version, and push a new
-  tag. Never move or reuse an existing release tag. A published release with
-  missing or different assets fails verification and is not overwritten.
+  tag. Never move or reuse an existing release tag. Published releases are not
+  overwritten.
 
 ## Signing and supported packages
 
@@ -70,13 +70,12 @@ package-manager publication are separate future additions.
 From the repository root:
 
 ```sh
-python3 -m unittest discover -s scripts/tests -p test_release.py -v
-python3 scripts/release.py version --tag v0.1.0
+bash -n scripts/release.sh
+bash scripts/release.sh version 0.1.0
 actionlint .github/workflows/release.yml .github/workflows/package-windows.yml \
   .github/workflows/package-macos.yml .github/workflows/package-linux-flatpak.yml
 ```
 
-Use the current version for the tag check. The regression tests use simulated
-GitHub responses and temporary package files; they never create a real release.
-They cover version mismatches, missing or corrupted assets, interrupted uploads,
-draft recovery, remote tag changes, and safe retries of published releases.
+Use the current CMake version for the version check. On Windows, check the
+PowerShell helper with `./scripts/release-version.ps1 -ExpectedVersion 0.1.0`.
+Both helpers optionally check the generated `pcinspector-version.txt` file.
