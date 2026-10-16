@@ -36,6 +36,17 @@
       }
     },
     {
+      "name": "ci-release",
+      "displayName": "Linux release continuous integration",
+      "description": "Optimized non-GPU tests with warnings as errors and packaging-compatible options",
+      "inherits": "ci",
+      "binaryDir": "${sourceDir}/build/ci-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "PCINSPECTOR_BUILD_TOOLS": "OFF"
+      }
+    },
+    {
       "name": "ci-windows",
       "displayName": "Windows continuous integration",
       "description": "RelWithDebInfo tests using the release-compatible MSVC runtime required by conda dependencies",
@@ -146,6 +157,11 @@
       "configuration": "Debug"
     },
     {
+      "name": "ci-release",
+      "configurePreset": "ci-release",
+      "configuration": "Release"
+    },
+    {
       "name": "ci-windows",
       "configurePreset": "ci-windows",
       "configuration": "RelWithDebInfo"
@@ -217,6 +233,12 @@
       "output": {
         "outputOnFailure": true
       }
+    },
+    {
+      "name": "ci-release",
+      "inherits": "ci",
+      "configurePreset": "ci-release",
+      "configuration": "Release"
     },
     {
       "name": "ci-windows",

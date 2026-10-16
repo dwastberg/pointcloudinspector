@@ -2323,8 +2323,9 @@ TEST_CASE("scene panel gates raster colorize and revert actions",
         .availability = pointScene->datasetView().availability,
     };
     const auto rasterData = makeUiRasterData("ortho.tif");
-    const pci::RasterLayer raster{.id = pci::SceneLayerId{8},
-                                  .descriptor = rasterData->descriptor()};
+    pci::RasterLayer raster;
+    raster.id = pci::SceneLayerId{8};
+    raster.descriptor = rasterData->descriptor();
 
     panel.setDocumentSnapshot(
         makeSnapshot({point}, {}, {point.id, raster.id}, {raster}));
@@ -2377,8 +2378,9 @@ TEST_CASE("raster colorize dialog and point inspector expose frozen bake state",
         .availability = pointScene->datasetView().availability,
     };
     const auto rasterData = makeUiRasterData("ortho.tif");
-    const pci::RasterLayer raster{.id = pci::SceneLayerId{18},
-                                  .descriptor = rasterData->descriptor()};
+    pci::RasterLayer raster;
+    raster.id = pci::SceneLayerId{18};
+    raster.descriptor = rasterData->descriptor();
     const auto snapshot =
         makeSnapshot({point}, {}, {point.id, raster.id}, {raster});
     const auto estimateColorize =

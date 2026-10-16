@@ -20,9 +20,19 @@ permissions:
 
 jobs:
   linux:
-    name: Linux build and tests
+    name: Linux ${{ matrix.label }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - preset: ci
+            label: GCC Debug
+          - preset: ci-release
+            label: GCC Release
+    env:
+      CI_PRESET: ${{ matrix.preset }}
     defaults:
       run:
         shell: bash -el {0}
@@ -31,6 +41,7 @@ jobs:
       - name: Check out source and test dependencies
         uses: actions/checkout@v6
         with:
+          ref: ${{ github.sha }}
           persist-credentials: false
           submodules: recursive
 
@@ -42,12 +53,17 @@ jobs:
           cache-downloads: true
           init-shell: bash
 
-      - name: Configure, build, check formatting, and test
-        run: bash scripts/run-linux-ci.sh ci
+      - name: Configure, verify GCC, build, and test (formatting in Debug)
+        run: bash scripts/run-linux-ci.sh "$CI_PRESET"
 
       - name: Retain test diagnostics
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: linux-tests
-          path: build/ci/Testing/
+          name: linux-${{ matrix.preset }}-diagnostics
+          overwrite: true
+          path: build/${{ matrix.preset }}/Testing/
+
+  flatpak:
+    name: Linux Flatpak SDK build and tests
+    uses: ./.github/workflows/package-linux-flatpak.yml

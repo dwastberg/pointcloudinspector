@@ -2,7 +2,7 @@
 set -euo pipefail
 preset=${1:?Missing CI preset}
 case "$preset" in
-    ci) environment=pcinspector-ci ;;
+    ci|ci-release) environment=pcinspector-ci ;;
     clang-tidy|asan-ubsan|tsan) environment=pcinspector-validation ;;
     *) echo "Unknown preset: $preset" >&2; exit 2 ;;
 esac

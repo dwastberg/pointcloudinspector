@@ -20,7 +20,7 @@ import xml.etree.ElementTree as ET
 
 
 ROOT = Path(__file__).resolve().parent.parent
-PRESETS = ("ci", "clang-tidy", "asan-ubsan", "tsan")
+PRESETS = ("ci", "ci-release", "clang-tidy", "asan-ubsan", "tsan")
 MAMBA_PLATFORMS = {"amd64": "linux-64", "arm64": "linux-aarch64"}
 IMAGE_FILES = {
     "Containerfile": "scripts/container/Containerfile",
@@ -191,7 +191,7 @@ def execute_lanes(args, image, inputs, output, summary):
         started = time.monotonic()
         try:
             # Match workflow job limits, while retaining each CTest timeout.
-            timeout = 3600 if preset == "ci" else 5400
+            timeout = 3600 if preset in ("ci", "ci-release") else 5400
             code = run_logged(container_args(args, image, name, inputs, reports, preset),
                               reports / "container.log", timeout)
             item = lane_result(preset, code, reports, time.monotonic() - started)

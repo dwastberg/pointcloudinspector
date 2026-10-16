@@ -3,6 +3,7 @@
 import argparse
 import importlib.util
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -95,9 +96,13 @@ class ContainerTests(unittest.TestCase):
         with patch.object(runner, "run_logged", return_value=1) as run, \
                 patch.object(runner, "remove_container") as cleanup:
             runner.execute_lanes(args, "test-image", self.root, self.root, summary)
-        self.assertEqual(run.call_count, 4)
-        self.assertEqual(cleanup.call_count, 4)
+        self.assertIn("ci-release", runner.PRESETS)
+        self.assertEqual(run.call_count, len(runner.PRESETS))
+        self.assertEqual(cleanup.call_count, len(runner.PRESETS))
         self.assertTrue(all(item["status"] == "failed" for item in summary["configurations"]))
+        for preset, call in zip(runner.PRESETS, run.call_args_list):
+            self.assertEqual(call.args[1], self.root / preset / "container.log")
+            self.assertEqual(call.args[2], 3600 if preset in ("ci", "ci-release") else 5400)
         tsan = run.call_args_list[-1].args[0]
         self.assertIn("sysctl.vm.mmap_rnd_bits=28", tsan)
         self.assertIn(f"source={self.root},target=/input,readonly", tsan)
@@ -152,24 +157,87 @@ class ContainerTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "exactly one Linux Clang"):
             runner.prepare_image_context(repo, self.root / "context", "arm64")
 
-    def test_shared_runner_stops_at_failed_stage_and_preserves_exit_code(self):
+    def shared_runner(self, preset, failed_stage="", long_stress="OFF"):
         scripts = self.root / "scripts"
-        scripts.mkdir()
+        scripts.mkdir(exist_ok=True)
         shutil.copy(SCRIPT.parent / "run-linux-ci.sh", scripts)
         commands = self.root / "bin"
-        commands.mkdir()
-        cmake = commands / "cmake"
-        cmake.write_text('#!/bin/sh\nif [ "$1" = "--build" ]; then echo "build failure"; exit 7; fi\n')
-        cmake.chmod(0o755)
-        import os
-        result = subprocess.run(["bash", str(scripts / "run-linux-ci.sh"), "ci"],
-                                env={**os.environ, "PATH": str(commands) + ":" + os.environ["PATH"]},
-                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-        self.assertEqual(result.returncode, 7)
-        reports = self.root / "build" / "ci" / "Testing"
-        self.assertEqual(json.loads((reports / "result.json").read_text()), {"stage": "build", "exit_code": 7})
-        self.assertIn("build failure", (reports / "build.log").read_text())
-        self.assertFalse((reports / "test.log").exists())
+        commands.mkdir(exist_ok=True)
+        tools = {
+            "cmake": '''case "$1" in
+  --version) echo 'cmake version test'; exit 0 ;;
+  --preset)
+    step=configure
+    mkdir -p "build/$2/CMakeFiles/test"
+    echo 'CMAKE_BUILD_TYPE:STRING=Release' > "build/$2/CMakeCache.txt"
+    echo '[]' > "build/$2/compile_commands.json"
+    echo 'set(CMAKE_CXX_COMPILER_ID "GNU")' > "build/$2/CMakeFiles/test/CMakeCXXCompiler.cmake"
+    echo 'configure details' > "build/$2/CMakeFiles/CMakeConfigureLog.yaml" ;;
+  -DBUILD_DIR=*) step=compiler ;;
+  --build)
+    step=build
+    case "$*" in *format-check*) step=format ;; esac ;;
+  *) exit 99 ;;
+esac
+echo "$*"
+if [ "$step" = "$FAIL_STAGE" ]; then echo "$step failure"; exit 7; fi
+''',
+            "ctest": '''echo "$*"
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = --output-junit ]; then
+    shift
+    echo '<testsuite><testcase name="ok"/></testsuite>' > "$1"
+  fi
+  shift
+done
+if [ "$FAIL_STAGE" = test ]; then echo 'test failure'; exit 8; fi
+''',
+            "c++": "echo 'GCC test'\n",
+            "micromamba": "echo 'https://example.invalid/exact-package-build.tar.bz2'\n",
+        }
+        for name, body in tools.items():
+            command = commands / name
+            command.write_text("#!/bin/sh\nset -eu\n" + body)
+            command.chmod(0o755)
+        return subprocess.run(["bash", str(scripts / "run-linux-ci.sh"), preset],
+                              env={**os.environ, "PATH": str(commands) + ":" + os.environ["PATH"],
+                                   "CXX": "c++", "FAIL_STAGE": failed_stage,
+                                   "PCINSPECTOR_LONG_STRESS": long_stress},
+                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+
+    def test_shared_runner_preserves_failures_and_diagnostics_for_both_gcc_presets(self):
+        for preset in ("ci", "ci-release"):
+            for stage, code in (("configure", 7), ("compiler", 7), ("build", 7), ("test", 8)):
+                with self.subTest(preset=preset, stage=stage):
+                    shutil.rmtree(self.root / "build", ignore_errors=True)
+                    result = self.shared_runner(preset, stage)
+                    self.assertEqual(result.returncode, code, result.stdout.decode())
+                    reports = self.root / "build" / preset / "Testing"
+                    self.assertEqual(json.loads((reports / "result.json").read_text()),
+                                     {"stage": stage, "exit_code": code})
+                    self.assertIn(f"{stage} failure", (reports / f"{stage}.log").read_text())
+                    self.assertTrue((reports / "configuration" / "CMakeCache.txt").is_file())
+                    self.assertTrue((reports / "configuration" / "compile_commands.json").is_file())
+                    self.assertTrue((reports / "configuration" / "CMakeFiles" / "test" /
+                                     "CMakeCXXCompiler.cmake").is_file())
+                    self.assertIn("exact-package-build", (reports / "packages.txt").read_text())
+                    if stage != "test":
+                        self.assertFalse((reports / "test.log").exists())
+
+    def test_shared_runner_separates_reports_and_formats_only_debug(self):
+        for preset in ("ci", "ci-release"):
+            result = self.shared_runner(preset, long_stress="ON")
+            self.assertEqual(result.returncode, 0, result.stdout.decode())
+            reports = self.root / "build" / preset / "Testing"
+            self.assertEqual(json.loads((reports / "result.json").read_text()),
+                             {"stage": "complete", "exit_code": 0})
+            self.assertEqual((reports / "format.log").exists(), preset == "ci")
+            self.assertIn("-DPCINSPECTOR_ENABLE_LONG_STRESS_TESTS=ON",
+                          (reports / "configure.log").read_text())
+            self.assertIn(f"--preset {preset}", (reports / "test.log").read_text())
+            self.assertEqual(runner.lane_result(preset, 0, reports, 1)["status"], "passed")
+        self.assertTrue((self.root / "build" / "ci" / "Testing" / "ctest.xml").is_file())
+        self.assertTrue((self.root / "build" / "ci-release" / "Testing" / "ctest.xml").is_file())
 
 
 if __name__ == "__main__":

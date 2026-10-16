@@ -46,6 +46,7 @@ jobs:
           manifest-path: packaging/flatpak/io.github.dwastberg.PointCloudInspector.yml
           branch: stable
           run-tests: true
+          keep-build-dirs: true
           upload-artifact: false
 
       - name: Verify packaged GDAL capabilities
@@ -71,3 +72,28 @@ jobs:
             *.flatpak.sha256
           compression-level: 0
           if-no-files-found: error
+
+      - name: Record Flatpak SDK and runtime
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p build/flatpak-diagnostics
+          {
+            flatpak --version
+            flatpak list --runtime --columns=application,branch,arch,active:full
+          } > build/flatpak-diagnostics/environment.txt 2>&1
+
+      - name: Retain Flatpak build and test diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: linux-flatpak-diagnostics
+          overwrite: true
+          include-hidden-files: true
+          path: |
+            build/flatpak-diagnostics/
+            .flatpak-builder/build/**/CMakeCache.txt
+            .flatpak-builder/build/**/CMakeFiles/*/CMakeCXXCompiler.cmake
+            .flatpak-builder/build/**/CMakeFiles/CMakeConfigureLog.yaml
+            .flatpak-builder/build/**/compile_commands.json
+            .flatpak-builder/build/**/Testing/**

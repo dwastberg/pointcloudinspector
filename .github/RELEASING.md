@@ -11,9 +11,17 @@ macOS/Linux and PowerShell on Windows; the release process requires no Python.
 1. Update `project(pcinspector VERSION X.Y.Z ...)` in `CMakeLists.txt` and commit
    the version change along with the release workflow and supporting scripts.
    Keep the version numeric; release-candidate suffixes are not supported.
-2. Run the desired manual CI checks against that commit. The release workflow
-   itself requires the non-GPU tests and capability checks in all three package
-   jobs to pass; it does not run the separate sanitizer or GPU suites.
+2. Push the commit and run **Actions → CI Linux** against it before tagging.
+   Require all three jobs to pass: GCC Debug, GCC Release, and the Flatpak SDK
+   build/tests. This checks optimized compiler warnings and Flatpak dependency
+   builds before starting a release. CI Linux creates an installer artifact
+   without publishing a release. Native diagnostics are retained separately as
+   `linux-ci-diagnostics` and `linux-ci-release-diagnostics`; SDK/runtime and
+   CMake/CTest details are in `linux-flatpak-diagnostics`, including on failure.
+   Run the desired Windows, macOS, sanitizer, and GPU checks separately.
+   The release workflow itself requires non-GPU tests and capability checks in
+   all three package jobs to pass; it does not enforce the earlier CI Linux
+   result or run the separate sanitizer or GPU suites.
 3. Push the commit and create an annotated tag pointing to it. For version
    `0.1.0`, when the intended release commit is checked out:
 

@@ -10,7 +10,16 @@ Enable **Include full-scale stress tests** when needed; it defaults to off.
 Each workflow runs independently, so you can start checks in any order or run
 different checks concurrently. Starting the same check again on the same branch
 cancels its earlier run. Pushes and pull requests do not start CI automatically.
-The package workflows also remain separate manual actions.
+**CI Linux** runs GCC Debug (`ci`), GCC Release (`ci-release`), and the reusable
+Flatpak package workflow independently on the selected commit. A failure in one
+does not prevent the others from running. The native jobs use the shared conda
+environment and verify that CMake selected GCC; the Flatpak job builds PDAL and
+the application and runs non-GPU tests inside the KDE SDK. This covers both
+optimized GCC warnings and SDK-specific dependency/configuration failures.
+Formatting runs only in Debug. The long-stress input applies to both native
+jobs; Flatpak always excludes long stress tests.
+
+The package workflows also remain available as separate manual actions.
 
 New workflow files must be present on the repository's default branch before
 GitHub exposes their manual trigger. Once available, the branch selector lets
@@ -43,10 +52,11 @@ git submodule update --init --recursive
 ```
 
 The launcher starts the container service if necessary, builds an Ubuntu 24.04
-dependency image for the selected architecture, and runs `ci`, `clang-tidy`, `asan-ubsan`, and `tsan`
-sequentially. Each configuration gets a fresh container with 4 CPUs and 16 GiB
-memory. The dependency image is reused; source and build directories are fresh
-on every run. Current working-tree changes and nonignored new files are included,
+dependency image for the selected architecture, and runs `ci`, `ci-release`,
+`clang-tidy`, `asan-ubsan`, and `tsan` sequentially. Each configuration gets a
+fresh container with 4 CPUs and 16 GiB memory. The dependency image is reused;
+source and build directories are fresh on every run. Current working-tree
+changes and nonignored new files are included,
 including changes inside initialized submodules. No source changes are made by
 the launcher.
 
@@ -58,9 +68,9 @@ native micromamba and Linux packages are downloaded for each architecture.
 Both environments are installed in one image, so the first run downloads several
 gigabytes. Linux Actions and the containers invoke `run-linux-ci.sh`, preserving
 the presets, build parallelism, test parallelism, sanitizer settings, formatting
-check, and test timeouts. Job limits are 60 minutes for `ci` and 90 minutes for
-each validation configuration. Tests run as an unprivileged Linux user with a
-`0022` umask (so cache parent directories are not group-writable), on the
+check, and test timeouts. Job limits are 60 minutes for `ci` and `ci-release`,
+and 90 minutes for each validation configuration. Tests run as an unprivileged
+Linux user with a `0022` umask (so cache parent directories are not group-writable), on the
 guest filesystem, not on a macOS source mount.
 
 ## Results
@@ -77,7 +87,9 @@ Reports are retained in `build/container-ci/<run-id>/`:
 - `image-context/*.yml`: the effective dependency manifests used for the image.
 - `image-build.log`: image build output, when an image was built.
 - `<preset>/`: container output, configure/build/test logs, CTest diagnostics,
-  CTest and Catch2 JUnit reports, and the resolved dependency list.
+  CTest and Catch2 JUnit reports, compiler details, and the resolved dependency list.
+  `configuration/` retains the CMake cache, compiler detection data, configure
+  log, and compilation commands, including after a configure or build failure.
 - `input/source.tar`: the source snapshot used for that run.
 
 Temporary test containers are removed even after failure or interruption. The
@@ -88,6 +100,7 @@ directories when no longer needed; they contain full source snapshots.
 
 ```sh
 ./scripts/test-linux-container.py --preset tsan
+./scripts/test-linux-container.py --preset ci-release
 ./scripts/test-linux-container.py --preset ci --preset clang-tidy
 ./scripts/test-linux-container.py --long-stress
 ./scripts/test-linux-container.py --cpus 6 --memory 24G
@@ -137,8 +150,18 @@ Linux behavior, but uses ARM packages and does not reproduce CI's x86-64
 architecture. Failures remain failures on both architectures; the launcher never
 automatically switches architecture or relaxes dependency versions.
 
-Only the four Linux CI configurations are covered. Windows, macOS, packaging,
-and native GPU jobs require their own environments.
+The launcher covers the five native Linux configurations. It does not run the
+Flatpak SDK build included in GitHub's CI Linux workflow. Windows, macOS, Flatpak
+packaging, and native GPU jobs require their own environments.
+
+GitHub retains native diagnostics as `linux-ci-diagnostics` and
+`linux-ci-release-diagnostics`, including the exact resolved package list,
+compiler ID/version, cache, compilation commands, and CTest reports. Flatpak
+retains `linux-flatpak-diagnostics`, including SDK/runtime commits and targeted
+CMake/CTest files from the retained build directories for PDAL and the
+application. These artifacts are uploaded even after failure; a failed setup
+may leave only partial diagnostics. Successful Flatpak builds also upload the
+installer and checksum. The full Flatpak build cache is not a diagnostic artifact.
 
 ## TSan dependency exclusions
 
