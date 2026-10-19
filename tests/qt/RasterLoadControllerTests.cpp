@@ -89,12 +89,19 @@ public:
         if (request.phase) {
             request.phase(pci::RasterImportPhase::SamplingRange);
         }
+        while (blockedWhileSampling.load()) {
+            if (request.stopToken.stop_requested()) {
+                throw pci::RasterImportCancelled("cancelled while sampling");
+            }
+            QTest::qSleep(1);
+        }
         return {.data = stubData(disjoint)};
     }
 
     mutable std::atomic_int inspectCalls{0};
     mutable std::atomic_int failuresRemaining{0};
     std::atomic_bool blocked{false};
+    std::atomic_bool blockedWhileSampling{false};
     bool disjoint = false;
 };
 
@@ -159,6 +166,7 @@ TEST_CASE("raster load controller reports the range-sampling phase",
 {
     pci::TaskScheduler scheduler(1, 1024 * 1024);
     auto loader = std::make_shared<FakeRasterLoader>();
+    loader->blockedWhileSampling = true;
     pci::RasterLoadController controller(loader, scheduler);
 
     std::vector<pci::RasterLoadJobPhase> observed;
@@ -172,13 +180,30 @@ TEST_CASE("raster load controller reports the range-sampling phase",
                      });
 
     QSignalSpy loaded(&controller, &pci::RasterLoadController::loaded);
-    static_cast<void>(controller.startImport(request()));
-    REQUIRE(loaded.wait(2000));
+    const pci::LoadJobId job = controller.startImport(request());
 
     // Range sampling is the only part of inspection whose cost depends on the
-    // source rather than its header, so it is reported separately.
-    CHECK(std::ranges::find(observed, pci::RasterLoadJobPhase::SamplingRange) !=
-          observed.end());
+    // source rather than its header, so it is reported separately. Hold the
+    // worker here so completion cannot overtake the queued progress update.
+    REQUIRE(QTest::qWaitFor(
+        [&observed] {
+            return std::ranges::find(observed,
+                                     pci::RasterLoadJobPhase::SamplingRange) !=
+                   observed.end();
+        },
+        2000));
+    REQUIRE(controller.jobState(job).has_value());
+    CHECK(controller.jobState(job)->phase ==
+          pci::RasterLoadJobPhase::SamplingRange);
+    CHECK(loaded.isEmpty());
+
+    loader->blockedWhileSampling = false;
+    REQUIRE(QTest::qWaitFor(
+        [&loaded] {
+            return loaded.size() == 1;
+        },
+        2000));
+    CHECK(controller.jobState(job)->phase == pci::RasterLoadJobPhase::Ready);
     CHECK(observed.back() == pci::RasterLoadJobPhase::Ready);
 }
 
