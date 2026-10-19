@@ -22,6 +22,11 @@ macOS/Linux and PowerShell on Windows; the release process requires no Python.
    The release workflow itself requires non-GPU tests and capability checks in
    all three package jobs to pass; it does not enforce the earlier CI Linux
    result or run the separate sanitizer or GPU suites.
+   For local Flatpak verification on Apple silicon, run
+   `./scripts/test-linux-container.py --preset flatpak --arch arm64`.
+   See [local Flatpak checks](../scripts/README.md#local-flatpak-checks) for
+   reports, caching, and x86-64 verification through Rosetta. ARM64 local results
+   do not replace the x86-64 CI check required before tagging.
 3. Push the commit and create an annotated tag pointing to it. For version
    `0.1.0`, when the intended release commit is checked out:
 

@@ -404,6 +404,17 @@ TEST_CASE(
     std::filesystem::permissions(blocked,
                                  std::filesystem::perms::owner_read |
                                      std::filesystem::perms::owner_exec);
+    // Privileged builders can bypass directory write permissions. Only run
+    // the failure assertions when this filesystem can enforce the fixture.
+    {
+        std::ofstream probe(blocked / "permission-probe");
+        if (probe.is_open()) {
+            probe.close();
+            std::filesystem::permissions(blocked,
+                                         std::filesystem::perms::owner_all);
+            SKIP("Directory write restrictions are bypassed by this process");
+        }
+    }
     const auto result = f.run(pci::StorageMaintenanceAction::CleanUnused);
     // Restore permissions before assertions so the fixture always cleans up.
     for (const auto &directory :

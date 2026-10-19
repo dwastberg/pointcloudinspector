@@ -94,16 +94,19 @@ class ContainerTests(unittest.TestCase):
         args = argparse.Namespace(arch="amd64", cpus=4, memory="16G", dns="1.1.1.1", long_stress=False)
         summary = {"configurations": [{"preset": p, "status": "not-run"} for p in runner.PRESETS]}
         with patch.object(runner, "run_logged", return_value=1) as run, \
+                patch.object(runner, "prepare_native_image", return_value={"image": "native-image"}), \
+                patch.object(runner, "prepare_flatpak_image", return_value={"image": "sdk-image", "cache_volume": "cache"}), \
+                patch.object(runner, "acquire_flatpak_cache"), \
                 patch.object(runner, "remove_container") as cleanup:
-            runner.execute_lanes(args, "test-image", self.root, self.root, summary)
+            runner.execute_lanes(args, self.root, self.root, summary)
         self.assertIn("ci-release", runner.PRESETS)
         self.assertEqual(run.call_count, len(runner.PRESETS))
         self.assertEqual(cleanup.call_count, len(runner.PRESETS))
         self.assertTrue(all(item["status"] == "failed" for item in summary["configurations"]))
         for preset, call in zip(runner.PRESETS, run.call_args_list):
             self.assertEqual(call.args[1], self.root / preset / "container.log")
-            self.assertEqual(call.args[2], 3600 if preset in ("ci", "ci-release") else 5400)
-        tsan = run.call_args_list[-1].args[0]
+            self.assertEqual(call.args[2], 7200 if preset == "flatpak" else 3600 if preset in ("ci", "ci-release") else 5400)
+        tsan = run.call_args_list[runner.PRESETS.index("tsan")].args[0]
         self.assertIn("sysctl.vm.mmap_rnd_bits=28", tsan)
         self.assertIn(f"source={self.root},target=/input,readonly", tsan)
         self.assertNotIn("--kernel-arg", run.call_args_list[0].args[0])
@@ -112,13 +115,124 @@ class ContainerTests(unittest.TestCase):
         args = argparse.Namespace(arch="amd64", cpus=4, memory="16G", dns="1.1.1.1", long_stress=False)
         summary = {"configurations": [{"preset": p, "status": "not-run"} for p in runner.PRESETS]}
         with patch.object(runner, "run_logged", side_effect=KeyboardInterrupt), \
+                patch.object(runner, "prepare_native_image", return_value={"image": "image"}), \
                 patch.object(runner, "remove_container") as cleanup:
             with self.assertRaises(KeyboardInterrupt):
-                runner.execute_lanes(args, "image", self.root, self.root, summary)
+                runner.execute_lanes(args, self.root, self.root, summary)
         cleanup.assert_called_once()
         saved = json.loads((self.root / "summary.json").read_text())
         self.assertEqual(saved["configurations"][0]["status"], "interrupted")
         self.assertEqual(saved["configurations"][1]["status"], "not-run")
+
+    def test_flatpak_only_does_not_prepare_native_image(self):
+        args = argparse.Namespace(arch="arm64", cpus=4, memory="16G", dns="1.1.1.1", long_stress=True)
+        summary = {"configurations": [{"preset": "flatpak", "status": "not-run"}]}
+        with patch.object(runner, "prepare_native_image") as native, \
+                patch.object(runner, "prepare_flatpak_image", return_value={"image": "sdk", "cache_volume": "cache"}), \
+                patch.object(runner, "acquire_flatpak_cache"), \
+                patch.object(runner, "run_logged", return_value=1) as run, \
+                patch.object(runner, "remove_container"):
+            runner.execute_lanes(args, self.root, self.root, summary)
+        native.assert_not_called()
+        self.assertEqual(run.call_args.args[2], 7200)
+        self.assertEqual(summary["configurations"][0]["status"], "failed")
+
+    def test_native_setup_failure_does_not_prevent_flatpak(self):
+        args = argparse.Namespace(arch="arm64", cpus=4, memory="16G", dns="1.1.1.1", long_stress=False)
+        summary = {"configurations": [{"preset": p, "status": "not-run"} for p in ("ci", "ci-release", "flatpak")]}
+        with patch.object(runner, "prepare_native_image", side_effect=RuntimeError("native setup failed")) as native, \
+                patch.object(runner, "prepare_flatpak_image", return_value={"image": "sdk", "cache_volume": "cache"}) as sdk, \
+                patch.object(runner, "acquire_flatpak_cache"), \
+                patch.object(runner, "run_logged", return_value=1) as run, \
+                patch.object(runner, "remove_container") as cleanup:
+            runner.execute_lanes(args, self.root, self.root, summary)
+        native.assert_called_once()
+        sdk.assert_called_once()
+        run.assert_called_once()
+        cleanup.assert_called_once()
+        self.assertIn("native setup failed", summary["configurations"][0]["error"])
+        self.assertEqual(summary["configurations"][2]["status"], "failed")
+
+    def test_flatpak_host_lock_prevents_duplicate_volume_attachment_and_releases(self):
+        with patch.object(runner, "ROOT", self.root), \
+                patch.object(runner.subprocess, "run", return_value=argparse.Namespace(returncode=0)) as command:
+            first = runner.acquire_flatpak_cache("test-cache")
+            try:
+                with self.assertRaisesRegex(RuntimeError, "already in use"):
+                    runner.acquire_flatpak_cache("test-cache")
+                command.assert_called_once()
+            finally:
+                first.close()
+            second = runner.acquire_flatpak_cache("test-cache")
+            second.close()
+            self.assertEqual(command.call_count, 2)
+
+    def test_flatpak_requires_nonempty_bundle_and_matching_checksum(self):
+        (self.root / "result.json").write_text('{"stage":"complete","exit_code":0}')
+        (self.root / "ctest.xml").write_text('<testsuite><testcase name="ok"/></testsuite>')
+        bundle = self.root / "test.flatpak"
+        checksum = self.root / "test.flatpak.sha256"
+        for content in (None, b"", b"bundle"):
+            if content is not None:
+                bundle.write_bytes(content)
+            self.assertEqual(runner.lane_result("flatpak", 0, self.root, 1)["status"], "failed")
+        checksum.write_text("wrong  test.flatpak\n")
+        self.assertEqual(runner.lane_result("flatpak", 0, self.root, 1)["status"], "failed")
+        checksum.write_text(f"{runner.file_sha256(bundle)}  test.flatpak\n")
+        self.assertEqual(runner.lane_result("flatpak", 0, self.root, 1)["status"], "passed")
+
+    def test_flatpak_architecture_and_sandbox_flags_do_not_affect_native_jobs(self):
+        for arch, flatpak_arch in runner.FLATPAK_ARCHES.items():
+            with self.subTest(arch=arch):
+                args = argparse.Namespace(arch=arch, cpus=4, memory="16G", dns="1.1.1.1",
+                                          long_stress=False, flatpak_volume="test-cache")
+                command = runner.container_args(args, "sdk", "test", self.root, self.root, "flatpak")
+                self.assertIn(f"PCI_FLATPAK_ARCH={flatpak_arch}", command)
+                self.assertIn("type=volume,source=test-cache,target=/cache", command)
+                self.assertIn("--cap-add", command)
+                self.assertIn("--masked-path", command)
+                self.assertEqual("--rosetta" in command, arch == "amd64")
+                native = runner.container_args(args, "native", "test", self.root, self.root, "ci")
+                self.assertNotIn("--cap-add", native)
+                self.assertNotIn("--masked-path", native)
+
+    def test_flatpak_cache_is_separated_by_architecture_image_and_checkout(self):
+        metadata = [{"variants": [{"platform": {"architecture": arch}, "digest": f"sha256:{arch}"}
+                                  for arch in ("arm64", "amd64")]}]
+        volumes = []
+        with patch.object(runner, "capture", return_value=json.dumps(metadata)), \
+                patch.object(runner.subprocess, "run", return_value=argparse.Namespace(returncode=0)):
+            for arch in ("arm64", "arm64", "amd64"):
+                args = argparse.Namespace(arch=arch, rebuild_image=False)
+                detail = runner.prepare_flatpak_image(args, self.root, {})
+                volumes.append(detail["cache_volume"])
+                self.assertTrue(detail["image"].endswith(f"@sha256:{arch}"))
+            metadata[0]["variants"][0]["digest"] = "sha256:updated"
+            with patch.object(runner, "capture", return_value=json.dumps(metadata)):
+                volumes.append(runner.prepare_flatpak_image(argparse.Namespace(arch="arm64", rebuild_image=False), self.root, {})["cache_volume"])
+            with patch.object(runner, "ROOT", self.root), \
+                    patch.object(runner, "flatpak_image", return_value="sdk:test"):
+                volumes.append(runner.prepare_flatpak_image(argparse.Namespace(arch="arm64", rebuild_image=False), self.root, {})["cache_volume"])
+        self.assertEqual(volumes[0], volumes[1])
+        self.assertEqual(len(set(volumes)), 4)
+
+    def test_flatpak_manifest_preparation_preserves_packaging_and_test_options(self):
+        spec = importlib.util.spec_from_file_location("flatpak_manifest", SCRIPT.parent / "container/prepare-flatpak-manifest.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        manifest = {"runtime-version": "6.10", "build-options": {"env": {"KEEP": "yes"}},
+                    "modules": [{"name": "dependency"}, {"name": "app", "test-commands": ["ctest"],
+                                 "config-opts": ["-DTEST=ON"], "build-options": {"env": {"CTEST_PARALLEL_LEVEL": "3"}}}]}
+        result = module.prepare(manifest, {"DISPLAY": ":99", "DBUS_SESSION_BUS_ADDRESS": "unix:test"})
+        self.assertEqual(result["modules"][0], {"name": "dependency"})
+        self.assertEqual(result["modules"][-1]["test-commands"], ["ctest"])
+        self.assertEqual(result["modules"][-1]["config-opts"], ["-DTEST=ON"])
+        self.assertTrue(result["modules"][-1]["run-tests"])
+        self.assertEqual(result["build-options"]["env"]["KEEP"], "yes")
+        self.assertNotIn("DISPLAY", result["build-options"]["env"])
+        options = result["modules"][-1]["build-options"]
+        self.assertEqual(options["env"]["DISPLAY"], ":99")
+        self.assertEqual(options["env"]["CTEST_PARALLEL_LEVEL"], "3")
 
     def test_native_arm_omits_rosetta_and_preserves_tsan_settings(self):
         for arch in ("arm64", "amd64"):

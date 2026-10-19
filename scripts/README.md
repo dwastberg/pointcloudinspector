@@ -53,7 +53,7 @@ git submodule update --init --recursive
 
 The launcher starts the container service if necessary, builds an Ubuntu 24.04
 dependency image for the selected architecture, and runs `ci`, `ci-release`,
-`clang-tidy`, `asan-ubsan`, and `tsan` sequentially. Each configuration gets a
+`clang-tidy`, `asan-ubsan`, `tsan`, and `flatpak` sequentially. Each configuration gets a
 fresh container with 4 CPUs and 16 GiB memory. The dependency image is reused;
 source and build directories are fresh on every run. Current working-tree
 changes and nonignored new files are included,
@@ -69,9 +69,65 @@ Both environments are installed in one image, so the first run downloads several
 gigabytes. Linux Actions and the containers invoke `run-linux-ci.sh`, preserving
 the presets, build parallelism, test parallelism, sanitizer settings, formatting
 check, and test timeouts. Job limits are 60 minutes for `ci` and `ci-release`,
-and 90 minutes for each validation configuration. Tests run as an unprivileged
+90 minutes for each validation configuration, and 120 minutes for Flatpak.
+The native tests run as an unprivileged
 Linux user with a `0022` umask (so cache parent directories are not group-writable), on the
 guest filesystem, not on a macOS source mount.
+
+## Local Flatpak checks
+
+To build the package and run its non-GPU tests without running the other checks:
+
+```sh
+./scripts/test-linux-container.py --preset flatpak --arch arm64
+```
+
+Use `--arch amd64` for CI's x86-64 user space through Rosetta. Native ARM64 is
+useful for local iteration on Apple silicon; it does not replace the x86-64
+release check. Both use the KDE SDK image named in the GitHub package workflow,
+the checked-in manifest, the PDAL patch, Release optimization, and warnings as
+errors. A Flatpak-only run does not build or install the micromamba environments.
+The first run downloads the SDK image and builds PROJ, libgeotiff, GDAL, and PDAL.
+
+The Flatpak container enables the capabilities and clears the guest path masks
+needed for its nested sandbox. Builds run as root, matching the CI container.
+These settings apply only to this VM; source is supplied as a read-only archive.
+The launcher starts a D-Bus session and Xvfb inside the VM and checks that the
+SDK can run CMake child processes before building. Namespace or Rosetta probe
+failures remain environment failures, with logs; there is no architecture fallback.
+The x86-64 SDK CMake probe also timed out under Rosetta on the macOS 15.7.1
+validation host; native ARM64 avoids that translation failure.
+
+Flatpak is included in default runs. Its manifest always excludes GPU and long
+stress tests, including when `--long-stress` is used for the native checks.
+The application uses a separate build directory so architecture tests scan
+authored source. The storage permission-failure case explicitly skips when a
+probe confirms that the process bypasses directory write restrictions. The
+unprivileged native configurations still exercise its failure/retry assertions.
+
+The launcher retains a sparse 64 GiB Linux cache volume for each checkout,
+architecture, and SDK image digest. Flatpak's own module checks control reuse;
+application build trees and reports are refreshed for every run. An exclusive
+lock prevents simultaneous runs from sharing the same cache. Downloaded SDK
+images are also reused. `--rebuild-image` refreshes the SDK image; a changed
+image digest selects a separate cache.
+
+The `flatpak/` report directory contains image metadata, the effective manifest,
+environment and build logs, `ctest.xml`, `Testing/Temporary/LastTest.log`, Catch2
+reports, targeted CMake configuration files, and the completed `.flatpak` bundle
+and `.sha256` file. Tests and the GDAL capability check must pass, and the bundle
+checksum must match, for the configuration to pass. Nothing is installed on
+macOS or published to GitHub.
+
+The cache volume name is recorded in `summary.json` under `flatpak.cache_volume`.
+To discard that cache, after its run has stopped:
+
+```sh
+container volume delete <cache-volume-name>
+```
+
+Report directories and cached SDK images are retained separately. Removing one
+does not remove the others.
 
 ## Results
 
@@ -101,6 +157,7 @@ directories when no longer needed; they contain full source snapshots.
 ```sh
 ./scripts/test-linux-container.py --preset tsan
 ./scripts/test-linux-container.py --preset ci-release
+./scripts/test-linux-container.py --preset flatpak --arch arm64
 ./scripts/test-linux-container.py --preset ci --preset clang-tidy
 ./scripts/test-linux-container.py --long-stress
 ./scripts/test-linux-container.py --cpus 6 --memory 24G
@@ -150,9 +207,8 @@ Linux behavior, but uses ARM packages and does not reproduce CI's x86-64
 architecture. Failures remain failures on both architectures; the launcher never
 automatically switches architecture or relaxes dependency versions.
 
-The launcher covers the five native Linux configurations. It does not run the
-Flatpak SDK build included in GitHub's CI Linux workflow. Windows, macOS, Flatpak
-packaging, and native GPU jobs require their own environments.
+The launcher covers the five native Linux configurations and Flatpak packaging.
+Windows, macOS, and native GPU jobs require their own environments.
 
 GitHub retains native diagnostics as `linux-ci-diagnostics` and
 `linux-ci-release-diagnostics`, including the exact resolved package list,

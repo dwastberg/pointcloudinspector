@@ -44,6 +44,7 @@ jobs:
         with:
           bundle: PointCloudInspector-${{ steps.version.outputs.value }}-linux-x86_64.flatpak
           manifest-path: packaging/flatpak/io.github.dwastberg.PointCloudInspector.yml
+          build-dir: flatpak_app
           branch: stable
           run-tests: true
           keep-build-dirs: true
@@ -51,9 +52,9 @@ jobs:
 
       - name: Verify packaged GDAL capabilities
         run: |
-          # The Flatpak runtime ships its own GDAL. Prove it can open catalogs
-          # here rather than leaving it for a user to discover.
-          flatpak run io.github.dwastberg.PointCloudInspector \
+          # Check the GDAL installed in /app without registering the bundle
+          # in the runner's Flatpak installation.
+          flatpak build flatpak_app /app/bin/pcinspector \
             --gdal-capabilities
 
       - name: Create package checksum

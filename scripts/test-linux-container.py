@@ -20,8 +20,9 @@ import xml.etree.ElementTree as ET
 
 
 ROOT = Path(__file__).resolve().parent.parent
-PRESETS = ("ci", "ci-release", "clang-tidy", "asan-ubsan", "tsan")
+PRESETS = ("ci", "ci-release", "clang-tidy", "asan-ubsan", "tsan", "flatpak")
 MAMBA_PLATFORMS = {"amd64": "linux-64", "arm64": "linux-aarch64"}
+FLATPAK_ARCHES = {"amd64": "x86_64", "arm64": "aarch64"}
 IMAGE_FILES = {
     "Containerfile": "scripts/container/Containerfile",
     "entrypoint.sh": "scripts/container/entrypoint.sh",
@@ -93,6 +94,14 @@ def source_files(repo, prefix=Path()):
             yield path, prefix / relative
 
 
+def file_sha256(path):
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def snapshot(repo, destination):
     status = capture(["git", "submodule", "status", "--recursive"], cwd=repo)
     if any(line.startswith(("-", "U")) for line in status.splitlines()):
@@ -100,15 +109,11 @@ def snapshot(repo, destination):
     with tarfile.open(destination, "w", dereference=False) as archive:
         for path, name in source_files(repo):
             archive.add(path, arcname=str(name), recursive=False)
-    digest = hashlib.sha256()
-    with destination.open("rb") as source:
-        for chunk in iter(lambda: source.read(1024 * 1024), b""):
-            digest.update(chunk)
     return {
         "commit": capture(["git", "rev-parse", "HEAD"], cwd=repo),
         "status": capture(["git", "status", "--short"], cwd=repo),
         "submodules": status,
-        "snapshot_sha256": digest.hexdigest(),
+        "snapshot_sha256": file_sha256(destination),
     }
 
 
@@ -125,6 +130,87 @@ def prepare_image_context(repo, context, arch):
         (context / name).write_bytes(data)
         digest.update(name.encode() + b"\0" + data)
     return f"pcinspector-linux-ci:{arch}-" + digest.hexdigest()[:20]
+
+
+def prepare_native_image(args, output, summary):
+    context = output / "image-context"
+    image = prepare_image_context(ROOT, context, args.arch)
+    summary["image"] = image
+    summary["dependency_manifests"] = [str(context / name) for name in IMAGE_FILES if name.endswith(".yml")]
+    existing = subprocess.run(["container", "image", "inspect", image],
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    summary["image_reused"] = existing.returncode == 0 and not args.rebuild_image
+    if not summary["image_reused"]:
+        command = ["container", "build", "--platform", f"linux/{args.arch}", "--cpus", "4",
+                   "--memory", "8G", "--dns", args.dns, "--progress", "plain",
+                   "--build-arg", f"MAMBA_PLATFORM={MAMBA_PLATFORMS[args.arch]}",
+                   "--file", str(context / "Containerfile"), "--tag", image]
+        if args.rebuild_image:
+            command += ["--no-cache", "--pull"]
+        if run_logged(command + [str(context)], output / "image-build.log", 3600):
+            raise RuntimeError("Dependency image build failed; see image-build.log")
+    (output / "image.json").write_text(capture(["container", "image", "inspect", image]) + "\n")
+    return {"image": image}
+
+
+def flatpak_image(repo):
+    # Read the single literal image from CI rather than duplicating its SDK tag.
+    workflow = (repo / ".github/workflows/package-linux-flatpak.yml").read_text()
+    images = re.findall(r"(?m)^\s+image:\s*(ghcr\.io/flathub-infra/flatpak-github-actions:[\w.-]+)\s*$", workflow)
+    if len(images) != 1:
+        raise RuntimeError("Expected one Flatpak SDK container image in the CI workflow")
+    return images[0]
+
+
+def image_variant(metadata, arch):
+    return next((variant for entry in metadata for variant in entry["variants"]
+                 if variant["platform"].get("architecture") == arch), None)
+
+
+def prepare_flatpak_image(args, reports, summary):
+    image = flatpak_image(ROOT)
+    try:
+        metadata = json.loads(capture(["container", "image", "inspect", image]))
+    except subprocess.CalledProcessError:
+        metadata = []
+    if args.rebuild_image or image_variant(metadata, args.arch) is None:
+        if run_logged(["container", "image", "pull", "--platform", f"linux/{args.arch}",
+                       "--progress", "plain", image], reports / "image-pull.log", 3600):
+            raise RuntimeError("Flatpak SDK image download failed; see flatpak/image-pull.log")
+        metadata = json.loads(capture(["container", "image", "inspect", image]))
+    variant = image_variant(metadata, args.arch)
+    if variant is None:
+        raise RuntimeError(f"Flatpak SDK image has no linux/{args.arch} variant")
+    (reports / "image.json").write_text(json.dumps(metadata, indent=2) + "\n")
+    digest = variant["digest"]
+    key = hashlib.sha256(f"{ROOT.resolve()}\0{args.arch}\0{digest}".encode()).hexdigest()[:16]
+    volume = f"pci-flatpak-{args.arch}-{key}"
+    detail = {"image": image.rsplit(":", 1)[0] + "@" + digest,
+              "cache_volume": volume, "architecture": FLATPAK_ARCHES[args.arch]}
+    summary["flatpak"] = detail
+    return detail
+
+
+def acquire_flatpak_cache(volume):
+    import fcntl
+    directory = ROOT / "build/container-ci/cache-locks"
+    directory.mkdir(parents=True, exist_ok=True)
+    handle = (directory / f"{volume}.lock").open("a")
+    try:
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise RuntimeError("Flatpak cache is already in use by another run") from None
+        # Apple volumes cannot be attached to two VMs. Lock on the host before
+        # creating or attaching the disk; a guest-only lock is too late.
+        existing = subprocess.run(["container", "volume", "inspect", volume],
+                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if existing.returncode:
+            subprocess.run(["container", "volume", "create", "-s", "64G", volume], check=True)
+    except BaseException:
+        handle.close()
+        raise
+    return handle
 
 
 def test_counts(path):
@@ -146,6 +232,12 @@ def lane_result(preset, code, directory, elapsed):
     passed = (code == 0 and detail.get("exit_code") == 0
               and detail["stage"] == "complete" and counts is not None
               and counts["total"] > counts["skipped"] and counts["failed"] == 0)
+    if preset == "flatpak" and passed:
+        bundles = list(directory.glob("*.flatpak"))
+        passed = len(bundles) == 1 and bundles[0].stat().st_size > 0
+        if passed:
+            checksum = bundles[0].with_suffix(".flatpak.sha256")
+            passed = checksum.exists() and checksum.read_text().split() == [file_sha256(bundles[0]), bundles[0].name]
     return {"preset": preset, "status": "passed" if passed else "failed",
             "stage": detail["stage"], "exit_code": code,
             "runner_exit_code": detail.get("exit_code"),
@@ -164,6 +256,13 @@ def container_args(args, image, name, inputs, reports, preset):
         command += ["--rosetta"]
     if preset == "tsan":
         command += ["--kernel-arg", "sysctl.vm.mmap_rnd_bits=28"]
+    if preset == "flatpak":
+        command += ["--cap-add", "ALL", "--masked-path", "NONE", "--read-only-path", "NONE",
+                    "--mount", f"type=volume,source={args.flatpak_volume},target=/cache",
+                    "--env", f"PCI_FLATPAK_ARCH={FLATPAK_ARCHES[args.arch]}",
+                    "--env", f"PCI_BUILD_JOBS={args.cpus}", "--entrypoint", "/bin/bash"]
+        return command + [image, "-c", "set -e; mkdir -p /work; tar -xf /input/source.tar -C /work --no-same-owner; "
+                          "cd /work; exec bash scripts/container/flatpak-entrypoint.sh"]
     return command + [image, preset]
 
 
@@ -179,7 +278,9 @@ def interrupt_handler(_signal, _frame):
     raise KeyboardInterrupt
 
 
-def execute_lanes(args, image, inputs, output, summary):
+def execute_lanes(args, inputs, output, summary):
+    images = {}
+    setup_errors = {}
     for index, item in enumerate(summary["configurations"]):
         preset = item["preset"]
         reports = output / preset
@@ -189,23 +290,44 @@ def execute_lanes(args, image, inputs, output, summary):
         reports.chmod(0o777)
         name = "pci-ci-" + uuid.uuid4().hex[:12]
         started = time.monotonic()
+        launched = False
+        cache_lock = None
         try:
+            backend = "flatpak" if preset == "flatpak" else "native"
+            if backend in setup_errors:
+                raise RuntimeError(setup_errors[backend])
+            if backend not in images:
+                try:
+                    images[backend] = (prepare_flatpak_image(args, reports, summary) if backend == "flatpak"
+                                       else prepare_native_image(args, output, summary))
+                except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
+                    setup_errors[backend] = str(error)
+                    raise
+            image = images[backend]["image"]
+            if backend == "flatpak":
+                args.flatpak_volume = images[backend]["cache_volume"]
+                cache_lock = acquire_flatpak_cache(args.flatpak_volume)
             # Match workflow job limits, while retaining each CTest timeout.
-            timeout = 3600 if preset in ("ci", "ci-release") else 5400
+            timeout = 7200 if preset == "flatpak" else 3600 if preset in ("ci", "ci-release") else 5400
+            launched = True
             code = run_logged(container_args(args, image, name, inputs, reports, preset),
                               reports / "container.log", timeout)
             item = lane_result(preset, code, reports, time.monotonic() - started)
         except KeyboardInterrupt:
             item.update(status="interrupted", stage="container", seconds=round(time.monotonic() - started, 1))
             raise
-        except (OSError, ValueError, ET.ParseError, subprocess.SubprocessError) as error:
+        except (OSError, RuntimeError, ValueError, ET.ParseError, subprocess.SubprocessError) as error:
             item.update(status="failed", stage="environment", error=str(error))
         finally:
             summary["configurations"][index] = item
             try:
-                remove_container(name)
+                if launched:
+                    remove_container(name)
             except (OSError, RuntimeError, subprocess.SubprocessError) as error:
                 item.update(status="failed", cleanup_error=str(error))
+            finally:
+                if cache_lock is not None:
+                    cache_lock.close()
             write_json(output / "summary.json", summary)
 
 
@@ -217,6 +339,8 @@ def print_summary(summary, output):
         tests = f"{counts['passed']}/{counts['total']}" if counts else "not run"
         print(f"{item['preset']:<14} {item['status']:<12} {item.get('stage', '-'):<14} "
               f"{tests:<21} {item.get('seconds', '-')}")
+        if item.get("error"):
+            print(f"  {item['error']}")
     if summary.get("error"):
         print("Setup error: " + summary["error"])
     print(f"Reports: {output}\nSummary: {output / 'summary.json'}", flush=True)
@@ -275,24 +399,7 @@ def main(argv=None):
         inputs = output / "input"
         inputs.mkdir()
         summary["source"] = snapshot(ROOT, inputs / "source.tar")
-        context = output / "image-context"
-        image = prepare_image_context(ROOT, context, args.arch)
-        summary["image"] = image
-        summary["dependency_manifests"] = [str(context / name) for name in IMAGE_FILES if name.endswith(".yml")]
-        existing = subprocess.run(["container", "image", "inspect", image],
-                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        summary["image_reused"] = existing.returncode == 0 and not args.rebuild_image
-        if not summary["image_reused"]:
-            command = ["container", "build", "--platform", f"linux/{args.arch}", "--cpus", "4",
-                       "--memory", "8G", "--dns", args.dns, "--progress", "plain",
-                       "--build-arg", f"MAMBA_PLATFORM={MAMBA_PLATFORMS[args.arch]}",
-                       "--file", str(context / "Containerfile"), "--tag", image]
-            if args.rebuild_image:
-                command += ["--no-cache", "--pull"]
-            if run_logged(command + [str(context)], output / "image-build.log", 3600):
-                raise RuntimeError("Dependency image build failed; see image-build.log")
-        (output / "image.json").write_text(capture(["container", "image", "inspect", image]) + "\n")
-        execute_lanes(args, image, inputs, output, summary)
+        execute_lanes(args, inputs, output, summary)
         result = 0 if all(item["status"] == "passed" for item in summary["configurations"]) else 1
     except KeyboardInterrupt:
         summary["error"] = "Interrupted; remaining configurations were not run"

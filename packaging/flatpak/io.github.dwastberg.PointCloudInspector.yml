@@ -84,6 +84,11 @@ modules:
 
   - name: point-cloud-inspector
     buildsystem: cmake-ninja
+    builddir: true
+    run-tests: true
+    test-rule: ''
+    test-commands:
+      - ctest --output-on-failure --no-tests=error --output-junit Testing/ctest.xml
     build-options:
       env:
         CTEST_PARALLEL_LEVEL: "3"
