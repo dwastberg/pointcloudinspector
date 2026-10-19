@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.24...4.2)
 
 project(pcinspector
-        VERSION 0.1.1
+        VERSION 0.1.2
         DESCRIPTION "Cross-platform point-cloud inspector"
         LANGUAGES CXX)
 
