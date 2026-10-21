@@ -4,6 +4,7 @@
 #include <pci/adapters/platform/QtPath.h>
 #include <pci/foundation/CheckedArithmetic.h>
 #include <pci/pointcloud/BlockPartitioner.h>
+#include <pci/pointcloud/GpuPointProperties.h>
 
 #include <QFile>
 #include <QIODeviceBase>
@@ -44,6 +45,7 @@ struct LocalPointPageSourceState {
     bool complete = false;
     bool committed = false;
     bool reused = false;
+    std::uint64_t cachedPersistentBytes = 0;
     std::string failure;
 
     mutable std::atomic_uint64_t requests = 0;
@@ -391,23 +393,39 @@ LocalPointPageSource::loadNode(const PointCloudNodeId id,
         auto payload = std::make_shared<PointCloudNodePayload>();
         payload->nodeId = id;
         payload->sourcePointCount = record.sourcePointCount;
-        BlockPartitioner partitioner(
-            record.tightBounds,
-            record.pointCount,
-            [&payload](PointBlockPtr block) {
-                payload->blocks.push_back(std::move(block));
-            },
-            record.pointCount);
-        for (std::size_t offset = 0; offset < bytes.size();
-             offset += localPointDiskBytes) {
-            if (stopToken.stop_requested()) {
-                throw PointCloudDataSourceCancelled();
-            }
-            partitioner.add(decodeLocalPoint(
-                std::span<const std::byte, localPointDiskBytes>(
-                    bytes.data() + offset, localPointDiskBytes)));
+        const std::size_t pointCount = bytes.size() / sizeof(GpuPoint);
+        auto block = std::make_shared<PointBlock>();
+        block->origin = Vec3d{
+            record.tightBounds.minimum[0],
+            record.tightBounds.minimum[1],
+            record.tightBounds.minimum[2],
+        };
+        block->scale = blockScaleForEdge(
+            std::max(record.tightBounds.maximumExtent(), 1e-9));
+        block->bounds = record.tightBounds;
+        block->points.resize(pointCount);
+        std::memcpy(block->points.data(), bytes.data(), bytes.size());
+        block->attributes.resize(pointCount);
+        std::uint16_t intensityMin = std::numeric_limits<std::uint16_t>::max();
+        std::uint16_t intensityMax = 0;
+        for (std::size_t i = 0; i < pointCount; ++i) {
+            const GpuPoint &pt = block->points[i];
+            const std::uint16_t intensity =
+                gpuPointIntensity(pt.packedProperties);
+            intensityMin = std::min(intensityMin, intensity);
+            intensityMax = std::max(intensityMax, intensity);
+            block->attributes[i] = PointAttributes{
+                .intensity = intensity,
+                .classification =
+                    static_cast<std::uint8_t>(pt.attributes & 0xffU),
+                .returnNumber = gpuPointReturnNumber(pt.packedProperties),
+                .numberOfReturns =
+                    gpuPointNumberOfReturns(pt.packedProperties),
+            };
         }
-        partitioner.finish();
+        block->intensityMinimum = pointCount > 0 ? intensityMin : 0;
+        block->intensityMaximum = pointCount > 0 ? intensityMax : 0;
+        payload->blocks.push_back(std::move(block));
         const std::uint64_t decodedPoints =
             pointCloudNodePayloadPoints(*payload);
         state_->completed.fetch_add(1, std::memory_order_relaxed);
@@ -459,14 +477,21 @@ PointCloudStorageMetrics LocalPointPageSource::storageMetrics() const
     std::filesystem::path directory;
     bool committed = false;
     bool reused = false;
+    std::uint64_t cachedBytes = 0;
     {
         const std::scoped_lock lock(state_->mutex);
         directory = state_->storeDirectory;
         committed = state_->committed;
         reused = state_->reused;
+        cachedBytes = state_->cachedPersistentBytes;
+    }
+    if (cachedBytes == 0 && committed && !directory.empty()) {
+        cachedBytes = directoryUsageBytes(directory);
+        const std::scoped_lock lock(state_->mutex);
+        state_->cachedPersistentBytes = cachedBytes;
     }
     return {
-        .persistentBytes = directoryUsageBytes(directory),
+        .persistentBytes = cachedBytes,
         .localPersistent = true,
         .committed = committed,
         .reused = reused,

@@ -45,6 +45,7 @@ using Milliseconds = std::chrono::duration<double, std::milli>;
 constexpr std::uint64_t bytesPerMiB = std::uint64_t{1024} * 1024;
 
 struct Options {
+    std::uint64_t workers = 0;
     std::uint64_t maximumPoints = 100'000'000;
     std::uint64_t cpuCacheMiB = 1024;
     std::uint64_t timeoutSeconds = 120;
@@ -108,6 +109,7 @@ void usage(FILE *stream)
     std::fprintf(
         stream,
         "usage: pci_multifile_bench [options] <local-las-or-laz...>\n"
+        "  --workers N                scheduler worker count (default auto)\n"
         "  --max-points N             point cap per source (default "
         "100000000)\n"
         "  --cpu-cache-mb N           shared CPU payload budget (default "
@@ -157,7 +159,11 @@ std::optional<Options> parseOptions(const int argc, char **argv)
             usage(stdout);
             return std::nullopt;
         }
-        if (argument == "--max-points") {
+        if (argument == "--workers") {
+            if (!parseNumber(arguments, index, options.workers, "--workers")) {
+                return std::nullopt;
+            }
+        } else if (argument == "--max-points") {
             if (!parseNumber(
                     arguments, index, options.maximumPoints, "--max-points")) {
                 return std::nullopt;
@@ -291,7 +297,14 @@ int main(int argc, char **argv)
         pci::HierarchyDecodeAdmissionPtr{},
         memoryBudget);
     auto document = std::make_shared<pci::SceneDocument>();
-    pci::TaskScheduler scheduler;
+    const std::size_t workerCount = options.workers != 0
+        ? static_cast<std::size_t>(options.workers)
+        : static_cast<std::size_t>(std::clamp(
+              std::thread::hardware_concurrency() / 2U, 2U, 8U));
+    const std::uint64_t activeByteBudget =
+        std::max<std::uint64_t>(pci::TaskScheduler::defaultActiveByteBudget,
+                                workerCount * std::uint64_t{256} * 1024 * 1024);
+    pci::TaskScheduler scheduler(workerCount, activeByteBudget);
     pci::PointCloudLoadController controller(
         std::make_shared<pci::PdalPointCloudLoader>(), scheduler);
     ResidentMemorySampler memory;

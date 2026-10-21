@@ -4,27 +4,32 @@
 #include <cmath>
 
 namespace pci {
-namespace {
-
-std::uint16_t quantizeComponent(const double value,
-                                const double origin,
-                                const double scale) noexcept
-{
-    const double steps = (value - origin) / scale;
-    return static_cast<std::uint16_t>(std::clamp(
-        std::lround(steps), 0L, static_cast<long>(blockQuantizationSteps)));
-}
-
-} // namespace
 
 std::array<std::uint16_t, 3> quantizeToBlock(const Vec3d position,
                                              const Vec3d origin,
                                              const double scale) noexcept
 {
+    const double invScale = scale > 0.0 ? 1.0 / scale : 0.0;
+    return quantizeToBlockFast(position, origin, invScale);
+}
+
+std::array<std::uint16_t, 3> quantizeToBlockFast(const Vec3d position,
+                                                 const Vec3d origin,
+                                                 const double invScale) noexcept
+{
     return {
-        quantizeComponent(position.x, origin.x, scale),
-        quantizeComponent(position.y, origin.y, scale),
-        quantizeComponent(position.z, origin.z, scale),
+        static_cast<std::uint16_t>(std::clamp(
+            std::lround((position.x - origin.x) * invScale),
+            0L,
+            static_cast<long>(blockQuantizationSteps))),
+        static_cast<std::uint16_t>(std::clamp(
+            std::lround((position.y - origin.y) * invScale),
+            0L,
+            static_cast<long>(blockQuantizationSteps))),
+        static_cast<std::uint16_t>(std::clamp(
+            std::lround((position.z - origin.z) * invScale),
+            0L,
+            static_cast<long>(blockQuantizationSteps))),
     };
 }
 

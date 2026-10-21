@@ -2,6 +2,7 @@
 
 #include <pci/foundation/CheckedArithmetic.h>
 #include <pci/operations/PointCloudImport.h>
+#include <pci/pointcloud/GpuPointProperties.h>
 
 #include <QByteArrayView>
 #include <QCryptographicHash>
@@ -13,7 +14,6 @@
 #include <unordered_map>
 
 namespace pci::local_index {
-namespace {
 
 std::uint64_t splitMix64(std::uint64_t value) noexcept
 {
@@ -23,7 +23,74 @@ std::uint64_t splitMix64(std::uint64_t value) noexcept
     return value ^ (value >> 31U);
 }
 
-PointCloudNodeId parentId(const PointCloudNodeId child) noexcept
+void ParentAccumulator::init(const PointCloudNodeId parentId,
+                             const std::uint32_t capacity)
+{
+    id = parentId;
+    samples.reserve(capacity);
+    seed = splitMix64(
+        id.level ^ (static_cast<std::uint64_t>(id.x) << 8U) ^
+        (static_cast<std::uint64_t>(id.y) << 29U) ^
+        (static_cast<std::uint64_t>(id.z) << 50U));
+}
+
+void ParentAccumulator::addSample(const PointSample &sample,
+                                  const std::uint32_t maximumPoints)
+{
+    ++visited;
+    if (samples.size() < maximumPoints) {
+        samples.push_back(sample);
+    } else {
+        const std::uint64_t candidate =
+            splitMix64(seed + visited) % visited;
+        if (candidate < samples.size()) {
+            samples[static_cast<std::size_t>(candidate)] = sample;
+        }
+    }
+}
+
+void ParentAccumulator::extendBounds(const Bounds3d &childBounds)
+{
+    if (!hasBounds) {
+        bounds = childBounds;
+        hasBounds = true;
+    } else {
+        for (std::size_t axis = 0; axis < 3; ++axis) {
+            bounds.minimum[axis] =
+                std::min(bounds.minimum[axis], childBounds.minimum[axis]);
+            bounds.maximum[axis] =
+                std::max(bounds.maximum[axis], childBounds.maximum[axis]);
+        }
+    }
+}
+
+void accumulateChildPage(ParentAccumulator &parent,
+                         const LocalPointPageRecord &childPage,
+                         const std::span<const PointSample> childSamples,
+                         const std::uint32_t parentMaxPoints)
+{
+    parent.sourcePoints = saturatingAdd(parent.sourcePoints, childPage.sourcePointCount);
+    parent.extendBounds(childPage.tightBounds);
+    for (const PointSample &sample : childSamples) {
+        parent.addSample(sample, parentMaxPoints);
+    }
+}
+
+void accumulateChildPage(ParentMap &parents,
+                         const LocalPointPageRecord &childPage,
+                         const std::span<const PointSample> childSamples,
+                         const std::uint32_t parentMaxPoints)
+{
+    const PointCloudNodeId pid = ParentHierarchyBuilder::parentId(childPage.id);
+    auto it = parents.find(pid);
+    if (it == parents.end()) {
+        it = parents.emplace(pid, ParentAccumulator{}).first;
+        it->second.init(pid, parentMaxPoints);
+    }
+    accumulateChildPage(it->second, childPage, childSamples, parentMaxPoints);
+}
+
+PointCloudNodeId ParentHierarchyBuilder::parentId(const PointCloudNodeId child) noexcept
 {
     return {
         .level = static_cast<std::uint8_t>(child.level - 1U),
@@ -33,7 +100,34 @@ PointCloudNodeId parentId(const PointCloudNodeId child) noexcept
     };
 }
 
-} // namespace
+std::vector<PointSample> ParentHierarchyBuilder::sampleChildrenDirect(
+    const std::span<const std::span<const PointSample>> childSamples,
+    const std::uint32_t maximumPoints,
+    const PointCloudNodeId parent)
+{
+    std::vector<PointSample> samples;
+    samples.reserve(maximumPoints);
+    std::uint64_t visited = 0;
+    const std::uint64_t seed =
+        splitMix64(parent.level ^ (static_cast<std::uint64_t>(parent.x) << 8U) ^
+                   (static_cast<std::uint64_t>(parent.y) << 29U) ^
+                   (static_cast<std::uint64_t>(parent.z) << 50U));
+    for (const auto &childSpan : childSamples) {
+        for (const PointSample &sample : childSpan) {
+            ++visited;
+            if (samples.size() < maximumPoints) {
+                samples.push_back(sample);
+            } else {
+                const std::uint64_t candidate =
+                    splitMix64(seed + visited) % visited;
+                if (candidate < samples.size()) {
+                    samples[static_cast<std::size_t>(candidate)] = sample;
+                }
+            }
+        }
+    }
+    return samples;
+}
 
 std::vector<PointSample> ParentHierarchyBuilder::sampleChildren(
     const std::filesystem::path &payloadPath,
@@ -54,28 +148,51 @@ std::vector<PointSample> ParentHierarchyBuilder::sampleChildren(
         splitMix64(parent.level ^ (static_cast<std::uint64_t>(parent.x) << 8U) ^
                    (static_cast<std::uint64_t>(parent.y) << 29U) ^
                    (static_cast<std::uint64_t>(parent.z) << 50U));
-    std::array<std::byte, localPointDiskBytes> bytes{};
+    std::vector<GpuPoint> pageBuffer;
     for (const LocalPointPageRecord &child : children) {
+        if (stopToken.stop_requested()) {
+            throw PointCloudImportCancelled();
+        }
+        heartbeat();
         input.clear();
         input.seekg(static_cast<std::streamoff>(child.payloadOffset));
-        QCryptographicHash payloadHash(QCryptographicHash::Sha256);
-        for (std::uint64_t index = 0; index < child.pointCount; ++index) {
-            if ((visited & 0xffffU) == 0) {
-                if (stopToken.stop_requested()) {
-                    throw PointCloudImportCancelled();
-                }
-                heartbeat();
-            }
-            input.read(reinterpret_cast<char *>(bytes.data()),
-                       static_cast<std::streamsize>(bytes.size()));
-            if (!input) {
-                throw std::runtime_error(
-                    "could not read child page while building parent");
-            }
-            payloadHash.addData(
-                QByteArrayView(reinterpret_cast<const char *>(bytes.data()),
-                               static_cast<qsizetype>(bytes.size())));
-            PointSample sample = decodeLocalPoint(bytes);
+        pageBuffer.resize(child.pointCount);
+        const auto byteSpan = std::as_bytes(std::span(pageBuffer));
+        input.read(reinterpret_cast<char *>(pageBuffer.data()),
+                   static_cast<std::streamsize>(byteSpan.size()));
+        if (!input) {
+            throw std::runtime_error(
+                "could not read child page while building parent");
+        }
+        const auto digest = localPointPayloadDigest(byteSpan);
+        if (digest != child.payloadDigest) {
+            throw std::runtime_error(
+                "child digest changed while building local page parent");
+        }
+        const double extent = std::max(child.tightBounds.maximumExtent(), 1e-9);
+        const double scale = blockScaleForEdge(extent);
+        const Vec3d origin{
+            child.tightBounds.minimum[0],
+            child.tightBounds.minimum[1],
+            child.tightBounds.minimum[2],
+        };
+        for (const GpuPoint &pt : pageBuffer) {
+            PointSample sample{
+                .position = {
+                    origin.x + static_cast<double>(pt.x) * scale,
+                    origin.y + static_cast<double>(pt.y) * scale,
+                    origin.z + static_cast<double>(pt.z) * scale,
+                },
+                .rgba = pt.rgba,
+                .packedAttributes = pt.attributes,
+                .packedProperties = pt.packedProperties,
+                .attributes = {
+                    .intensity = gpuPointIntensity(pt.packedProperties),
+                    .classification = static_cast<std::uint8_t>(pt.attributes & 0xffU),
+                    .returnNumber = gpuPointReturnNumber(pt.packedProperties),
+                    .numberOfReturns = gpuPointNumberOfReturns(pt.packedProperties),
+                },
+            };
             ++visited;
             if (samples.size() < maximumPoints) {
                 samples.push_back(sample);
@@ -86,17 +203,6 @@ std::vector<PointSample> ParentHierarchyBuilder::sampleChildren(
                     samples[static_cast<std::size_t>(candidate)] = sample;
                 }
             }
-        }
-        const QByteArray digestBytes = payloadHash.result();
-        LocalPointPayloadDigest digest{};
-        std::ranges::transform(
-            digestBytes, digest.begin(), [](const char value) {
-                return static_cast<std::uint8_t>(
-                    static_cast<unsigned char>(value));
-            });
-        if (digest != child.payloadDigest) {
-            throw std::runtime_error(
-                "child digest changed while building local page parent");
         }
     }
     return samples;

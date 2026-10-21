@@ -393,40 +393,46 @@ PointFramePlan PointFrameCoordinator::buildPlan(const PointFrameInput &input)
                     .nodeBlockIndex = static_cast<std::uint32_t>(index),
                 };
             };
-            const RenderSelectionResult selection = selector.select(
-                roots,
-                [&layer, &residency, &blockKey, &resident, &lookupPayload](
-                    const PointCloudNodeId id) {
-                    const PointCloudNodePayloadPtr payload =
-                        lookupPayload(layer, id);
-                    bool drawable = static_cast<bool>(payload);
-                    if (payload) {
-                        for (std::size_t index = 0;
-                             index < payload->blocks.size();
-                             ++index) {
-                            if (!resident(blockKey(id, index))) {
-                                drawable = false;
-                                break;
+            RenderSelectionResult selection;
+            if (!layer.snapshot->loadingComplete) {
+                selection.drawNodes = {rootPointCloudNode};
+                selection.requestedNodes = {};
+            } else {
+                selection = selector.select(
+                    roots,
+                    [&layer, &residency, &blockKey, &resident, &lookupPayload](
+                        const PointCloudNodeId id) {
+                        const PointCloudNodePayloadPtr payload =
+                            lookupPayload(layer, id);
+                        bool drawable = static_cast<bool>(payload);
+                        if (payload) {
+                            for (std::size_t index = 0;
+                                 index < payload->blocks.size();
+                                 ++index) {
+                                if (!resident(blockKey(id, index))) {
+                                    drawable = false;
+                                    break;
+                                }
                             }
                         }
-                    }
-                    return RenderSelectionNodeState{
-                        .node = residency->node(id),
-                        .resident = drawable,
-                        .residentPointCount =
-                            payload ? pointCloudNodePayloadPoints(*payload) : 0,
-                    };
-                },
-                [&culler](const Bounds3d &bounds) {
-                    return culler.intersects(bounds);
-                },
-                {.eye = frame.eye,
-                 .verticalFieldOfViewDegrees = frame.verticalFovDegrees,
-                 .viewportHeight = frame.outputHeight,
-                 .orthographicScale = frame.orthographicScale,
-                 .orthographic = frame.orthographic,
-                 .pointBudget = layerRemaining,
-                 .requestPointBudget = hierarchyRequestPointBudget});
+                        return RenderSelectionNodeState{
+                            .node = residency->node(id),
+                            .resident = drawable,
+                            .residentPointCount =
+                                payload ? pointCloudNodePayloadPoints(*payload) : 0,
+                        };
+                    },
+                    [&culler](const Bounds3d &bounds) {
+                        return culler.intersects(bounds);
+                    },
+                    {.eye = frame.eye,
+                     .verticalFieldOfViewDegrees = frame.verticalFovDegrees,
+                     .viewportHeight = frame.outputHeight,
+                     .orthographicScale = frame.orthographicScale,
+                     .orthographic = frame.orthographic,
+                     .pointBudget = layerRemaining,
+                     .requestPointBudget = hierarchyRequestPointBudget});
+            }
             if (selection.drawNodes.size() == 1 &&
                 selection.drawNodes.front() == rootPointCloudNode) {
                 ++result.rootOnlyLayerCount;

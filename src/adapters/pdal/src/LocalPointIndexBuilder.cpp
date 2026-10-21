@@ -120,19 +120,6 @@ StorageEstimate estimateStorage(const std::uint64_t sourcePoints,
     };
 }
 
-std::uint32_t spatialIndex(const double value,
-                           const double minimum,
-                           const double maximum,
-                           const std::uint32_t cells) noexcept
-{
-    const double extent = maximum - minimum;
-    const double normalized = extent > 0.0 ? (value - minimum) / extent : 0.0;
-    return static_cast<std::uint32_t>(
-        std::clamp(std::floor(normalized * static_cast<double>(cells)),
-                   0.0,
-                   static_cast<double>(cells - 1U)));
-}
-
 class SpatialRootPreview final {
 public:
     SpatialRootPreview(const Bounds3d &bounds,
@@ -161,6 +148,12 @@ public:
             }
             ++counts_[*axis];
         }
+        totalCells_ = counts_[0] * counts_[1] * counts_[2];
+        for (std::size_t i = 0; i < 3; ++i) {
+            const double extent = bounds_.maximum[i] - bounds_.minimum[i];
+            invExtent_[i] =
+                extent > 0.0 ? static_cast<double>(counts_[i]) / extent : 0.0;
+        }
         occupied_.reserve(maximumPoints);
     }
 
@@ -170,6 +163,9 @@ public:
             samples_.push_back(sample);
             return;
         }
+        if (samples_.size() >= totalCells_) {
+            return;
+        }
         const std::array<double, 3> components{
             sample.position.x,
             sample.position.y,
@@ -177,11 +173,12 @@ public:
         };
         std::array<std::uint64_t, 3> indices{};
         for (std::size_t axis = 0; axis < 3; ++axis) {
-            indices[axis] =
-                spatialIndex(components[axis],
-                             bounds_.minimum[axis],
-                             bounds_.maximum[axis],
-                             static_cast<std::uint32_t>(counts_[axis]));
+            const double normalized =
+                (components[axis] - bounds_.minimum[axis]) * invExtent_[axis];
+            indices[axis] = static_cast<std::uint32_t>(std::clamp(
+                std::floor(normalized),
+                0.0,
+                static_cast<double>(counts_[axis] - 1U)));
         }
         const std::uint64_t key =
             indices[0] + counts_[0] * (indices[1] + counts_[1] * indices[2]);
@@ -199,6 +196,8 @@ private:
     Bounds3d bounds_;
     bool retainAll_ = false;
     std::array<std::uint64_t, 3> counts_{1, 1, 1};
+    std::array<double, 3> invExtent_{0.0, 0.0, 0.0};
+    std::uint64_t totalCells_ = 1;
     std::unordered_set<std::uint64_t> occupied_;
     std::vector<PointSample> samples_;
 };
@@ -336,6 +335,7 @@ LocalPointPageBuildResult LocalPointIndexBuilder::openOrBuild(
         LocalPointScalarRanges ranges;
         bool haveRanges = false;
         std::uint64_t processed = 0;
+        auto lastTouchTime = std::chrono::steady_clock::now();
 
         const auto publishRoot = [&] {
             if (rootPayload || rootPreview.samples().empty()) {
@@ -409,13 +409,19 @@ LocalPointPageBuildResult LocalPointIndexBuilder::openOrBuild(
             if (processed == rootPublishAfter) {
                 publishRoot();
             }
-            if (progress && processed % 65'536 == 0) {
-                buildLock.touch();
-                progress({
-                    .stage = PointCloudImportStage::Reading,
-                    .processed = processed,
-                    .total = preflight.metadata.sourcePointCount,
-                });
+            if (processed % 65'536 == 0) {
+                const auto now = std::chrono::steady_clock::now();
+                if (now - lastTouchTime >= std::chrono::seconds(2)) {
+                    buildLock.touch();
+                    lastTouchTime = now;
+                }
+                if (progress) {
+                    progress({
+                        .stage = PointCloudImportStage::Reading,
+                        .processed = processed,
+                        .total = preflight.metadata.sourcePointCount,
+                    });
+                }
             }
             return true;
         });
@@ -446,64 +452,91 @@ LocalPointPageBuildResult LocalPointIndexBuilder::openOrBuild(
 
         if (maximumLevel > 0) {
             buildLock.touch();
-            std::vector<LocalPointPageRecord> levelPages =
-                payloadWriter.mergeRuns(runBuilder.runs(),
-                                        maximumLevel,
-                                        options.pointsPerLeaf,
-                                        stopToken,
-                                        [&] {
-                                            buildLock.touch();
-                                        });
+            local_index::ParentMap currentParents;
+            local_index::ParentAccumulator rootAccumulator;
+            rootAccumulator.init(rootPointCloudNode, options.rootPreviewPoints);
+
+            const auto onLeaf = [&](const LocalPointPageRecord &page,
+                                    const std::span<const PointSample> samples) {
+                if (maximumLevel == 1) {
+                    local_index::accumulateChildPage(
+                        rootAccumulator, page, samples, options.rootPreviewPoints);
+                } else {
+                    local_index::accumulateChildPage(
+                        currentParents, page, samples, options.rootPreviewPoints);
+                }
+            };
+
+            const auto inMemory = runBuilder.inMemoryRecords();
+            std::vector<LocalPointPageRecord> levelPages;
+            if (!inMemory.empty()) {
+                levelPages = payloadWriter.writeLeafPages(
+                    inMemory,
+                    maximumLevel,
+                    options.pointsPerLeaf,
+                    stopToken,
+                    [&] { buildLock.touch(); },
+                    onLeaf);
+            } else {
+                levelPages = payloadWriter.mergeRuns(
+                    runBuilder.runs(),
+                    maximumLevel,
+                    options.pointsPerLeaf,
+                    stopToken,
+                    [&] { buildLock.touch(); },
+                    onLeaf);
+            }
             pages.insert(pages.end(), levelPages.begin(), levelPages.end());
+
             for (std::uint8_t level = maximumLevel; level > 1; --level) {
                 buildLock.touch();
-                levelPages = local_index::ParentHierarchyBuilder::buildLevel(
-                    payloadPath,
-                    levelPages,
-                    static_cast<std::uint8_t>(level - 1U),
-                    options.rootPreviewPoints,
-                    [&payloadWriter](const PointCloudNodeId id,
-                                     const std::span<const PointSample> samples,
-                                     const std::uint64_t sourcePoints,
-                                     const Bounds3d &bounds) {
-                        return payloadWriter.appendPage(
-                            id, samples, sourcePoints, bounds);
-                    },
-                    stopToken,
-                    [&] {
-                        buildLock.touch();
-                    });
-                pages.insert(pages.end(), levelPages.begin(), levelPages.end());
+                const std::uint8_t parentLevel =
+                    static_cast<std::uint8_t>(level - 1U);
+                std::vector<PointCloudNodeId> parentIds;
+                parentIds.reserve(currentParents.size());
+                for (const auto &[id, _] : currentParents) {
+                    parentIds.push_back(id);
+                }
+                std::ranges::sort(parentIds);
+
+                local_index::ParentMap nextParents;
+                for (const PointCloudNodeId id : parentIds) {
+                    if (stopToken.stop_requested()) {
+                        throw PointCloudImportCancelled();
+                    }
+                    auto &acc = currentParents[id];
+                    LocalPointPageRecord pageRecord = payloadWriter.appendPage(
+                        id, acc.samples, acc.sourcePoints, acc.bounds);
+                    pages.push_back(pageRecord);
+                    if (parentLevel > 1) {
+                        local_index::accumulateChildPage(
+                            nextParents,
+                            pageRecord,
+                            acc.samples,
+                            options.rootPreviewPoints);
+                    } else {
+                        local_index::accumulateChildPage(
+                            rootAccumulator,
+                            pageRecord,
+                            acc.samples,
+                            options.rootPreviewPoints);
+                    }
+                }
+                currentParents = std::move(nextParents);
             }
 
-            // The early root makes first-time indexing responsive, but it is
-            // sampled from only the first source chunk and can be nearly empty
-            // for flight-line ordered or surface-like data. Replace the
-            // committed root record with a bounded sample of the completed
-            // hierarchy. The old payload bytes remain harmlessly unreachable
-            // in this build; cache reopen always uses this representative root.
-            const std::vector<PointSample> finalRootSamples =
-                local_index::ParentHierarchyBuilder::sampleChildren(
-                    payloadPath,
-                    levelPages,
-                    options.rootPreviewPoints,
-                    rootPointCloudNode,
-                    stopToken,
-                    [&] {
-                        buildLock.touch();
-                    });
-            if (finalRootSamples.empty()) {
+            if (rootAccumulator.samples.empty()) {
                 throw std::runtime_error(
                     "could not construct final local point root preview");
             }
             const LocalPointPageRecord finalRoot =
                 payloadWriter.appendPage(rootPointCloudNode,
-                                         finalRootSamples,
+                                         rootAccumulator.samples,
                                          preflight.metadata.sourcePointCount,
                                          preflight.metadata.sourceBounds);
             rootPayload = makePayload(rootPointCloudNode,
                                       finalRoot.tightBounds,
-                                      finalRootSamples,
+                                      rootAccumulator.samples,
                                       preflight.metadata.sourcePointCount);
             const auto storedRoot = std::ranges::find_if(
                 pages, [](const LocalPointPageRecord &page) {

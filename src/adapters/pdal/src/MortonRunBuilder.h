@@ -1,11 +1,14 @@
 #pragma once
 
+#include "MortonRunRecord.h"
+#include <pci/adapters/pdal/LocalPointPageFormat.h>
 #include <pci/pointcloud/BlockPartitioner.h>
 
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <span>
 #include <vector>
 
 namespace pci::local_index {
@@ -27,6 +30,8 @@ public:
     void finish();
     [[nodiscard]] const std::vector<std::filesystem::path> &
     runs() const noexcept;
+    [[nodiscard]] std::span<const MortonRunRecord>
+    inMemoryRecords() const noexcept;
     [[nodiscard]] static std::size_t recordBytes() noexcept;
 
 private:

@@ -32,6 +32,8 @@ using PointBlockPtr = std::shared_ptr<const PointBlock>;
 
 [[nodiscard]] std::array<std::uint16_t, 3>
 quantizeToBlock(Vec3d position, Vec3d origin, double scale) noexcept;
+[[nodiscard]] std::array<std::uint16_t, 3>
+quantizeToBlockFast(Vec3d position, Vec3d origin, double invScale) noexcept;
 [[nodiscard]] Vec3d decodeBlockPosition(const PointBlock &block,
                                         const GpuPoint &point) noexcept;
 [[nodiscard]] double blockScaleForEdge(double cellEdge) noexcept;

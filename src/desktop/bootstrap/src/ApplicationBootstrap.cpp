@@ -29,10 +29,12 @@
 #include <QTextStream>
 #include <QTimer>
 
+#include <algorithm>
 #include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <stdexcept>
+#include <thread>
 #include <utility>
 
 namespace pci {
@@ -230,7 +232,13 @@ ImportServices
 createImportServices(const std::filesystem::path &workingDirectory)
 {
     ImportServices services;
-    services.scheduler = std::make_unique<TaskScheduler>();
+    const std::size_t workerCount =
+        std::clamp(std::thread::hardware_concurrency() / 2U, 2U, 8U);
+    const std::uint64_t byteBudget =
+        std::max<std::uint64_t>(TaskScheduler::defaultActiveByteBudget,
+                                workerCount * std::uint64_t{256} * 1024 * 1024);
+    services.scheduler =
+        std::make_unique<TaskScheduler>(workerCount, byteBudget);
     services.pointCloud = std::make_unique<PointCloudLoadController>(
         std::make_shared<PdalPointCloudLoader>(), *services.scheduler);
     services.vector = std::make_unique<VectorLoadController>(

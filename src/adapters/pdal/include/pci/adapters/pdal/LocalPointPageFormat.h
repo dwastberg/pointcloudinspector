@@ -15,16 +15,16 @@
 
 namespace pci {
 
-inline constexpr std::uint32_t localPointPageFormatVersion = 2;
+inline constexpr std::uint32_t localPointPageFormatVersion = 3;
 inline constexpr std::uint32_t localPointPageSchemaVersion = 1;
-inline constexpr std::uint32_t localPointPageBuildRevision = 5;
-inline constexpr std::size_t localPointDiskBytes = 34;
+inline constexpr std::uint32_t localPointPageBuildRevision = 6;
+inline constexpr std::size_t localPointDiskBytes = sizeof(GpuPoint);
 
 struct LocalPointPageStoreOptions {
     LocalPageCacheContextPtr cache;
     std::uint32_t pointsPerLeaf = 32'768;
     std::uint32_t rootPreviewPoints = 16'384;
-    std::uint64_t sortMemoryBytes = std::uint64_t{64} * 1024 * 1024;
+    std::uint64_t sortMemoryBytes = std::uint64_t{2} * 1024 * 1024 * 1024;
     std::uint64_t diskCacheBytes = std::uint64_t{20} * 1024 * 1024 * 1024;
 
     bool operator==(const LocalPointPageStoreOptions &) const = default;
@@ -79,9 +79,9 @@ localPointFingerprintHex(const LocalPointSourceFingerprint &fingerprint);
 [[nodiscard]] LocalPointPayloadDigest
 localPointPayloadDigest(std::span<const std::byte> bytes);
 [[nodiscard]] std::array<std::byte, localPointDiskBytes>
-encodeLocalPoint(const PointSample &point) noexcept;
-[[nodiscard]] PointSample
-decodeLocalPoint(std::span<const std::byte, localPointDiskBytes> bytes);
+encodeLocalPoint(const GpuPoint &point) noexcept;
+[[nodiscard]] GpuPoint
+decodeLocalPoint(std::span<const std::byte, localPointDiskBytes> bytes) noexcept;
 
 void writeLocalPointManifest(
     const std::filesystem::path &path,

@@ -32,7 +32,7 @@ constexpr std::array<std::byte, 8> manifestMagic{std::byte{'P'},
                                                  std::byte{'G'},
                                                  std::byte{'S'},
                                                  std::byte{'0'},
-                                                 std::byte{'2'}};
+                                                 std::byte{'3'}};
 constexpr std::uint32_t endianMarker = 0x01020304U;
 constexpr std::uint64_t sourceSampleBytes = std::uint64_t{64} * 1024;
 constexpr std::uint64_t maximumManifestBytes = std::uint64_t{256} * 1024 * 1024;
@@ -362,40 +362,18 @@ localPointPayloadDigest(const std::span<const std::byte> bytes)
 }
 
 std::array<std::byte, localPointDiskBytes>
-encodeLocalPoint(const PointSample &point) noexcept
+encodeLocalPoint(const GpuPoint &point) noexcept
 {
-    std::vector<std::byte> bytes;
-    bytes.reserve(localPointDiskBytes);
-    appendDouble(bytes, point.position.x);
-    appendDouble(bytes, point.position.y);
-    appendDouble(bytes, point.position.z);
-    appendInteger(bytes, point.rgba);
-    appendInteger(bytes, point.packedAttributes);
-    appendInteger(bytes, point.packedProperties);
     std::array<std::byte, localPointDiskBytes> result{};
-    std::ranges::copy(bytes, result.begin());
+    std::memcpy(result.data(), &point, sizeof(GpuPoint));
     return result;
 }
 
-PointSample
-decodeLocalPoint(const std::span<const std::byte, localPointDiskBytes> bytes)
+GpuPoint
+decodeLocalPoint(const std::span<const std::byte, localPointDiskBytes> bytes) noexcept
 {
-    ByteReader reader(bytes);
-    PointSample result;
-    result.position = {reader.real(), reader.real(), reader.real()};
-    result.rgba = reader.integer<std::uint32_t>();
-    result.packedAttributes = reader.integer<std::uint16_t>();
-    result.packedProperties = reader.integer<std::uint32_t>();
-    result.attributes = {
-        .intensity = gpuPointIntensity(result.packedProperties),
-        .classification =
-            static_cast<std::uint8_t>(result.packedAttributes & 0xffU),
-        .returnNumber = gpuPointReturnNumber(result.packedProperties),
-        .numberOfReturns = gpuPointNumberOfReturns(result.packedProperties),
-    };
-    if (!isFinite(result.position)) {
-        throw std::runtime_error("non-finite point in local page payload");
-    }
+    GpuPoint result{};
+    std::memcpy(&result, bytes.data(), sizeof(GpuPoint));
     return result;
 }
 
