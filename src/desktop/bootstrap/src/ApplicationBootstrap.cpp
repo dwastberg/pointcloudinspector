@@ -232,8 +232,10 @@ ImportServices
 createImportServices(const std::filesystem::path &workingDirectory)
 {
     ImportServices services;
+    const unsigned int hw = std::thread::hardware_concurrency();
     const std::size_t workerCount =
-        std::clamp(std::thread::hardware_concurrency() / 2U, 2U, 8U);
+        hw > 2 ? static_cast<std::size_t>(hw - 1)
+               : static_cast<std::size_t>(std::max(1U, hw));
     const std::uint64_t byteBudget =
         std::max<std::uint64_t>(TaskScheduler::defaultActiveByteBudget,
                                 workerCount * std::uint64_t{256} * 1024 * 1024);

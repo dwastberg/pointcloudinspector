@@ -109,7 +109,7 @@ void usage(FILE *stream)
     std::fprintf(
         stream,
         "usage: pci_multifile_bench [options] <local-las-or-laz...>\n"
-        "  --workers N                scheduler worker count (default auto)\n"
+        "  --workers N                scheduler worker count (default min(files, hardware_concurrency))\n"
         "  --max-points N             point cap per source (default "
         "100000000)\n"
         "  --cpu-cache-mb N           shared CPU payload budget (default "
@@ -297,10 +297,12 @@ int main(int argc, char **argv)
         pci::HierarchyDecodeAdmissionPtr{},
         memoryBudget);
     auto document = std::make_shared<pci::SceneDocument>();
+    const std::size_t defaultWorkers = std::min<std::size_t>(
+        paths.size(),
+        std::max<std::size_t>(2, std::thread::hardware_concurrency()));
     const std::size_t workerCount = options.workers != 0
         ? static_cast<std::size_t>(options.workers)
-        : static_cast<std::size_t>(std::clamp(
-              std::thread::hardware_concurrency() / 2U, 2U, 8U));
+        : defaultWorkers;
     const std::uint64_t activeByteBudget =
         std::max<std::uint64_t>(pci::TaskScheduler::defaultActiveByteBudget,
                                 workerCount * std::uint64_t{256} * 1024 * 1024);
