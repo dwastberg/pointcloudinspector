@@ -100,9 +100,7 @@ void PointSceneCoordinator::loadPointClouds(
     batchOrder_.reserve(sourcePaths.size());
     progressTimer_.stop();
     emit session_.loadingChanged(
-        true,
-        replace,
-        QStringLiteral("%1 point clouds").arg(sourcePaths.size()));
+        true, true, QStringLiteral("%1 point clouds").arg(sourcePaths.size()));
     if (!replace) {
         emit session_.showTasksRequested();
     }
@@ -160,10 +158,9 @@ void PointSceneCoordinator::beginLoad(const std::filesystem::path &sourcePath,
     timings_ = {};
     loadingProgress_.reset();
     progressTimer_.stop();
-    const bool showOverlay = mode == PointCloudLoadMode::Replace ||
-                             !session_.document_->hasPointCloudLayers();
-    emit session_.loadingChanged(true, showOverlay, pathToQString(sourcePath));
-    if (!showOverlay) {
+    emit session_.loadingChanged(true, true, pathToQString(sourcePath));
+    if (mode == PointCloudLoadMode::Add &&
+        session_.document_->hasPointCloudLayers()) {
         emit session_.showTasksRequested();
     }
     emit session_.loadingProgressChanged(loadingProgress_.state());

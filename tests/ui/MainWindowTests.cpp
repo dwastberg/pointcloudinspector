@@ -1307,6 +1307,95 @@ TEST_CASE("unified open loads a mixed point vector and raster selection",
     CHECK(rasterLoader->lastSourcePath == std::filesystem::path("ortho.tif"));
 }
 
+TEST_CASE("unified open shows progress for every point cloud addition",
+          "[ui][mainwindow][source-open][loading]")
+{
+    std::vector<std::filesystem::path> additions;
+    SECTION("single file")
+    {
+        additions = {"second.laz"};
+    }
+    SECTION("file batch")
+    {
+        additions = {"second.laz", "third.laz"};
+    }
+
+    auto viewport = std::make_unique<FakeViewport>();
+    FakeViewport *viewportPointer = viewport.get();
+    auto services = makeTestImportServices(std::make_shared<ImmediateLoader>());
+    pci::MainWindow window(std::move(viewport), std::move(services), 100);
+    window.show();
+
+    auto *overlay =
+        window.findChild<QWidget *>(QStringLiteral("loadingOverlay"));
+    auto *bar =
+        window.findChild<QProgressBar *>(QStringLiteral("loadingProgressBar"));
+    auto *open = window.findChild<QAction *>(QStringLiteral("openFilesAction"));
+    REQUIRE(overlay != nullptr);
+    REQUIRE(bar != nullptr);
+    REQUIRE(open != nullptr);
+
+    window.openSources({"first.laz"});
+    REQUIRE(waitFor([&] {
+        return viewportPointer->document() &&
+               viewportPointer->document()->layerCount() == 1;
+    }));
+    const auto originalLayer =
+        viewportPointer->document()->pointLayers().front();
+    viewportPointer->emitDisplayReady(originalLayer.id);
+    REQUIRE(waitFor([&] {
+        return open->isEnabled() && overlay->isHidden();
+    }));
+    const int framedBeforeAdd = viewportPointer->frameVisibleLayersCount();
+    const int documentsSetBeforeAdd = viewportPointer->documentSetCount();
+
+    window.openSources(additions);
+    CHECK(overlay->isVisible());
+    CHECK(bar->value() == 0);
+    CHECK_FALSE(open->isEnabled());
+    REQUIRE(waitFor([&] {
+        return viewportPointer->document()->layerCount() ==
+                   1 + additions.size() &&
+               bar->value() >= 70;
+    }));
+    CHECK(overlay->isVisible());
+    CHECK(bar->value() < 100);
+    const auto loadedDocument = viewportPointer->document();
+    const auto layers = loadedDocument->pointLayers();
+    CHECK(layers.front().id == originalLayer.id);
+    CHECK(layers.front().descriptor.sourceId ==
+          originalLayer.descriptor.sourceId);
+    CHECK(viewportPointer->frameVisibleLayersCount() == framedBeforeAdd);
+    CHECK(viewportPointer->documentSetCount() == documentsSetBeforeAdd);
+
+    for (std::size_t index = 1; index < layers.size(); ++index) {
+        CHECK(layers[index].descriptor.metadata.sourcePath ==
+              additions[index - 1]);
+        CHECK(overlay->isVisible());
+        CHECK_FALSE(open->isEnabled());
+        viewportPointer->emitDisplayReady(layers[index].id);
+    }
+    REQUIRE(waitFor([&] {
+        return open->isEnabled() && bar->value() == 100;
+    }));
+    REQUIRE(waitFor([&] {
+        return overlay->isHidden();
+    }));
+
+    window.openSources({"last.laz"});
+    CHECK(overlay->isVisible());
+    CHECK(bar->value() == 0);
+    CHECK_FALSE(open->isEnabled());
+    REQUIRE(waitFor([&] {
+        return viewportPointer->document()->layerCount() == layers.size() + 1;
+    }));
+    viewportPointer->emitDisplayReady(
+        viewportPointer->document()->pointLayers().back().id);
+    REQUIRE(waitFor([&] {
+        return open->isEnabled() && overlay->isHidden();
+    }));
+}
+
 TEST_CASE("unified open routes GeoPackage exclusively to vector loading",
           "[ui][mainwindow][source-open][gpkg]")
 {
@@ -3140,8 +3229,11 @@ TEST_CASE("main window keeps replacements transactional and removes cancelled "
         window.findChild<QAction *>(QStringLiteral("openFilesAction"));
     auto *cancel =
         window.findChild<QPushButton *>(QStringLiteral("loadingCancelButton"));
+    auto *overlay =
+        window.findChild<QWidget *>(QStringLiteral("loadingOverlay"));
     REQUIRE(openAction != nullptr);
     REQUIRE(cancel != nullptr);
+    REQUIRE(overlay != nullptr);
 
     window.loadPointCloud("first.las");
     REQUIRE(waitFor([&] {
@@ -3183,16 +3275,19 @@ TEST_CASE("main window keeps replacements transactional and removes cancelled "
           std::filesystem::path("first.las"));
 
     loader->allowGatedCompletion = false;
-    window.loadPointCloud("pending.las", pci::PointCloudLoadMode::Add);
+    window.openSources({"pending.las"});
+    CHECK(overlay->isVisible());
     REQUIRE(waitFor([&] {
         return loader->gatedLoads.load() == 2 &&
                viewportPointer->document()->layerCount() == 2;
     }));
     cancel->click();
     REQUIRE(waitFor([&] {
-        return openAction->isEnabled() &&
+        return openAction->isEnabled() && overlay->isHidden() &&
                viewportPointer->document()->layerCount() == 1;
     }));
+    CHECK(viewportPointer->document()->pointLayers().front().id ==
+          originalLayer.id);
     const auto afterCancelledAddition = viewportPointer->document();
 
     loader->allowGatedCompletion = true;
@@ -3210,7 +3305,7 @@ TEST_CASE("main window keeps replacements transactional and removes cancelled "
     }));
 }
 
-TEST_CASE("replacement failure after preview restores the previous document",
+TEST_CASE("point cloud failure after preview preserves the original layers",
           "[ui][mainwindow][scene-session-characterization][rollback]")
 {
     auto loader = std::make_shared<FirstImmediateThenPreviewFailureLoader>();
@@ -3228,33 +3323,52 @@ TEST_CASE("replacement failure after preview restores the previous document",
     const auto original = viewportPointer->document();
     viewportPointer->emitDisplayReady(original->pointLayers().front().id);
 
-    window.loadPointCloud("broken-after-preview.las",
-                          pci::PointCloudLoadMode::Replace);
+    bool replace = false;
+    SECTION("replacement")
+    {
+        replace = true;
+        window.loadPointCloud("broken-after-preview.las",
+                              pci::PointCloudLoadMode::Replace);
+    }
+    SECTION("addition through unified open")
+    {
+        window.openSources({"broken-after-preview.las"});
+    }
+    auto *overlay =
+        window.findChild<QWidget *>(QStringLiteral("loadingOverlay"));
+    auto *open = window.findChild<QAction *>(QStringLiteral("openFilesAction"));
+    REQUIRE(overlay != nullptr);
+    REQUIRE(open != nullptr);
+    CHECK(overlay->isVisible());
     REQUIRE(waitFor([&] {
         return loader->previewPublished.load() &&
-               viewportPointer->document() != original;
+               viewportPointer->document() != original &&
+               viewportPointer->document()->layerCount() == (replace ? 1 : 2);
     }));
-    REQUIRE(viewportPointer->document()->layerCount() == 1);
-    const pci::DocumentGeneration replacementGeneration =
+    const pci::DocumentGeneration previewGeneration =
         viewportPointer->document()->generation;
     CHECK(viewportPointer->document()
               ->pointLayers()
-              .front()
+              .back()
               .descriptor.metadata.sourcePath.filename() ==
           std::filesystem::path("broken-after-preview.las"));
 
     loader->releaseFailure = true;
     REQUIRE(waitFor([&] {
         return viewportPointer->document() != original &&
+               viewportPointer->document()->layerCount() == 1 &&
                viewportPointer->document()
                        ->pointLayers()
                        .front()
                        .descriptor.metadata.sourcePath.filename() ==
                    std::filesystem::path("original.las") &&
                window.statusBar()->currentMessage().contains(
-                   QStringLiteral("Loading failed"));
+                   QStringLiteral("Loading failed")) &&
+               overlay->isHidden() && open->isEnabled();
     }));
-    CHECK(viewportPointer->document()->generation > replacementGeneration);
+    if (replace) {
+        CHECK(viewportPointer->document()->generation > previewGeneration);
+    }
     CHECK(viewportPointer->document()
               ->pointLayers()
               .front()
