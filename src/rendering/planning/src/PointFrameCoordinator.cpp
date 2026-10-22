@@ -419,7 +419,8 @@ PointFramePlan PointFrameCoordinator::buildPlan(const PointFrameInput &input)
                             .node = residency->node(id),
                             .resident = drawable,
                             .residentPointCount =
-                                payload ? pointCloudNodePayloadPoints(*payload) : 0,
+                                payload ? pointCloudNodePayloadPoints(*payload)
+                                        : 0,
                         };
                     },
                     [&culler](const Bounds3d &bounds) {

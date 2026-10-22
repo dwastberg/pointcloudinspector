@@ -471,9 +471,10 @@ PointDatasetRuntime::preparePublication(
             publication->intensityMaximum_ = intensityMaximum_;
             publication->haveIntensityStatistics_ = haveIntensityStatistics_;
             publication->presentClassifications_ = presentClassifications_;
-            const auto &currentRoot = hierarchicalStorage.sourceRootPayload
-                                          ? hierarchicalStorage.sourceRootPayload
-                                          : hierarchicalStorage.rootPayload;
+            const auto &currentRoot =
+                hierarchicalStorage.sourceRootPayload
+                    ? hierarchicalStorage.sourceRootPayload
+                    : hierarchicalStorage.rootPayload;
             if (rootPayload &&
                 (rootPayload != currentRoot ||
                  rootReservation != hierarchicalStorage.rootReservation)) {
@@ -561,9 +562,8 @@ bool PointDatasetRuntime::commitPublication(
     } else if (auto *hierarchical =
                    std::get_if<Storage::HierarchicalSceneStorage>(
                        &storage_->value)) {
-        if (publication.rootPayload_ &&
-            hierarchical->rootPayloadRevision !=
-                publication.expectedRootRevision_) {
+        if (publication.rootPayload_ && hierarchical->rootPayloadRevision !=
+                                            publication.expectedRootRevision_) {
             return false;
         }
         bool changed = false;
@@ -572,8 +572,7 @@ bool PointDatasetRuntime::commitPublication(
                 hierarchical->sourceRootPayload =
                     std::move(publication.rootPayload_);
             } else {
-                hierarchical->rootPayload =
-                    std::move(publication.rootPayload_);
+                hierarchical->rootPayload = std::move(publication.rootPayload_);
                 if (hierarchical->decodedPageCache) {
                     hierarchical->decodedPageCache->insert(
                         hierarchical->sourceId, hierarchical->rootPayload);
@@ -581,11 +580,10 @@ bool PointDatasetRuntime::commitPublication(
             }
             hierarchical->rootReservation =
                 std::move(publication.rootReservation_);
-            const auto sourceBytes =
-                hierarchical->sourceRootPayload
-                    ? pointCloudNodePayloadBytes(
-                          *hierarchical->sourceRootPayload)
-                    : 0;
+            const auto sourceBytes = hierarchical->sourceRootPayload
+                                         ? pointCloudNodePayloadBytes(
+                                               *hierarchical->sourceRootPayload)
+                                         : 0;
             const auto rootBytes =
                 pointCloudNodePayloadBytes(*hierarchical->rootPayload);
             const auto originalCharge =

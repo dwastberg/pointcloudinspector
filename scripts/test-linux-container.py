@@ -348,8 +348,8 @@ def print_summary(summary, output):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--arch", choices=MAMBA_PLATFORMS, default="amd64",
-                        help="amd64 uses Rosetta; arm64 runs natively (default: amd64)")
+    parser.add_argument("--arch", choices=MAMBA_PLATFORMS, default="arm64",
+                        help="amd64 uses Rosetta; arm64 runs natively (default: arm64)")
     parser.add_argument("--preset", choices=PRESETS, action="append", help="Run only this preset (repeatable)")
     parser.add_argument("--long-stress", action="store_true", help="Include CI's optional long stress tests")
     parser.add_argument("--cpus", type=int, default=4, help="CPUs per container (default: 4)")

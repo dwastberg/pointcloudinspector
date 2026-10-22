@@ -412,12 +412,11 @@ void PointSceneCoordinator::handlePointPrepared(
         const bool sameSource =
             load->importSeed && load->importSeed->source == dataset->source;
         const bool validReservation =
-            dataset->source ? (dataset->root != load->importSeed->root ||
-                               load->importSeed->reservation ==
-                                   dataset->reservation)
-                            : (load->importSeed && !dataset->root &&
-                               load->importSeed->reservation ==
-                                   dataset->reservation);
+            dataset->source
+                ? (dataset->root != load->importSeed->root ||
+                   load->importSeed->reservation == dataset->reservation)
+                : (load->importSeed && !dataset->root &&
+                   load->importSeed->reservation == dataset->reservation);
         if (!sameSource || !validReservation ||
             session_.runtime_.point(load->scene->sourceId(),
                                     load->bindingGeneration) != load->scene) {

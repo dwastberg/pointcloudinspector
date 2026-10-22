@@ -27,8 +27,8 @@ struct ParentAccumulator {
     void extendBounds(const Bounds3d &childBounds);
 };
 
-using ParentMap =
-    std::unordered_map<PointCloudNodeId, ParentAccumulator, PointCloudNodeIdHash>;
+using ParentMap = std::
+    unordered_map<PointCloudNodeId, ParentAccumulator, PointCloudNodeIdHash>;
 
 void accumulateChildPage(ParentMap &parents,
                          const LocalPointPageRecord &childPage,
@@ -48,12 +48,13 @@ public:
                                            std::uint64_t,
                                            const Bounds3d &)>;
 
-    [[nodiscard]] static PointCloudNodeId parentId(PointCloudNodeId child) noexcept;
+    [[nodiscard]] static PointCloudNodeId
+    parentId(PointCloudNodeId child) noexcept;
 
-    [[nodiscard]] static std::vector<PointSample>
-    sampleChildrenDirect(std::span<const std::span<const PointSample>> childSamples,
-                         std::uint32_t maximumPoints,
-                         PointCloudNodeId parent);
+    [[nodiscard]] static std::vector<PointSample> sampleChildrenDirect(
+        std::span<const std::span<const PointSample>> childSamples,
+        std::uint32_t maximumPoints,
+        PointCloudNodeId parent);
 
     [[nodiscard]] static std::vector<PointSample>
     sampleChildren(const std::filesystem::path &payloadPath,

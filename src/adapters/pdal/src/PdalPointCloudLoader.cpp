@@ -250,9 +250,8 @@ PdalPointCloudLoader::load(const PointCloudLoadOptions &options,
             return 0;
         }
         const auto available = resources.memoryBudget->availableBytes();
-        const auto retained = resources.residency
-                                  ? resources.residency->retainedRootBytes()
-                                  : 0;
+        const auto retained =
+            resources.residency ? resources.residency->retainedRootBytes() : 0;
         return available > retained ? available - retained : 0;
     };
     const auto publish = [&](PointDatasetPreparation &dataset) {

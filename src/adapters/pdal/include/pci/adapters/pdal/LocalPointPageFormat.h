@@ -80,8 +80,8 @@ localPointFingerprintHex(const LocalPointSourceFingerprint &fingerprint);
 localPointPayloadDigest(std::span<const std::byte> bytes);
 [[nodiscard]] std::array<std::byte, localPointDiskBytes>
 encodeLocalPoint(const GpuPoint &point) noexcept;
-[[nodiscard]] GpuPoint
-decodeLocalPoint(std::span<const std::byte, localPointDiskBytes> bytes) noexcept;
+[[nodiscard]] GpuPoint decodeLocalPoint(
+    std::span<const std::byte, localPointDiskBytes> bytes) noexcept;
 
 void writeLocalPointManifest(
     const std::filesystem::path &path,

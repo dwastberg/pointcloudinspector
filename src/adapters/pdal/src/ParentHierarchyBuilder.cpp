@@ -28,10 +28,9 @@ void ParentAccumulator::init(const PointCloudNodeId parentId,
 {
     id = parentId;
     samples.reserve(capacity);
-    seed = splitMix64(
-        id.level ^ (static_cast<std::uint64_t>(id.x) << 8U) ^
-        (static_cast<std::uint64_t>(id.y) << 29U) ^
-        (static_cast<std::uint64_t>(id.z) << 50U));
+    seed = splitMix64(id.level ^ (static_cast<std::uint64_t>(id.x) << 8U) ^
+                      (static_cast<std::uint64_t>(id.y) << 29U) ^
+                      (static_cast<std::uint64_t>(id.z) << 50U));
 }
 
 void ParentAccumulator::addSample(const PointSample &sample,
@@ -41,8 +40,7 @@ void ParentAccumulator::addSample(const PointSample &sample,
     if (samples.size() < maximumPoints) {
         samples.push_back(sample);
     } else {
-        const std::uint64_t candidate =
-            splitMix64(seed + visited) % visited;
+        const std::uint64_t candidate = splitMix64(seed + visited) % visited;
         if (candidate < samples.size()) {
             samples[static_cast<std::size_t>(candidate)] = sample;
         }
@@ -69,7 +67,8 @@ void accumulateChildPage(ParentAccumulator &parent,
                          const std::span<const PointSample> childSamples,
                          const std::uint32_t parentMaxPoints)
 {
-    parent.sourcePoints = saturatingAdd(parent.sourcePoints, childPage.sourcePointCount);
+    parent.sourcePoints =
+        saturatingAdd(parent.sourcePoints, childPage.sourcePointCount);
     parent.extendBounds(childPage.tightBounds);
     for (const PointSample &sample : childSamples) {
         parent.addSample(sample, parentMaxPoints);
@@ -90,7 +89,8 @@ void accumulateChildPage(ParentMap &parents,
     accumulateChildPage(it->second, childPage, childSamples, parentMaxPoints);
 }
 
-PointCloudNodeId ParentHierarchyBuilder::parentId(const PointCloudNodeId child) noexcept
+PointCloudNodeId
+ParentHierarchyBuilder::parentId(const PointCloudNodeId child) noexcept
 {
     return {
         .level = static_cast<std::uint8_t>(child.level - 1U),
@@ -178,20 +178,25 @@ std::vector<PointSample> ParentHierarchyBuilder::sampleChildren(
         };
         for (const GpuPoint &pt : pageBuffer) {
             PointSample sample{
-                .position = {
-                    origin.x + static_cast<double>(pt.x) * scale,
-                    origin.y + static_cast<double>(pt.y) * scale,
-                    origin.z + static_cast<double>(pt.z) * scale,
-                },
+                .position =
+                    {
+                        origin.x + static_cast<double>(pt.x) * scale,
+                        origin.y + static_cast<double>(pt.y) * scale,
+                        origin.z + static_cast<double>(pt.z) * scale,
+                    },
                 .rgba = pt.rgba,
                 .packedAttributes = pt.attributes,
                 .packedProperties = pt.packedProperties,
-                .attributes = {
-                    .intensity = gpuPointIntensity(pt.packedProperties),
-                    .classification = static_cast<std::uint8_t>(pt.attributes & 0xffU),
-                    .returnNumber = gpuPointReturnNumber(pt.packedProperties),
-                    .numberOfReturns = gpuPointNumberOfReturns(pt.packedProperties),
-                },
+                .attributes =
+                    {
+                        .intensity = gpuPointIntensity(pt.packedProperties),
+                        .classification =
+                            static_cast<std::uint8_t>(pt.attributes & 0xffU),
+                        .returnNumber =
+                            gpuPointReturnNumber(pt.packedProperties),
+                        .numberOfReturns =
+                            gpuPointNumberOfReturns(pt.packedProperties),
+                    },
             };
             ++visited;
             if (samples.size() < maximumPoints) {

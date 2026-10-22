@@ -1,5 +1,46 @@
 # Running CI
 
+## Automatic formatting before commits
+
+Enable the repository's pre-commit hook once per clone. It requires Python 3
+(`python3` on `PATH`) and exactly **clang-format 22.1.8**, matching CI:
+
+```sh
+git config --local core.hooksPath .githooks
+git config --local pcinspector.clangFormat "$(command -v clang-format)"
+```
+
+The second command records the formatter's absolute path so IDE commits can find
+it too. Alternatively, set `pcinspector.clangFormat` to its absolute executable
+path yourself; without this setting, the hook searches `PATH` for `clang-format`.
+The hook needs no configured CMake build or additional Python packages.
+
+On commit, the hook formats staged `.cpp` and `.h` files under `src/`, `tests/`,
+and `tools/`, plus `main.cpp`, stages its formatting changes, and continues the
+commit automatically. Vendored code, deleted files, and symlinks are excluded.
+If any affected file or `.clang-format` has unstaged changes, the commit stops
+before formatting or staging anything. Stage the complete files or commit/stash
+the unstaged edits first. Missing or incorrect formatter versions also stop
+commits containing relevant C++ changes, with setup instructions.
+
+Changes to `.clang-format` can affect otherwise unchanged files. When changing
+the style, run the full `format` and `format-check` CMake targets before committing.
+
+To disable the hook in this clone:
+
+```sh
+git config --local --unset core.hooksPath
+```
+
+Hook setup is local to each clone, and Git hooks can be bypassed (for example,
+with `git commit --no-verify`). CI retains its full formatting check.
+
+Run the hook's isolated regression tests with:
+
+```sh
+python3 -m unittest discover -s scripts/tests -p 'test_format_hook.py' -v
+```
+
 ## Manual GitHub checks
 
 CI runs only when started manually. In GitHub's **Actions** tab, choose **CI

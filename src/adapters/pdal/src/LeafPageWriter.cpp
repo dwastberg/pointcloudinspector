@@ -64,17 +64,20 @@ public:
     [[nodiscard]] bool next(MortonRunRecord &record)
     {
         if (offset_ >= count_) {
-            input_.read(
-                reinterpret_cast<char *>(buffer_.data()),
-                static_cast<std::streamsize>(buffer_.size() * sizeof(MortonRunRecord)));
+            input_.read(reinterpret_cast<char *>(buffer_.data()),
+                        static_cast<std::streamsize>(buffer_.size() *
+                                                     sizeof(MortonRunRecord)));
             const auto bytesRead = input_.gcount();
             if (bytesRead == 0) {
                 return false;
             }
-            if (bytesRead % static_cast<std::streamsize>(sizeof(MortonRunRecord)) != 0) {
+            if (bytesRead %
+                    static_cast<std::streamsize>(sizeof(MortonRunRecord)) !=
+                0) {
                 throw std::runtime_error("truncated local point sort run");
             }
-            count_ = static_cast<std::size_t>(bytesRead / sizeof(MortonRunRecord));
+            count_ =
+                static_cast<std::size_t>(bytesRead / sizeof(MortonRunRecord));
             offset_ = 0;
         }
         record = buffer_[offset_++];
@@ -148,10 +151,9 @@ struct LeafPageWriter::Impl {
                            static_cast<qsizetype>(byteSpan.size())),
             QCryptographicHash::Sha256);
         LocalPointPayloadDigest pageDigest{};
-        std::ranges::transform(
-            digest, pageDigest.begin(), [](const char val) {
-                return static_cast<std::uint8_t>(static_cast<unsigned char>(val));
-            });
+        std::ranges::transform(digest, pageDigest.begin(), [](const char val) {
+            return static_cast<std::uint8_t>(static_cast<unsigned char>(val));
+        });
 
         const std::uint64_t offset = bytesWritten;
         const qint64 bytesToWrite = static_cast<qint64>(byteSpan.size());
@@ -203,13 +205,12 @@ LeafPageWriter::appendPage(const PointCloudNodeId id,
 }
 
 std::vector<LocalPointPageRecord>
-LeafPageWriter::writeLeafPages(
-    const std::span<const MortonRunRecord> records,
-    const std::uint8_t level,
-    const std::uint32_t pointsPerLeaf,
-    const std::stop_token stopToken,
-    const std::function<void()> &heartbeat,
-    const OnLeafPage &onLeafPage)
+LeafPageWriter::writeLeafPages(const std::span<const MortonRunRecord> records,
+                               const std::uint8_t level,
+                               const std::uint32_t pointsPerLeaf,
+                               const std::stop_token stopToken,
+                               const std::function<void()> &heartbeat,
+                               const OnLeafPage &onLeafPage)
 {
     std::vector<LocalPointPageRecord> pages;
     std::vector<PointSample> leafSamples;

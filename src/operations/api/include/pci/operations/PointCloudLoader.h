@@ -73,10 +73,10 @@ public:
     setResidentMemoryReservation(PointMemoryBudget::ReservationPtr reservation);
     void reserveRoot(const PointMemoryBudgetPtr &budget,
                      std::uint64_t allowance);
-    void replaceRoot(PointCloudNodePayloadPtr root,
-                     const PointMemoryBudgetPtr &budget = {},
-                     std::uint64_t allowance =
-                         std::numeric_limits<std::uint64_t>::max());
+    void replaceRoot(
+        PointCloudNodePayloadPtr root,
+        const PointMemoryBudgetPtr &budget = {},
+        std::uint64_t allowance = std::numeric_limits<std::uint64_t>::max());
     void addBlock(PointBlockPtr block);
     void publish(const PointCloudLoadContext &context);
     [[nodiscard]] PreparedPointDatasetPtr finish();

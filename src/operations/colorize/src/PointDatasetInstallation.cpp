@@ -74,8 +74,7 @@ void completePointDatasetRuntime(const PointDatasetRuntimePtr &runtime,
         auto publication = runtime->preparePublication(
             {}, true, dataset->root, dataset->reservation);
         if (!runtime->commitPublication(*publication)) {
-            throw std::logic_error(
-                "point completion could not be committed");
+            throw std::logic_error("point completion could not be committed");
         }
         runtime->publishInvalidation();
         return;

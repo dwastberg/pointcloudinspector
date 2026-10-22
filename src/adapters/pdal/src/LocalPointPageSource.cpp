@@ -419,8 +419,7 @@ LocalPointPageSource::loadNode(const PointCloudNodeId id,
                 .classification =
                     static_cast<std::uint8_t>(pt.attributes & 0xffU),
                 .returnNumber = gpuPointReturnNumber(pt.packedProperties),
-                .numberOfReturns =
-                    gpuPointNumberOfReturns(pt.packedProperties),
+                .numberOfReturns = gpuPointNumberOfReturns(pt.packedProperties),
             };
         }
         block->intensityMinimum = pointCount > 0 ? intensityMin : 0;

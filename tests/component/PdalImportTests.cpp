@@ -1589,9 +1589,9 @@ TEST_CASE(
     CHECK(std::filesystem::exists(fixture.paths().laz));
 }
 
-TEST_CASE(
-    "local page completion replaces an edge-only warmup root with the full-tile representative root",
-    "[component][pdal][local-pages][regression]")
+TEST_CASE("local page completion replaces an edge-only warmup root with the "
+          "full-tile representative root",
+          "[component][pdal][local-pages][regression]")
 {
     const FixtureDirectory fixture;
     std::vector<pci::test::FixturePoint> points(
@@ -1599,19 +1599,19 @@ TEST_CASE(
         pci::test::FixturePoint{
             1000.0, 2000.0, 10.0, 65535, 65535, 65535, 100, 2, 1, 1});
     for (std::uint32_t index = 0; index < 64; ++index) {
-        const double x = 1000.0 + static_cast<double>((index % 8U) + 1U) * 125.0;
+        const double x =
+            1000.0 + static_cast<double>((index % 8U) + 1U) * 125.0;
         const double y =
             2000.0 + static_cast<double>(((index / 8U) % 8U) + 1U) * 125.0;
-        points.push_back(
-            {x, y, 50.0, 65535, 65535, 65535, 800, 6, 1, 1});
+        points.push_back({x, y, 50.0, 65535, 65535, 65535, 800, 6, 1, 1});
     }
     const auto path = fixture.directory() / "edge-warmup.las";
     pci::test::writePdalLasFixture(path, points);
 
     const pci::PdalPointCloudLoader loader;
     const auto cache = testCache(fixture, "edge-warmup-cache");
-    const auto budget =
-        std::make_shared<pci::PointMemoryBudget>(std::uint64_t{8} * 1024 * 1024);
+    const auto budget = std::make_shared<pci::PointMemoryBudget>(
+        std::uint64_t{8} * 1024 * 1024);
     const pci::PointCloudLoadRequest request{
         .options =
             {
@@ -1637,7 +1637,8 @@ TEST_CASE(
         .dataReady =
             [&](const pci::PointDatasetEvent &event) {
                 if (const auto *seed =
-                        std::get_if<pci::PreparedPointDatasetPtr>(&event.data)) {
+                        std::get_if<pci::PreparedPointDatasetPtr>(
+                            &event.data)) {
                     preview = *seed;
                 }
             },

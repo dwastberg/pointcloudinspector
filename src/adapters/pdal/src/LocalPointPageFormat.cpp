@@ -369,8 +369,8 @@ encodeLocalPoint(const GpuPoint &point) noexcept
     return result;
 }
 
-GpuPoint
-decodeLocalPoint(const std::span<const std::byte, localPointDiskBytes> bytes) noexcept
+GpuPoint decodeLocalPoint(
+    const std::span<const std::byte, localPointDiskBytes> bytes) noexcept
 {
     GpuPoint result{};
     std::memcpy(&result, bytes.data(), sizeof(GpuPoint));

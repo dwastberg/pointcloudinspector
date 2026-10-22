@@ -1,0 +1,103 @@
+#!/usr/bin/env python3
+"""Format fully staged project C++ files without including unstaged edits."""
+
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import sys
+
+
+VERSION = "22.1.8"
+
+
+def run(*arguments, **kwargs):
+    return subprocess.run(arguments, check=True, capture_output=True, **kwargs).stdout
+
+
+def git(*arguments):
+    return run("git", "--literal-pathspecs", *arguments)
+
+
+def is_project_cpp(name):
+    path = Path(name)
+    return name == "main.cpp" or (
+        path.parts[0] in ("src", "tests", "tools") and path.suffix in (".cpp", ".h")
+    )
+
+
+def main():
+    os.chdir(os.fsdecode(git("rev-parse", "--show-toplevel").rstrip(b"\n")))
+    staged = set(git("diff", "--cached", "--name-only", "--no-renames",
+                     "--diff-filter=ACM", "-z").split(b"\0"))
+    names = []
+    for entry in git("ls-files", "--stage", "-z").split(b"\0"):
+        if not entry:
+            continue
+        metadata, raw_name = entry.split(b"\t", 1)
+        mode, _, stage = metadata.split()
+        name = os.fsdecode(raw_name)
+        if (raw_name in staged and stage == b"0" and mode in (b"100644", b"100755")
+                and is_project_cpp(name)):
+            names.append(name)
+    if not names:
+        return 0
+
+    unstaged = git("diff", "--name-only", "--no-ext-diff", "-z", "--", *names)
+    # Status also catches an untracked style file, which would affect formatting
+    # locally but would not be present in the commit.
+    style_status = git("status", "--porcelain=v1", "-z", "--untracked-files=all",
+                       "--", ".clang-format")
+    if unstaged or (style_status and style_status[1:2] != b" "):
+        print("pre-commit: C++ files or .clang-format have unstaged changes.\n"
+              "Stage the complete files, or commit/stash the unstaged edits first.\n"
+              "No files were formatted or staged.", file=sys.stderr)
+        return 1
+
+    setting = subprocess.run(["git", "config", "--local", "--get",
+                              "pcinspector.clangFormat"], capture_output=True)
+    if setting.returncode not in (0, 1):
+        raise RuntimeError("could not read pcinspector.clangFormat from Git config")
+    executable = os.fsdecode(setting.stdout.rstrip(b"\n")) if setting.returncode == 0 else "clang-format"
+    formatter = shutil.which(executable)
+    instructions = (f"Install clang-format {VERSION} and make it available on PATH, or set:\n"
+                    "  git config --local pcinspector.clangFormat /absolute/path/to/clang-format")
+    if not formatter:
+        raise RuntimeError(f"clang-format {VERSION} was not found.\n{instructions}")
+    version = run(formatter, "--version").decode(errors="replace").strip()
+    if not re.search(r"\bversion 22\.1\.8(?:$|[ \t])", version):
+        raise RuntimeError(f"clang-format {VERSION} is required; found: {version}\n{instructions}")
+
+    # Finish every formatter invocation before writing anything, so a formatting
+    # failure cannot leave earlier files modified or staged.
+    changes = []
+    originals = []
+    for name in names:
+        path = Path(name)
+        before = path.read_bytes()
+        after = run(formatter, "--Werror", "--style=file",
+                    f"--assume-filename={path.resolve()}", input=before)
+        originals.append((path, before))
+        if after != before:
+            changes.append((path, after))
+    if any(path.is_symlink() or path.read_bytes() != before for path, before in originals):
+        raise RuntimeError("a staged file changed while formatting; retry the commit")
+    for path, content in changes:
+        path.write_bytes(content)
+    if changes:
+        git("add", "--", *(str(path) for path, _ in changes))
+        print(f"pre-commit: formatted and staged {len(changes)} C++ file(s).")
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except subprocess.CalledProcessError as error:
+        print("pre-commit: command failed: " + subprocess.list2cmdline(error.cmd), file=sys.stderr)
+        print(error.stderr.decode(errors="replace").strip(), file=sys.stderr)
+        sys.exit(1)
+    except (OSError, RuntimeError) as error:
+        print(f"pre-commit: {error}", file=sys.stderr)
+        sys.exit(1)

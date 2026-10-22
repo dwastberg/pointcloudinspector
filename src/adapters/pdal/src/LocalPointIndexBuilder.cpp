@@ -175,10 +175,10 @@ public:
         for (std::size_t axis = 0; axis < 3; ++axis) {
             const double normalized =
                 (components[axis] - bounds_.minimum[axis]) * invExtent_[axis];
-            indices[axis] = static_cast<std::uint32_t>(std::clamp(
-                std::floor(normalized),
-                0.0,
-                static_cast<double>(counts_[axis] - 1U)));
+            indices[axis] = static_cast<std::uint32_t>(
+                std::clamp(std::floor(normalized),
+                           0.0,
+                           static_cast<double>(counts_[axis] - 1U)));
         }
         const std::uint64_t key =
             indices[0] + counts_[0] * (indices[1] + counts_[1] * indices[2]);
@@ -458,16 +458,23 @@ LocalPointPageBuildResult LocalPointIndexBuilder::openOrBuild(
             local_index::ParentAccumulator rootAccumulator;
             rootAccumulator.init(rootPointCloudNode, options.rootPreviewPoints);
 
-            const auto onLeaf = [&](const LocalPointPageRecord &page,
-                                    const std::span<const PointSample> samples) {
-                if (maximumLevel == 1) {
-                    local_index::accumulateChildPage(
-                        rootAccumulator, page, samples, options.rootPreviewPoints);
-                } else {
-                    local_index::accumulateChildPage(
-                        currentParents, page, samples, options.rootPreviewPoints);
-                }
-            };
+            const auto onLeaf =
+                [&](const LocalPointPageRecord &page,
+                    const std::span<const PointSample> samples) {
+                    if (maximumLevel == 1) {
+                        local_index::accumulateChildPage(
+                            rootAccumulator,
+                            page,
+                            samples,
+                            options.rootPreviewPoints);
+                    } else {
+                        local_index::accumulateChildPage(
+                            currentParents,
+                            page,
+                            samples,
+                            options.rootPreviewPoints);
+                    }
+                };
 
             const auto inMemory = runBuilder.inMemoryRecords();
             std::vector<LocalPointPageRecord> levelPages;
@@ -477,7 +484,9 @@ LocalPointPageBuildResult LocalPointIndexBuilder::openOrBuild(
                     maximumLevel,
                     options.pointsPerLeaf,
                     stopToken,
-                    [&] { buildLock.touch(); },
+                    [&] {
+                        buildLock.touch();
+                    },
                     onLeaf);
             } else {
                 levelPages = payloadWriter.mergeRuns(
@@ -485,7 +494,9 @@ LocalPointPageBuildResult LocalPointIndexBuilder::openOrBuild(
                     maximumLevel,
                     options.pointsPerLeaf,
                     stopToken,
-                    [&] { buildLock.touch(); },
+                    [&] {
+                        buildLock.touch();
+                    },
                     onLeaf);
             }
             pages.insert(pages.end(), levelPages.begin(), levelPages.end());

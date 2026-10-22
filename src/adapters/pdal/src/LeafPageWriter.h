@@ -15,9 +15,8 @@ namespace pci::local_index {
 
 class LeafPageWriter final {
 public:
-    using OnLeafPage =
-        std::function<void(const LocalPointPageRecord &,
-                           std::span<const PointSample>)>;
+    using OnLeafPage = std::function<void(const LocalPointPageRecord &,
+                                          std::span<const PointSample>)>;
 
     LeafPageWriter(const std::filesystem::path &payloadPath,
                    const LocalPointPageSourcePtr &source);

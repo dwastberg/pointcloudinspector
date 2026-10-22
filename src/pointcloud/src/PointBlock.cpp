@@ -18,18 +18,18 @@ std::array<std::uint16_t, 3> quantizeToBlockFast(const Vec3d position,
                                                  const double invScale) noexcept
 {
     return {
-        static_cast<std::uint16_t>(std::clamp(
-            std::lround((position.x - origin.x) * invScale),
-            0L,
-            static_cast<long>(blockQuantizationSteps))),
-        static_cast<std::uint16_t>(std::clamp(
-            std::lround((position.y - origin.y) * invScale),
-            0L,
-            static_cast<long>(blockQuantizationSteps))),
-        static_cast<std::uint16_t>(std::clamp(
-            std::lround((position.z - origin.z) * invScale),
-            0L,
-            static_cast<long>(blockQuantizationSteps))),
+        static_cast<std::uint16_t>(
+            std::clamp(std::lround((position.x - origin.x) * invScale),
+                       0L,
+                       static_cast<long>(blockQuantizationSteps))),
+        static_cast<std::uint16_t>(
+            std::clamp(std::lround((position.y - origin.y) * invScale),
+                       0L,
+                       static_cast<long>(blockQuantizationSteps))),
+        static_cast<std::uint16_t>(
+            std::clamp(std::lround((position.z - origin.z) * invScale),
+                       0L,
+                       static_cast<long>(blockQuantizationSteps))),
     };
 }
 

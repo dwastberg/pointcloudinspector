@@ -212,8 +212,9 @@ MortonRunBuilder::runs() const noexcept
 std::span<const MortonRunRecord>
 MortonRunBuilder::inMemoryRecords() const noexcept
 {
-    return impl_->inMemorySorted ? std::span<const MortonRunRecord>(impl_->chunk)
-                                 : std::span<const MortonRunRecord>();
+    return impl_->inMemorySorted
+               ? std::span<const MortonRunRecord>(impl_->chunk)
+               : std::span<const MortonRunRecord>();
 }
 
 std::size_t MortonRunBuilder::recordBytes() noexcept
