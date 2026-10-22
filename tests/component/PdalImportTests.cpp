@@ -1588,3 +1588,100 @@ TEST_CASE(
     CHECK_FALSE(std::filesystem::exists(directory));
     CHECK(std::filesystem::exists(fixture.paths().laz));
 }
+
+TEST_CASE(
+    "local page completion replaces an edge-only warmup root with the full-tile representative root",
+    "[component][pdal][local-pages][regression]")
+{
+    const FixtureDirectory fixture;
+    std::vector<pci::test::FixturePoint> points(
+        65'536,
+        pci::test::FixturePoint{
+            1000.0, 2000.0, 10.0, 65535, 65535, 65535, 100, 2, 1, 1});
+    for (std::uint32_t index = 0; index < 64; ++index) {
+        const double x = 1000.0 + static_cast<double>((index % 8U) + 1U) * 125.0;
+        const double y =
+            2000.0 + static_cast<double>(((index / 8U) % 8U) + 1U) * 125.0;
+        points.push_back(
+            {x, y, 50.0, 65535, 65535, 65535, 800, 6, 1, 1});
+    }
+    const auto path = fixture.directory() / "edge-warmup.las";
+    pci::test::writePdalLasFixture(path, points);
+
+    const pci::PdalPointCloudLoader loader;
+    const auto cache = testCache(fixture, "edge-warmup-cache");
+    const auto budget =
+        std::make_shared<pci::PointMemoryBudget>(std::uint64_t{8} * 1024 * 1024);
+    const pci::PointCloudLoadRequest request{
+        .options =
+            {
+                .sourcePath = path,
+                .maximumPoints = points.size(),
+                .localPaging =
+                    {
+                        .pointThreshold = 1,
+                        .cache = cache,
+                        .pagePoints = 1024,
+                        .rootPreviewPoints = 64,
+                        .sortMemoryBytes = std::uint64_t{4} * 1024 * 1024,
+                    },
+            },
+        .resources =
+            {
+                .decodedByteBudget = budget->byteBudget(),
+                .memoryBudget = budget,
+            },
+    };
+    pci::PreparedPointDatasetPtr preview;
+    const pci::PointCloudLoadContext context{
+        .dataReady =
+            [&](const pci::PointDatasetEvent &event) {
+                if (const auto *seed =
+                        std::get_if<pci::PreparedPointDatasetPtr>(&event.data)) {
+                    preview = *seed;
+                }
+            },
+    };
+
+    const auto preflight = loader.inspect(request);
+    auto completed =
+        loader.load(request.options, request.resources, preflight, context);
+    REQUIRE(preview);
+    REQUIRE(completed);
+    CHECK_FALSE(preview->loadingComplete);
+    CHECK(completed->loadingComplete);
+    CHECK(preview->root != completed->root);
+
+    auto runtime =
+        pci::createPointDatasetRuntime(preview, budget->byteBudget());
+    REQUIRE(runtime);
+    CHECK(runtime->snapshot().rootPayloadRevision == 1);
+    auto earlyRoot = runtime->nodePayload(pci::rootPointCloudNode);
+    REQUIRE(earlyRoot);
+    REQUIRE_FALSE(earlyRoot->blocks.empty());
+    CHECK(earlyRoot->blocks.front()->bounds.maximum[0] ==
+          Catch::Approx(1000.0));
+    CHECK_FALSE(runtime->presentClassifications().isVisible(6));
+    preview.reset();
+
+    pci::completePointDatasetRuntime(runtime, completed);
+    CHECK(runtime->snapshot().loadingComplete);
+    CHECK(runtime->snapshot().rootPayloadRevision == 2);
+    const auto finalRoot = runtime->nodePayload(pci::rootPointCloudNode);
+    REQUIRE(finalRoot);
+    REQUIRE_FALSE(finalRoot->blocks.empty());
+    CHECK(finalRoot == completed->root);
+    CHECK(pci::pointCloudNodePayloadPoints(*finalRoot) >
+          pci::pointCloudNodePayloadPoints(*earlyRoot));
+    CHECK(finalRoot->blocks.front()->bounds.maximum[0] ==
+          Catch::Approx(2000.0));
+    CHECK(finalRoot->blocks.front()->bounds.maximum[1] ==
+          Catch::Approx(3000.0));
+    CHECK(runtime->presentClassifications().isVisible(2));
+    CHECK(runtime->presentClassifications().isVisible(6));
+
+    const auto finalRootBytes = pci::pointCloudNodePayloadBytes(*finalRoot);
+    completed.reset();
+    earlyRoot.reset();
+    CHECK(budget->reservedBytes() == finalRootBytes);
+}

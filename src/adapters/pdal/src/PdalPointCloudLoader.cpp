@@ -245,15 +245,19 @@ PdalPointCloudLoader::load(const PointCloudLoadOptions &options,
                   retainedPointLimit / 8, 1, streamingPublicationInterval)
             : streamingPublicationInterval;
 
+    const auto rootAllowance = [&]() -> std::uint64_t {
+        if (!resources.memoryBudget) {
+            return 0;
+        }
+        const auto available = resources.memoryBudget->availableBytes();
+        const auto retained = resources.residency
+                                  ? resources.residency->retainedRootBytes()
+                                  : 0;
+        return available > retained ? available - retained : 0;
+    };
     const auto publish = [&](PointDatasetPreparation &dataset) {
         if (resources.memoryBudget) {
-            const auto available = resources.memoryBudget->availableBytes();
-            const auto retained = resources.residency
-                                      ? resources.residency->retainedRootBytes()
-                                      : 0;
-            dataset.reserveRoot(resources.memoryBudget,
-                                available > retained ? available - retained
-                                                     : 0);
+            dataset.reserveRoot(resources.memoryBudget, rootAllowance());
         }
         dataset.publish(context);
     };
@@ -321,6 +325,7 @@ PdalPointCloudLoader::load(const PointCloudLoadOptions &options,
         try {
             LocalPointIndexBuilder builder;
             std::shared_ptr<PointDatasetPreparation> scene;
+            PointCloudNodePayloadPtr publishedRoot;
             const LocalPointPageBuildResult result = builder.openOrBuild(
                 preflight,
                 metadata.sourcePointCount,
@@ -338,6 +343,7 @@ PdalPointCloudLoader::load(const PointCloudLoadOptions &options,
                     if (scene) {
                         return;
                     }
+                    publishedRoot = root;
                     scene = std::make_shared<PointDatasetPreparation>(
                         metadata, source, root, source->committed());
                     publish(*scene);
@@ -346,6 +352,11 @@ PdalPointCloudLoader::load(const PointCloudLoadOptions &options,
                 scene = std::make_shared<PointDatasetPreparation>(
                     metadata, result.source, result.rootPayload);
                 publish(*scene);
+            } else if (result.rootPayload &&
+                       result.rootPayload != publishedRoot) {
+                scene->replaceRoot(result.rootPayload,
+                                   resources.memoryBudget,
+                                   rootAllowance());
             }
 
             return scene->finish();

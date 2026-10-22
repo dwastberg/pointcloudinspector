@@ -438,8 +438,11 @@ void PointDatasetRuntime::addBlock(PointBlockPtr block)
 }
 
 std::unique_ptr<PointDatasetPublication>
-PointDatasetRuntime::preparePublication(PointBlockPtr block,
-                                        const bool complete) const
+PointDatasetRuntime::preparePublication(
+    PointBlockPtr block,
+    const bool complete,
+    PointCloudNodePayloadPtr rootPayload,
+    PointMemoryBudget::ReservationPtr rootReservation) const
 {
     auto publication = std::make_unique<PointDatasetPublication>();
     publication->complete_ = complete;
@@ -448,8 +451,67 @@ PointDatasetRuntime::preparePublication(PointBlockPtr block,
             throw std::invalid_argument(
                 "hierarchies cannot ingest flat blocks");
         }
+        if (rootPayload && rootPayload->nodeId != rootPointCloudNode) {
+            throw std::invalid_argument(
+                "hierarchical publication requires a root node payload");
+        }
+        if (!rootPayload && rootReservation) {
+            throw std::invalid_argument(
+                "root reservation requires a root payload");
+        }
         publication->view_ = datasetView();
+        {
+            const std::scoped_lock lock(mutex_);
+            const auto &hierarchicalStorage =
+                std::get<Storage::HierarchicalSceneStorage>(storage_->value);
+            publication->expectedRevision_ = revision_.load();
+            publication->expectedRootRevision_ =
+                hierarchicalStorage.rootPayloadRevision;
+            publication->intensityMinimum_ = intensityMinimum_;
+            publication->intensityMaximum_ = intensityMaximum_;
+            publication->haveIntensityStatistics_ = haveIntensityStatistics_;
+            publication->presentClassifications_ = presentClassifications_;
+            const auto &currentRoot = hierarchicalStorage.sourceRootPayload
+                                          ? hierarchicalStorage.sourceRootPayload
+                                          : hierarchicalStorage.rootPayload;
+            if (rootPayload &&
+                (rootPayload != currentRoot ||
+                 rootReservation != hierarchicalStorage.rootReservation)) {
+                for (const PointBlockPtr &entry : rootPayload->blocks) {
+                    if (!entry) {
+                        continue;
+                    }
+                    if (!publication->haveIntensityStatistics_) {
+                        publication->intensityMinimum_ =
+                            entry->intensityMinimum;
+                        publication->intensityMaximum_ =
+                            entry->intensityMaximum;
+                        publication->haveIntensityStatistics_ = true;
+                    } else {
+                        publication->intensityMinimum_ =
+                            std::min(publication->intensityMinimum_,
+                                     entry->intensityMinimum);
+                        publication->intensityMaximum_ =
+                            std::max(publication->intensityMaximum_,
+                                     entry->intensityMaximum);
+                    }
+                    for (const GpuPoint &point : entry->points) {
+                        publication->presentClassifications_.setVisible(
+                            static_cast<std::uint8_t>(point.attributes & 0xffU),
+                            true);
+                    }
+                }
+                publication->rootPayload_ = std::move(rootPayload);
+                publication->rootReservation_ = std::move(rootReservation);
+                publication->view_.availability.presentClassifications =
+                    publication->presentClassifications_;
+            }
+        }
         return publication;
+    }
+    if (rootPayload || rootReservation) {
+        throw std::invalid_argument(
+            "flat scenes cannot publish a hierarchy root");
     }
     auto candidate =
         std::make_shared<PointDatasetRuntime>(metadata_, sourceId_);
@@ -496,9 +558,74 @@ bool PointDatasetRuntime::commitPublication(
         std::swap(presentClassifications_, candidate.presentClassifications_);
         std::swap(loadingComplete_, candidate.loadingComplete_);
         revision_.store(candidate.revision_.load());
-    } else if (publication.complete_ && !loadingComplete_) {
-        loadingComplete_ = true;
-        ++revision_;
+    } else if (auto *hierarchical =
+                   std::get_if<Storage::HierarchicalSceneStorage>(
+                       &storage_->value)) {
+        if (publication.rootPayload_ &&
+            hierarchical->rootPayloadRevision !=
+                publication.expectedRootRevision_) {
+            return false;
+        }
+        bool changed = false;
+        if (publication.rootPayload_) {
+            if (hierarchical->sourceRootPayload) {
+                hierarchical->sourceRootPayload =
+                    std::move(publication.rootPayload_);
+            } else {
+                hierarchical->rootPayload =
+                    std::move(publication.rootPayload_);
+                if (hierarchical->decodedPageCache) {
+                    hierarchical->decodedPageCache->insert(
+                        hierarchical->sourceId, hierarchical->rootPayload);
+                }
+            }
+            hierarchical->rootReservation =
+                std::move(publication.rootReservation_);
+            const auto sourceBytes =
+                hierarchical->sourceRootPayload
+                    ? pointCloudNodePayloadBytes(
+                          *hierarchical->sourceRootPayload)
+                    : 0;
+            const auto rootBytes =
+                pointCloudNodePayloadBytes(*hierarchical->rootPayload);
+            const auto originalCharge =
+                hierarchical->rootReservation
+                    ? std::min(hierarchical->rootReservation->bytes(),
+                               sourceBytes ? sourceBytes : rootBytes)
+                    : 0;
+            const auto coloredCharge =
+                hierarchical->coloredRootReservation
+                    ? std::min(hierarchical->coloredRootReservation->bytes(),
+                               rootBytes)
+                    : 0;
+            if (hierarchical->residencyParticipant) {
+                hierarchical->residencyParticipant->setRootBytes(
+                    saturatingAdd(sourceBytes, rootBytes),
+                    saturatingAdd(originalCharge, coloredCharge));
+                if (!hierarchical->sharedDocumentResources &&
+                    hierarchical->decodedPageCache) {
+                    hierarchical->decodedPageCache->setByteBudget(
+                        hierarchical->residencyParticipant->byteBudget());
+                }
+            }
+            intensityMinimum_ = publication.intensityMinimum_;
+            intensityMaximum_ = publication.intensityMaximum_;
+            haveIntensityStatistics_ = publication.haveIntensityStatistics_;
+            presentClassifications_ = publication.presentClassifications_;
+            ++hierarchical->rootPayloadRevision;
+            for (auto &[id, request] : hierarchical->decodeRequests) {
+                static_cast<void>(id);
+                request->contentRevision = hierarchical->rootPayloadRevision;
+            }
+            changed = true;
+        }
+        if (publication.complete_ && !loadingComplete_) {
+            loadingComplete_ = true;
+            changed = true;
+        }
+        if (changed) {
+            ++revision_;
+        }
     }
     publication.committed_ = true;
     return true;

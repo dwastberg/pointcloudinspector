@@ -378,7 +378,9 @@ LocalPointPageBuildResult LocalPointIndexBuilder::openOrBuild(
                 throw PointCloudImportCancelled();
             }
             PointSample sample = mapPdalPoint(point, preflight.metadata);
-            rootPreview.add(sample);
+            if (!rootPayload) {
+                rootPreview.add(sample);
+            }
             runBuilder.add(sample, processed);
             const PointAttributes attributes = sample.attributes;
             if (!haveRanges) {

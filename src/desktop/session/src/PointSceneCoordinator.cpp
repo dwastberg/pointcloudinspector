@@ -412,9 +412,16 @@ void PointSceneCoordinator::handlePointPrepared(
             handleSceneReadySingle(*load);
         }
     } else {
-        if (!load->importSeed || load->importSeed->source != dataset->source ||
-            load->importSeed->root != dataset->root ||
-            load->importSeed->reservation != dataset->reservation ||
+        const bool sameSource =
+            load->importSeed && load->importSeed->source == dataset->source;
+        const bool validReservation =
+            dataset->source ? (dataset->root != load->importSeed->root ||
+                               load->importSeed->reservation ==
+                                   dataset->reservation)
+                            : (load->importSeed && !dataset->root &&
+                               load->importSeed->reservation ==
+                                   dataset->reservation);
+        if (!sameSource || !validReservation ||
             session_.runtime_.point(load->scene->sourceId(),
                                     load->bindingGeneration) != load->scene) {
             throw std::invalid_argument(
@@ -422,7 +429,9 @@ void PointSceneCoordinator::handlePointPrepared(
         }
         validatePointDatasetCompletion(load->scene, dataset);
         session_.commitPointPublication(
-            *load, load->scene->preparePublication({}, true));
+            *load,
+            load->scene->preparePublication(
+                {}, true, dataset->root, dataset->reservation));
     }
     if (auto *current = activeLoad(jobId)) {
         current->importSeed.reset();

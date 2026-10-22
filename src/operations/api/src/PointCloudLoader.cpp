@@ -64,6 +64,54 @@ void PointDatasetPreparation::reserveRoot(const PointMemoryBudgetPtr &budget,
     setResidentMemoryReservation(std::move(*reservation));
 }
 
+void PointDatasetPreparation::replaceRoot(PointCloudNodePayloadPtr root,
+                                          const PointMemoryBudgetPtr &budget,
+                                          const std::uint64_t allowance)
+{
+    if (!dataset_ || !dataset_->source || !root ||
+        root->nodeId != rootPointCloudNode) {
+        throw std::invalid_argument(
+            "prepared hierarchy requires a source and root");
+    }
+    if (context_.stopToken.stop_requested()) {
+        throw PointCloudImportCancelled();
+    }
+    if (!published_ || !context_.dataReady) {
+        dataset_->root.reset();
+        dataset_->reservation.reset();
+    }
+    auto bytes = pointCloudNodePayloadBytes(*root);
+    PointMemoryBudget::ReservationPtr reservation;
+    if (budget) {
+        const auto available = std::min(allowance, budget->availableBytes());
+        if (bytes > available) {
+            if (dataset_->reservation &&
+                available < maximumRootBytesPerPoint(*root)) {
+                return;
+            }
+            root = reducedRootPayload(*root, available);
+            bytes = pointCloudNodePayloadBytes(*root);
+        }
+        auto reserved = budget->tryReserve(bytes);
+        if (!reserved) {
+            if (dataset_->reservation) {
+                return;
+            }
+            throw PointCloudImportError(
+                "hierarchy preview reservation was refused");
+        }
+        reservation = std::move(*reserved);
+        auto retained = std::make_shared<PointCloudNodePayload>(*root);
+        for (auto &block : retained->blocks) {
+            block = retainPointBlockReservation(std::move(block), reservation);
+        }
+        root = std::move(retained);
+    }
+    payloadBytes_ = bytes;
+    dataset_->root = std::move(root);
+    dataset_->reservation = std::move(reservation);
+}
+
 void PointDatasetPreparation::addBlock(PointBlockPtr block)
 {
     if (!dataset_ || dataset_->source || !block || block->points.empty()) {

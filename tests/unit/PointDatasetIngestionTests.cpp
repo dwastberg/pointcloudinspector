@@ -294,3 +294,78 @@ TEST_CASE("a fully reserved root can detach to standalone residency",
     CHECK(runtime->peekNodePayload(pci::rootPointCloudNode));
     CHECK(memory->reservedBytes() == bytes);
 }
+
+TEST_CASE("hierarchy completion replaces warmup roots and transfers admission",
+          "[point-import][memory][hierarchy][regression]")
+{
+    auto earlyBlock = std::make_shared<pci::PointBlock>();
+    earlyBlock->points.resize(2);
+    earlyBlock->points[0].attributes = 2U;
+    earlyBlock->attributes.resize(2);
+    earlyBlock->bounds = {{0, 0, 0}, {1, 1, 1}};
+    earlyBlock->intensityMinimum = 10;
+    earlyBlock->intensityMaximum = 20;
+    auto earlyRoot = std::make_shared<pci::PointCloudNodePayload>();
+    earlyRoot->blocks.push_back(earlyBlock);
+    const auto earlyBytes = pci::pointCloudNodePayloadBytes(*earlyRoot);
+
+    auto finalBlock = std::make_shared<pci::PointBlock>();
+    finalBlock->points.resize(4);
+    finalBlock->points[0].attributes = 2U;
+    finalBlock->points[1].attributes = 6U;
+    finalBlock->attributes.resize(4);
+    finalBlock->bounds = {{0, 0, 0}, {10, 10, 10}};
+    finalBlock->intensityMinimum = 5;
+    finalBlock->intensityMaximum = 500;
+    auto finalRoot = std::make_shared<pci::PointCloudNodePayload>();
+    finalRoot->blocks.push_back(finalBlock);
+    const auto finalBytes = pci::pointCloudNodePayloadBytes(*finalRoot);
+
+    auto budget =
+        std::make_shared<pci::PointMemoryBudget>((earlyBytes + finalBytes) * 2);
+    pci::PointDatasetPreparation preparation(
+        {}, std::make_shared<PreparedRootSource>(), earlyRoot, false);
+    preparation.reserveRoot(budget, earlyBytes);
+    pci::PreparedPointDatasetPtr preview;
+    preparation.publish({.dataReady = [&](const pci::PointDatasetEvent &value) {
+        preview = std::get<pci::PreparedPointDatasetPtr>(value.data);
+    }});
+    REQUIRE(preview);
+    auto runtime =
+        pci::createPointDatasetRuntime(preview, budget->byteBudget());
+    REQUIRE(runtime);
+    CHECK_FALSE(runtime->snapshot().loadingComplete);
+    CHECK(runtime->snapshot().rootPayloadRevision == 1);
+    CHECK_FALSE(runtime->presentClassifications().isVisible(6));
+
+    SECTION("unchanged root keeps root payload revision stable")
+    {
+        auto completed = preparation.finish();
+        pci::completePointDatasetRuntime(runtime, completed);
+        CHECK(runtime->snapshot().loadingComplete);
+        CHECK(runtime->snapshot().rootPayloadRevision == 1);
+        CHECK(runtime->peekNodePayload(pci::rootPointCloudNode) ==
+              preview->root);
+        preview.reset();
+        completed.reset();
+        CHECK(budget->reservedBytes() == earlyBytes);
+    }
+
+    SECTION("replaced root updates cache, revision, statistics, and budget")
+    {
+        preparation.replaceRoot(finalRoot, budget, finalBytes);
+        auto completed = preparation.finish();
+        CHECK(budget->reservedBytes() == earlyBytes + finalBytes);
+        preview.reset();
+        pci::completePointDatasetRuntime(runtime, completed);
+        CHECK(runtime->snapshot().loadingComplete);
+        CHECK(runtime->snapshot().rootPayloadRevision == 2);
+        CHECK(runtime->peekNodePayload(pci::rootPointCloudNode) ==
+              completed->root);
+        CHECK(runtime->presentClassifications().isVisible(6));
+        CHECK(runtime->intensityMinimum() == 5);
+        CHECK(runtime->intensityMaximum() == 500);
+        completed.reset();
+        CHECK(budget->reservedBytes() == finalBytes);
+    }
+}

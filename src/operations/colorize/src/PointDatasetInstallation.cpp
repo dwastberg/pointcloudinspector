@@ -47,7 +47,17 @@ void validatePointDatasetCompletion(const PointDatasetRuntimePtr &runtime,
         throw std::invalid_argument(
             "point completion does not match its preview");
     }
-    if (!dataset->source) {
+    if (dataset->source) {
+        if (!dataset->root || dataset->root->nodeId != rootPointCloudNode ||
+            !dataset->blocks.empty()) {
+            throw std::invalid_argument(
+                "point completion does not match its preview");
+        }
+    } else {
+        if (dataset->root) {
+            throw std::invalid_argument(
+                "point completion does not match its preview");
+        }
         const auto blocks = runtime->blocks();
         if (blocks != dataset->blocks) {
             throw std::invalid_argument(
@@ -60,6 +70,16 @@ void completePointDatasetRuntime(const PointDatasetRuntimePtr &runtime,
                                  const PreparedPointDatasetPtr &dataset)
 {
     validatePointDatasetCompletion(runtime, dataset);
+    if (dataset->source) {
+        auto publication = runtime->preparePublication(
+            {}, true, dataset->root, dataset->reservation);
+        if (!runtime->commitPublication(*publication)) {
+            throw std::logic_error(
+                "point completion could not be committed");
+        }
+        runtime->publishInvalidation();
+        return;
+    }
     runtime->markLoadingComplete();
 }
 

@@ -101,8 +101,11 @@ public:
     void addBlock(PointBlockPtr block);
     // Prepare imported data and its document-facing view without changing
     // this runtime. Publication notification follows the paired document swap.
-    [[nodiscard]] std::unique_ptr<PointDatasetPublication>
-    preparePublication(PointBlockPtr block = {}, bool complete = false) const;
+    [[nodiscard]] std::unique_ptr<PointDatasetPublication> preparePublication(
+        PointBlockPtr block = {},
+        bool complete = false,
+        PointCloudNodePayloadPtr rootPayload = {},
+        PointMemoryBudget::ReservationPtr rootReservation = {}) const;
     [[nodiscard]] bool
     commitPublication(PointDatasetPublication &publication) noexcept;
     void publishInvalidation() noexcept;
@@ -249,8 +252,16 @@ public:
 private:
     friend class PointDatasetRuntime;
     PointDatasetRuntimePtr candidate_;
+    PointCloudNodePayloadPtr rootPayload_;
+    PointMemoryBudget::ReservationPtr rootReservation_;
+    std::uint16_t intensityMinimum_ = 0;
+    std::uint16_t intensityMaximum_ = 0;
+    bool haveIntensityStatistics_ = false;
+    PointClassificationFilter presentClassifications_ =
+        PointClassificationFilter::noneVisible();
     PointDatasetView view_;
     std::uint64_t expectedRevision_ = 0;
+    std::uint64_t expectedRootRevision_ = 0;
     bool complete_ = false;
     bool committed_ = false;
 };
